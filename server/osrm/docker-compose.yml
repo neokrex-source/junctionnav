@@ -1,0 +1,10 @@
+# Self-hosted OSRM for JunctionNav. Run ./setup.sh <region> first to prepare data/.
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld --max-alternatives 2 /data/region.osrm
+    volumes:
+      - ./data:/data
+    ports:
+      - "5000:5000"
+    restart: unless-stopped

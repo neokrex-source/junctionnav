@@ -1,0 +1,28 @@
+{
+  "name": "JunctionNav",
+  "short_name": "JunctionNav",
+  "description": "Navigation with junction views for ramps, forks, exits and divider splits.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c1210",
+  "theme_color": "#0b6b45",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "scope": "./"
+}
