@@ -16,7 +16,7 @@ import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
-import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTunnels, type OfflineSwitch } from './offline/providers';
+import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
 import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
@@ -781,7 +781,8 @@ class App {
         this.startNav(true);
       }, 100);
     } catch (err) {
-      toast(`Trip link: ${(err as Error).message}`, 7000);
+      const msg = isNetworkError(err) && !this.offlineSw.available() ? 'No connection. Download the offline maps in Settings to plan this without internet.' : (err as Error).message;
+      toast(`Trip link: ${msg}`, 7000);
     }
   }
 

@@ -153,7 +153,6 @@ export class VerticalModel {
   private elen: number[] = [];
   private eway: number[] = [];
   private ways: WayInfo[] = [];
-  private wayOfTags = new Map<Tags, number>();
   private grid = new Map<string, number[]>();
   private readonly cell = 20;
   private radius: number;
@@ -201,7 +200,6 @@ export class VerticalModel {
         headroom: parseHeight(t.maxheight) ?? parseHeight(t['maxheight:physical']),
         major: /^(motorway|trunk|primary)/.test(t.highway ?? ''),
       });
-      this.wayOfTags.set(t, wi);
       let prevV = -1;
       let prevP: XY | null = null;
       for (let i = 0; i < way.nodes.length; i++) {
@@ -692,7 +690,8 @@ export class VerticalModel {
 
   /** Nearest modelled road edge to p: of the given way when known, else on the same level. */
   private nearest(p: XY, tags?: Tags, maxD = 30): { e: number; t: number } | null {
-    const want = tags ? this.wayOfTags.get(tags) : undefined;
+    // Several modelled ways can share one tags object (offline data splits roads into pieces),
+    // so "the road asked for" is matched by its tags.
     const level = tags ? wayLevel(tags) : null;
     const c = this.cell;
     const r = Math.ceil(maxD / c);
@@ -714,7 +713,7 @@ export class VerticalModel {
           if (d > maxD) continue;
           const w = this.eway[e];
           // The road asked for wins over another one up to 12 m nearer (lane offsets, parallel roads).
-          const score = d + (want !== undefined && w !== want ? 12 : 0) + (level !== null && this.ways[w].level !== level ? 8 : 0);
+          const score = d + (tags && this.ways[w].tags !== tags ? 12 : 0) + (level !== null && this.ways[w].level !== level ? 8 : 0);
           if (!best || score < best.score) best = { e, t, score };
         }
     return best;

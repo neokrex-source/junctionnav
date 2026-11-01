@@ -2,7 +2,7 @@
  * Ground elevation around junctions, from public terrain tiles (Terrarium PNG encoding:
  * height = R·256 + G + B/256 − 32768 metres). The source is a surface model (it includes some
  * trees and buildings), so the samples are cleaned before use: a morphological opening removes
- * bumps narrower than about 90 m, then a light blur smooths what is left.
+ * bumps narrower than about 180 m, then a light blur smooths what is left.
  */
 import { LocalFrame, type LngLat, type XY } from '../geo/geo';
 
@@ -63,7 +63,9 @@ export class GridPatch implements TerrainPatch {
     if (missing > n * n * 0.2) return null;
     fillGaps(data, n);
     if (clean) {
-      const r = Math.max(1, Math.round(45 / cell));
+      // Radius 90 m: removes towers, malls and tree belts up to about 180 m across (the KLCC
+      // towers and podium, office blocks); hills and valleys are much wider than that.
+      const r = Math.max(1, Math.round(90 / cell));
       open(data, n, r);
       blur(data, n, Math.max(1, Math.round(20 / cell)));
       blur(data, n, Math.max(1, Math.round(20 / cell)));
