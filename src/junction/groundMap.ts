@@ -131,7 +131,7 @@ export function analyse(rgba: Uint8ClampedArray, n: number): { land: string; mas
   return { land: hex(((best >> 10) & 31) * 8 + 4, ((best >> 5) & 31) * 8 + 4, (best & 31) * 8 + 4), mask, usable };
 }
 
-/** Day maps (light land): a gamma curve that darkens the land and keeps streets light. Night maps stay. */
+/** Day maps (light land): a gamma curve that darkens the land and keeps streets light, a little muted. Night maps stay. */
 export function toneDay(rgba: Uint8ClampedArray): void {
   let sum = 0;
   let n = 0;
@@ -142,10 +142,16 @@ export function toneDay(rgba: Uint8ClampedArray): void {
   if (!n || sum / n < 140) return;
   const lut = new Uint8ClampedArray(256);
   for (let v = 0; v < 256; v++) lut[v] = Math.round(240 * Math.pow(v / 255, 1.7));
+  // Slightly muted too, so parks and water sit back behind the roads and signs.
+  const SAT = 0.8;
   for (let i = 0; i < rgba.length; i += 4) {
-    rgba[i] = lut[rgba[i]];
-    rgba[i + 1] = lut[rgba[i + 1]];
-    rgba[i + 2] = lut[rgba[i + 2]];
+    const r = lut[rgba[i]];
+    const g = lut[rgba[i + 1]];
+    const b = lut[rgba[i + 2]];
+    const l = r * 0.3 + g * 0.59 + b * 0.11;
+    rgba[i] = l + (r - l) * SAT;
+    rgba[i + 1] = l + (g - l) * SAT;
+    rgba[i + 2] = l + (b - l) * SAT;
   }
 }
 

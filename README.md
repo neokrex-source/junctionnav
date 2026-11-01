@@ -99,10 +99,10 @@ The **KL test drives** button (next to Demo drive) lists short simulated drives 
 
 | Drive | Length | What it tests |
 | --- | --- | --- |
-| Sungai Besi toll onto SUKE | 5.3 km | Toll plaza, lane advice, ramp climbing onto the elevated SUKE (+9.6 m), 3D map view |
-| DASH to Penchala Link and its tunnel | 7 km | Exit number (3110A), flyover (+7 m), drop to Penchala Link (−6.8 m), 3D map view, tunnel sign, guidance without GPS through the 726 m Penchala tunnel |
+| Sungai Besi toll onto SUKE | 5.3 km | Toll plaza, lane advice, ramp climbing onto the elevated SUKE (+11 m), 3D map view |
+| DASH to Penchala Link and its tunnel | 7 km | Exit number (3110A), drop off the elevated DASH (−9.6 m), climb at the Penchala Link fork (+6.9 m), 3D map view, tunnel sign, guidance without GPS through the 726 m Penchala tunnel |
 | MEX down to Jalan Tun Razak | 4.8 km | Exit number (2001), ramp down to street level, 3D map view, tunnel sign, no GPS in the tunnel |
-| DUKE into the Wangsa Maju underpass | 4.4 km | Lane advice, exit number (3306A), underpass (−7.3 m), junction leading into a tunnel, 3D map view, tunnel sign, no GPS |
+| DUKE into the Wangsa Maju underpass | 4.4 km | Lane advice, exit number (3306A), underpass (−6.4 m), junction leading into a tunnel, 3D map view, tunnel sign, no GPS |
 | SMART tunnel | 8.1 km | Lane advice at the tunnel fork, tunnel sign, 4.2 km of guidance without GPS |
 
 Every drive also checks that the route is planned, junction views appear and arrival is announced.
