@@ -1286,6 +1286,16 @@ button { cursor: pointer; }
 .off-actions:empty { display: none; }
 .off-actions .btn { flex: 1; padding: 10px 12px; font-size: 15px; }
 .off-delete { color: var(--danger); }
+.off-keep { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; line-height: 1.4; color: var(--muted); }
+.off-keep[hidden], .off-danger[hidden] { display: none; }
+.off-keep > span:nth-child(2) { flex: 1 1 200px; }
+.off-keep-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent); }
+.off-keep[data-kept="true"] .off-keep-dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+.off-keep .btn { padding: 7px 12px; font-size: 14px; }
+.off-danger { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 10px; margin-top: 2px; border-top: 1px solid var(--line); }
+.off-danger .off-delete { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); font-weight: 700; padding: 9px 14px; }
+.off-danger .off-delete:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.off-danger-size { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .settings select:disabled { opacity: 0.55; }
 
 /* map loading problems */

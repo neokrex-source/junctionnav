@@ -88,6 +88,8 @@ await add('graph.bin', join(work, 'graph.bin'), true);
 await add('places.bin', join(work, 'places.bin'), true);
 await add('assets.bin', join(work, 'assets.bin'), true);
 await add('assets.json', join(work, 'assets.json'), false);
+// Ground heights: already compressed tile by tile, so stored as they are.
+if (existsSync(join(work, 'terrain.bin'))) await add('terrain.bin', join(work, 'terrain.bin'), false);
 
 const built = new Date().toISOString();
 const manifest = {

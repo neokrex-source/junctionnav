@@ -140,7 +140,8 @@ function blur(d: Float32Array, n: number, r: number) {
 const env = import.meta.env;
 export const TERRAIN_URL: string = env.VITE_TERRAIN_URL || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
-function tileXY(p: LngLat, z: number): [number, number] {
+/** Web map tile coordinates (fractional) of a point at zoom z. */
+export function tileXY(p: LngLat, z: number): [number, number] {
   const n = 2 ** z;
   const lat = (p[1] * Math.PI) / 180;
   return [((p[0] + 180) / 360) * n, ((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * n];

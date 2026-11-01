@@ -49,6 +49,7 @@ jobs:
           if [ -f offline-pack/manifest.json ]; then
             cp -r offline-pack dist/offline
             du -sh dist/offline
+            node -e 'const m=require("./offline-pack/manifest.json");const mb=(n)=>(n/1048576).toFixed(1);const dl=m.files.reduce((a,f)=>a+f.parts.reduce((b,p)=>b+p.size,0),0);console.log(`::notice title=Offline maps published::${m.name}, built ${m.built.slice(0,10)}: ${m.files.map((f)=>`${f.name} ${mb(f.size)} MB`).join(", ")}; download ${mb(dl)} MB`)'
           else
             echo "::notice::No offline maps yet; the site is published without them (see the Offline maps workflow)."
           fi

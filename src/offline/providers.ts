@@ -4,6 +4,7 @@
  */
 import type { LngLat } from '../geo/geo';
 import type { JunctionDataProvider, OsmData, OsmWay } from '../junction/osmdata';
+import type { TerrainPatch, TerrainProvider } from '../junction/terrain';
 import type { TunnelProvider } from '../nav/tunnels';
 import { labelRoutes, normalizeOsrm, sameRoute } from '../routing/osrm';
 import type { RouteRequest, RouteResult, Router } from '../routing/types';
@@ -205,6 +206,38 @@ export class HybridTunnels implements TunnelProvider {
     } catch (e) {
       if (!this.sw.available() || signal?.aborted) throw e;
       return this.sw.client.tunnels(path);
+    }
+  }
+}
+
+/**
+ * Ground heights for the 3D junction views: the online terrain tiles, with the pack's heights
+ * taking over when there is no connection (or first, when the settings say "always offline").
+ * `available` is whether the installed pack has heights at all.
+ */
+export class HybridTerrain implements TerrainProvider {
+  constructor(
+    private online: TerrainProvider,
+    private offline: TerrainProvider,
+    private sw: { available(): boolean; mode(): OfflineUse },
+  ) {}
+  get name() {
+    return this.offlineFirst() ? this.offline.name : this.online.name;
+  }
+  private offlineFirst(): boolean {
+    return this.sw.available() && (this.sw.mode() === 'always' || (typeof navigator !== 'undefined' && navigator.onLine === false));
+  }
+  async fetch(center: LngLat, radius: number, signal?: AbortSignal): Promise<TerrainPatch | null> {
+    if (this.offlineFirst()) {
+      const t = await this.offline.fetch(center, radius).catch(() => null);
+      // Outside the pack, or an older pack without heights: online if there is a connection.
+      if (t || (typeof navigator !== 'undefined' && navigator.onLine === false)) return t;
+    }
+    try {
+      return await this.online.fetch(center, radius, signal);
+    } catch (e) {
+      if (!this.sw.available() || signal?.aborted) throw e;
+      return this.offline.fetch(center, radius);
     }
   }
 }

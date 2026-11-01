@@ -170,7 +170,7 @@ export class OfflineStore {
     let { done } = this.counts(m, p);
 
     try {
-      await navigator.storage.persist?.();
+      await this.keep();
       const est = await navigator.storage.estimate?.();
       const need = (total - done) * 1.05 + m.files.filter((f) => f.gzip).reduce((a, f) => a + f.size, 0) * 0.1;
       if (est?.quota != null && est.usage != null && est.quota - est.usage < need) {
@@ -291,6 +291,33 @@ export class OfflineStore {
       await packs.removeEntry(name, { recursive: true });
     } catch {
       /* nothing there */
+    }
+  }
+
+  /** Whether the browser has promised not to clear the pack when space runs low (null: it cannot say). */
+  async kept(): Promise<boolean | null> {
+    try {
+      const s = navigator.storage;
+      return s?.persisted ? await s.persisted() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Asks the browser to keep the pack when space runs low. Chrome, Edge and Safari decide on their
+   * own (added to the home screen, bookmarked, used often), so asking again later can succeed.
+   * Firefox asks the user instead, so `quiet` (the check at start-up) leaves it to a tap there.
+   */
+  async keep(quiet = false): Promise<boolean | null> {
+    try {
+      const s = navigator.storage;
+      if (!s?.persist) return null;
+      if (await s.persisted?.()) return true;
+      if (quiet && /firefox|fxios/i.test(navigator.userAgent)) return false;
+      return await s.persist();
+    } catch {
+      return null;
     }
   }
 

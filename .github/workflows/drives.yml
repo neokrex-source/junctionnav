@@ -14,6 +14,7 @@ on:
       - 'src/trip/**'
       - 'src/nav/**'
       - 'tests/drives.real.test.ts'
+      - 'tests/terrainPack.real.test.ts'
   workflow_run:
     workflows: ['Offline maps']
     types: [completed]
@@ -46,9 +47,10 @@ jobs:
           mkdir -p pack
           cat offline-pack/graph.bin.gz.* | gunzip > pack/graph.bin
           cat offline-pack/places.bin.gz.* | gunzip > pack/places.bin
+          if ls offline-pack/terrain.bin.* >/dev/null 2>&1; then cat offline-pack/terrain.bin.* > pack/terrain.bin; fi
           grep -o '"built": *"[^"]*"' offline-pack/manifest.json || true
           ls -la pack
       - name: Drive the KL test drives
         env:
           PACK_DIR: pack
-        run: npx vitest run tests/drives.real.test.ts --reporter=verbose
+        run: npx vitest run tests/drives.real.test.ts tests/terrainPack.real.test.ts --reporter=verbose

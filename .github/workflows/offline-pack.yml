@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: 22
       - id: key
-        run: echo "key=offline-pack-v1-$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/**', 'src/offline/graphLayout.ts') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=offline-pack-v1-$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/**', 'src/offline/graphLayout.ts', 'src/offline/terrainLayout.ts') }}" >> "$GITHUB_OUTPUT"
       - id: have
         uses: actions/cache/restore@v4
         with:

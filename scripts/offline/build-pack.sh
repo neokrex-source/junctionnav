@@ -60,5 +60,14 @@ if [ "$(stat -c %s "$WORK/tiles.pmtiles")" -gt $((700 * 1024 * 1024)) ]; then
   "$PMTILES" extract "https://build.protomaps.com/$BUILD" "$WORK/tiles.pmtiles" --region="$REGION" --maxzoom=14
 fi
 
+# --- ground heights for the 3D junction views (hills) without internet
+# Optional: if the elevation tiles cannot be fetched, the pack goes out without them and the
+# app keeps using the online heights.
+rm -f "$WORK/terrain.bin"
+if ! node --max-old-space-size=8000 "$HERE/build-terrain.mjs" "$REGION" "$WORK/terrain.bin" --zoom "${TERRAIN_ZOOM:-12}" --max-mb "${TERRAIN_MAX_MB:-40}"; then
+  echo "::warning::Ground heights could not be built; the offline pack goes out without them."
+  rm -f "$WORK/terrain.bin"
+fi
+
 node "$HERE/finish-pack.mjs" "$WORK" "$OUT" --id "$ID" --name "$NAME" --bbox "$BBOX" --side left
 du -sh "$OUT"

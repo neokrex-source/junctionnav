@@ -18,7 +18,8 @@ import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
-import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
+import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTerrain, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
+import { OfflineTerrainProvider, TerrainPackReader } from './offline/offlineTerrain';
 import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
@@ -101,13 +102,21 @@ class App {
   };
   /** The offline map style can be drawn (pack installed and its tiles opened). */
   private offlineMapReady = false;
+  /** Ground heights in the offline pack, for the 3D junction views without internet. */
+  private packTerrain = new TerrainPackReader({
+    key: () => {
+      const inst = this.offline.installed;
+      return inst?.manifest.files.some((f) => f.name === 'terrain.bin') ? inst.dir.join('/') : null;
+    },
+    blob: () => this.offline.file('terrain.bin'),
+  });
   private osrm: Router = new OsrmRouter(this.settings.routerUrl);
   router!: Router;
   jdata!: JunctionDataCache;
   osmReady = new Map<string, OsmData | null>();
   surr!: SurroundCache;
   surroundReady = new Map<string, SurroundData>();
-  /** Ground elevation around junctions (online terrain tiles; the demo has its own hills). */
+  /** Ground elevation around junctions (online terrain tiles or the offline pack; the demo has its own hills). */
   terrain = new TerrainCache(new TerrariumProvider());
   terrainReady = new Map<string, TerrainPatch | null>();
   search!: PlaceSearchEngine;
@@ -223,11 +232,28 @@ class App {
     this.cats = new CategorySearch(new HybridPois(new OverpassPoiProvider(overpass), sw));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
     this.search = new HybridSearch(() => photon, sw);
-    this.terrain = new TerrainCache(new TerrariumProvider());
+    this.terrain = this.realTerrain();
     this.terrainReady.clear();
     this.surroundReady.clear();
     this.osmReady.clear();
     this.sceneCache.clear();
+  }
+
+  /** Online terrain tiles, or the pack's heights without a connection. */
+  private realTerrain(): TerrainCache {
+    return new TerrainCache(
+      new HybridTerrain(new TerrariumProvider(), new OfflineTerrainProvider(this.packTerrain), {
+        available: () => this.packTerrain.available,
+        mode: () => this.settings.offlineUse,
+      }),
+    );
+  }
+
+  /** The pack came or went: fetch the junction ground again (a failed online fetch may be cached). */
+  private resetTerrain() {
+    if (this.demo || ARTIFACT) return;
+    this.terrain = this.realTerrain();
+    this.terrainReady.clear();
   }
 
   /** Map style for the real (non-demo) map: the offline maps when they should be used, else the chosen style. */
@@ -276,12 +302,14 @@ class App {
         const justDownloaded = last === 'downloading';
         this.offlineClient.unload();
         this.offlineMapReady = false;
+        this.resetTerrain();
         void this.activateOffline().then(() => {
           if (justDownloaded && this.offlineMapReady) toast(`Offline maps for ${this.offline.installed?.manifest.name ?? 'your area'} are ready.`, 4500);
         });
       } else if (!has && had) {
         this.offlineClient.unload();
         this.offlineMapReady = false;
+        this.resetTerrain();
         this.refreshMapSource();
       }
       if (st.status === 'error' && last === 'downloading') toast(st.message, 5000);
@@ -292,7 +320,11 @@ class App {
     await this.offline.init();
     this.offlineDir = this.offline.installed?.dir.join('/');
     had = !!this.offline.installed;
-    if (had) await this.activateOffline();
+    if (had) {
+      await this.activateOffline();
+      // Ask again each start: the browser may agree now (added to the home screen, used more).
+      void this.offline.keep(true);
+    }
     // Losing the connection switches to the offline map at once. Coming back waits until the
     // connection has held for a while and no drive is running, so patchy coverage does not flip the map.
     let back = 0;
