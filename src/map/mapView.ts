@@ -3,7 +3,7 @@ import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type StyleSpecif
 import type { Feature, FeatureCollection, LineString } from 'geojson';
 import type { LngLat } from '../geo/geo';
 import type { Route, Step } from '../routing/types';
-import { FALLBACK_STYLE } from './styles';
+import { fallbackStyle } from './styles';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
 
 const ROUTE_COLOR = '#1f78ff';
@@ -37,6 +37,16 @@ export class MapView {
   private userPanCb: (() => void) | null = null;
   private routeClickCb: ((idx: number) => void) | null = null;
   private resultMarkers: maplibregl.Marker[] = [];
+  /** Style to switch to when the chosen one cannot load (set by the app for day/night). */
+  fallback: () => StyleSpecification = () => fallbackStyle(false);
+  /** Called when the map switches to the fallback, so other maps can follow. */
+  onFallback: (() => void) | null = null;
+  /** Shown over the map when tiles cannot load. */
+  private notice: HTMLElement;
+  private tilesOk = 0;
+  private tileErrors = 0;
+  private lastError = '';
+  private watchdog: number[] = [];
 
   constructor(container: HTMLElement, style: string | StyleSpecification, center: LngLat, zoom = 13) {
     this.currentStyle = style;
@@ -59,23 +69,36 @@ export class MapView {
     pinEl.innerHTML = PIN_SVG;
     this.dest = new maplibregl.Marker({ element: pinEl, anchor: 'bottom' });
 
-    this.map.on('style.load', () => this.installLayers());
-    this.map.on('error', (e) => {
-      const msg = String((e as { error?: Error }).error?.message ?? '');
-      if (typeof this.currentStyle !== 'string') console.warn('[map]', msg);
-      // Only fall back when the style we asked for is a remote URL that failed to load.
-      const wanted = this.currentStyle;
-      if (
-        typeof wanted === 'string' &&
-        wanted !== FALLBACK_STYLE &&
-        !this.styleFailed &&
-        !this.map.isStyleLoaded() &&
-        /style|404|Failed to fetch|NetworkError/i.test(msg)
-      ) {
-        this.styleFailed = true;
-        console.warn('[map] style failed, falling back', msg);
-        this.setStyle(FALLBACK_STYLE, true);
+    this.notice = document.createElement('div');
+    this.notice.className = 'map-notice';
+    this.notice.hidden = true;
+    this.notice.setAttribute('role', 'status');
+    container.append(this.notice);
+
+    this.map.on('style.load', () => {
+      this.installLayers();
+      this.watchTiles();
+    });
+    this.map.on('data', (e) => {
+      // Count only tiles that really arrived; failed tiles also fire data events.
+      // Our own GeoJSON layers (route, arrow) are tiled too; they say nothing about the network.
+      const d = e as { dataType?: string; sourceId?: string; tile?: { state?: string } };
+      if (d.dataType === 'source' && d.tile && d.tile.state === 'loaded' && this.map.getSource(d.sourceId ?? '')?.type !== 'geojson') {
+        this.tilesOk++;
+        if (!this.notice.hidden && this.notice.dataset.kind === 'error') this.notice.hidden = true;
       }
+    });
+    this.map.on('error', (e) => {
+      const ev = e as { error?: Error; sourceId?: string; tile?: unknown };
+      const msg = String(ev.error?.message ?? '');
+      this.lastError = msg;
+      console.warn('[map]', msg);
+      if (ev.sourceId || ev.tile) {
+        this.tileErrors++;
+        return;
+      }
+      // The style document itself failed (blocked, offline, wrong URL).
+      if (this.isRemote() && !this.map.isStyleLoaded() && /style|404|403|Failed to fetch|NetworkError|Load failed|AJAXError/i.test(msg)) this.fail(msg);
     });
     const userMove = (e: { originalEvent?: unknown }) => {
       if (e.originalEvent && !this.suppressUserEvent) {
@@ -121,9 +144,66 @@ export class MapView {
   }
 
   setStyle(style: string | StyleSpecification, keepFailed = false) {
-    if (!keepFailed) this.styleFailed = false;
+    if (!keepFailed) {
+      this.styleFailed = false;
+      this.notice.hidden = true;
+    }
     this.currentStyle = style;
     this.map.setStyle(style, { diff: false });
+  }
+
+  /** A style that loads from the network (as opposed to the offline demo style). */
+  private isRemote(): boolean {
+    const s = this.currentStyle;
+    return typeof s === 'string' || Object.values(s.sources ?? {}).some((src) => 'tiles' in src || ('url' in src && !!src.url));
+  }
+
+  /**
+   * After a style loads, make sure tiles actually arrive. If they fail (or nothing at all
+   * arrives for a long time), switch to the fallback provider; if that fails too, say so.
+   */
+  private watchTiles() {
+    this.watchdog.forEach(clearTimeout);
+    this.tilesOk = 0;
+    this.tileErrors = 0;
+    if (!this.isRemote()) return;
+    const check = (needErrors: boolean) => {
+      if (this.tilesOk > 0) return;
+      if (needErrors && this.tileErrors === 0) return;
+      this.fail(this.lastError || 'no map tiles arrived');
+    };
+    this.watchdog = [window.setTimeout(() => check(true), 9000), window.setTimeout(() => check(false), 25000)];
+  }
+
+  private fail(reason: string) {
+    const onFallback = this.currentStyle === this.fallback();
+    if (!onFallback && !this.styleFailed) {
+      this.styleFailed = true;
+      console.warn('[map] map style failed, using the fallback map', reason);
+      this.showNotice('info', 'The usual map could not load, so a simpler map is shown. You can pick a map style in Settings.');
+      this.setStyle(this.fallback(), true);
+      this.onFallback?.();
+      return;
+    }
+    this.showNotice('error', 'The map cannot load right now. Check your internet connection, then try again.', () => {
+      this.styleFailed = false;
+      this.setStyle(this.currentStyle);
+    });
+  }
+
+  private showNotice(kind: 'info' | 'error', text: string, retry?: () => void) {
+    const n = this.notice;
+    n.dataset.kind = kind;
+    n.replaceChildren(text);
+    if (retry) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = 'Try again';
+      b.addEventListener('click', retry);
+      n.append(b);
+    }
+    n.hidden = false;
+    if (kind === 'info') window.setTimeout(() => n.dataset.kind === 'info' && (n.hidden = true), 8000);
   }
 
   get isFollowing() {

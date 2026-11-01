@@ -11,7 +11,7 @@ import { OverpassSurroundProvider, SurroundCache, type SurroundData } from './ju
 import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
 import { ZoomMap } from './junction/zoomMap';
 import { MapView, routeBounds } from './map/mapView';
-import { demoStyle, resolveStyle } from './map/styles';
+import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
@@ -175,6 +175,8 @@ class App {
     // The hosted preview can only draw the bundled demo roads, so never ask for remote tiles there.
     const startStyle = ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : resolveStyle(this.settings, isNight(this.settings));
     this.map = new MapView(e.map, startStyle, ARTIFACT ? buildDemo().start : lastPosition() ?? KL, ARTIFACT ? 14 : 12);
+    this.map.fallback = () => fallbackStyle(isNight(this.settings));
+    this.map.onFallback = () => this.zoom?.setStyle(fallbackStyle(isNight(this.settings)));
     this.map.onLongPress((p) => this.pickOnMap(p));
     this.map.onUserPan(() => {
       if (this.view === 'nav') e.recenter.hidden = false;

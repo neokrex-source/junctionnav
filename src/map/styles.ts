@@ -9,6 +9,42 @@ export interface StyleDef {
   /** Style to use at night, if different. */
   night?: string;
   url: (s: Settings) => string;
+  /** Inline style instead of a URL. */
+  spec?: (night: boolean) => StyleSpecification;
+}
+
+const CARTO_ATTRIBUTION =
+  '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
+
+function cartoRaster(night: boolean): StyleSpecification {
+  const path = night ? 'dark_all' : 'rastertiles/voyager';
+  return {
+    version: 8,
+    sources: {
+      carto: {
+        type: 'raster',
+        tiles: ['a', 'b', 'c', 'd'].map((s) => `https://${s}.basemaps.cartocdn.com/${path}/{z}/{x}/{y}@2x.png`),
+        tileSize: 256,
+        maxzoom: 20,
+        attribution: CARTO_ATTRIBUTION,
+      },
+    },
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': night ? '#1b1d21' : '#f2efe9' } },
+      { id: 'carto', type: 'raster', source: 'carto' },
+    ],
+  };
+}
+
+/** One object per mode, so style comparisons by identity stay stable. */
+const RASTER = { day: cartoRaster(false), night: cartoRaster(true) };
+
+/**
+ * A different provider (CARTO raster tiles, labels drawn into the images) for when the
+ * vector style or its tiles cannot load. Needs no fonts or sprites.
+ */
+export function fallbackStyle(night: boolean): StyleSpecification {
+  return night ? RASTER.night : RASTER.day;
 }
 
 export const STYLES: StyleDef[] = [
@@ -35,18 +71,18 @@ export const STYLES: StyleDef[] = [
     needsKey: true,
     url: (s) => `https://api.maptiler.com/maps/hybrid/style.json?key=${encodeURIComponent(s.maptilerKey)}`,
   },
+  { id: 'carto', label: 'Simple map (CARTO, works on slow connections)', url: () => '', spec: fallbackStyle },
   { id: 'custom', label: 'Custom style URL', url: (s) => s.customStyleUrl },
 ];
 
-export function resolveStyle(s: Settings, night: boolean): string {
+export function resolveStyle(s: Settings, night: boolean): string | StyleSpecification {
   let def = STYLES.find((d) => d.id === s.mapStyle) ?? STYLES[0];
   if (def.needsKey && !s.maptilerKey) def = STYLES[0];
   if (def.id === 'custom' && !s.customStyleUrl) def = STYLES[0];
+  if (def.spec) return def.spec(night);
   if (night && def.night) def = STYLES.find((d) => d.id === def.night) ?? def;
   return def.url(s);
 }
-
-export const FALLBACK_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 /** Plain style for the offline demo network. */
 export function demoStyle(geojson: FeatureCollection, night: boolean): StyleSpecification {
