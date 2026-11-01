@@ -22,6 +22,8 @@ import { parseDestinations, splitRefs, type Lane, type Route, type Step } from '
 import type { JunctionCandidate, JunctionKind } from './detect';
 import type { OsmData, OsmWay } from './osmdata';
 import { surroundScene, type SurroundData, type SurroundScene } from './surroundings';
+import type { TerrainPatch } from './terrain';
+import { VerticalModel } from './vertical';
 
 export type RoadClass = 'motorway' | 'trunk' | 'major' | 'minor' | 'link';
 export type Role = 'approach' | 'taken' | 'branch' | 'incoming' | 'context';
@@ -70,6 +72,53 @@ export interface ScenePath {
   s: number[];
 }
 
+/** Ground around the junction, in metres relative to the approach road at the split. */
+export interface SceneGround {
+  /** Ground height where the grid does not reach (or everywhere, without terrain). */
+  level: number;
+  /** Heights on a square grid centred on the split, when terrain is known. */
+  grid?: { half: number; cell: number; n: number; h: Float32Array };
+}
+
+/** Ground height at a scene point. */
+export function groundAt(g: SceneGround | undefined, x: number, y: number): number {
+  if (!g) return 0;
+  const gr = g.grid;
+  if (!gr) return g.level;
+  const fx = (x + gr.half) / gr.cell;
+  const fy = (y + gr.half) / gr.cell;
+  if (fx < 0 || fy < 0 || fx > gr.n - 1 || fy > gr.n - 1) return g.level;
+  const i = Math.min(gr.n - 2, Math.floor(fx));
+  const j = Math.min(gr.n - 2, Math.floor(fy));
+  const tx = fx - i;
+  const ty = fy - j;
+  const n = gr.n;
+  const a = gr.h[j * n + i] * (1 - tx) + gr.h[j * n + i + 1] * tx;
+  const b = gr.h[(j + 1) * n + i] * (1 - tx) + gr.h[(j + 1) * n + i + 1] * tx;
+  return a * (1 - ty) + b * ty;
+}
+
+export type ProfileKind = 'flyover' | 'ascend' | 'underpass' | 'tunnel' | 'descend' | 'level' | 'uphill' | 'downhill' | 'flat';
+
+/** Height profile of the route through the junction, for the junction view and its height strip. */
+export interface VerticalProfile {
+  /** Distance along the route in metres, 0 at the split. */
+  s: number[];
+  /** Road height relative to the approach at the split, ground included. */
+  h: number[];
+  /** Structure part only (decks and underpasses), relative to the split. */
+  structure: number[];
+  /** Ground under the route. */
+  ground: number[];
+  /** The road not taken (or the one we merge into), from where it separates. */
+  other?: { s: number[]; h: number[] };
+  /** Largest climb or drop of our road relative to the split, and where. */
+  peak: { s: number; h: number };
+  /** Steepest grade on our road near the split, percent. */
+  grade: number;
+  kind: ProfileKind;
+}
+
 export interface JunctionScene {
   id: string;
   kind: JunctionKind;
@@ -90,6 +139,8 @@ export interface JunctionScene {
   seed: number;
   /** Buildings, land use, water and labels around the junction, when fetched. */
   surround?: SurroundScene;
+  ground: SceneGround;
+  profile: VerticalProfile;
 }
 
 export interface SceneOptions {
@@ -97,14 +148,15 @@ export interface SceneOptions {
   lang?: string;
   /** Raw surroundings for this junction (buildings, land use, places). */
   surround?: SurroundData | null;
+  /** Ground elevation around the junction (hills and valleys), when known. */
+  terrain?: TerrainPatch | null;
 }
 
 const BEFORE = 340;
 const AFTER = 320;
 const RESAMPLE = 4;
-// Heights are exaggerated a little (real decks are ~6 m) so ramps read clearly in perspective.
-const DECK = 8.5; // metres per OSM layer
-const GRADE = 0.085;
+const PROFILE_FROM = -250;
+const PROFILE_TO = 300;
 
 /* ---------------------------------------------------------------- tag helpers */
 
@@ -155,13 +207,6 @@ function laneWidthOf(cls: RoadClass): number {
 function shoulderOf(cls: RoadClass): number {
   return cls === 'motorway' ? 1.8 : cls === 'trunk' || cls === 'link' ? 1.0 : cls === 'major' ? 0.5 : 0.3;
 }
-function layerOf(t: Tags | undefined): number {
-  const l = int(t?.layer);
-  if (l != null) return clamp(l, -3, 4);
-  if (t?.bridge && t.bridge !== 'no') return 1;
-  if (t?.tunnel && t.tunnel !== 'no') return -1;
-  return 0;
-}
 function isTunnel(t: Tags | undefined): boolean {
   return (!!t?.tunnel && t.tunnel !== 'no') || t?.covered === 'yes';
 }
@@ -199,6 +244,8 @@ class RoadGraph {
   segs: { a: number; b: number; way: OsmWay; idx: number }[] = [];
   private grid = new Map<string, number[]>();
   private cell = 4;
+  private segGrid = new Map<string, number[]>();
+  private segCell = 20;
 
   constructor(osm: OsmData, frame: LocalFrame, radius: number) {
     const tagged = new Map(osm.nodes.map((n) => [n.id, n.tags]));
@@ -233,6 +280,52 @@ class RoadGraph {
         if (dir <= 0) this.addEdge({ a: b, b: a, way, len, brg: xyBearing(pa[0] - pb[0], pa[1] - pb[1]) });
       }
     }
+    // Segment index, for matching sparse route lines (long straight stretches) onto roads.
+    this.segs.forEach((sg, k) => {
+      const pa = this.nodes.get(sg.a)!.p;
+      const pb = this.nodes.get(sg.b)!.p;
+      const c = this.segCell;
+      for (let x = Math.floor(Math.min(pa[0], pb[0]) / c); x <= Math.floor(Math.max(pa[0], pb[0]) / c); x++)
+        for (let y = Math.floor(Math.min(pa[1], pb[1]) / c); y <= Math.floor(Math.max(pa[1], pb[1]) / c); y++) {
+          const key = `${x},${y}`;
+          const list = this.segGrid.get(key);
+          if (list) list.push(k);
+          else this.segGrid.set(key, [k]);
+        }
+    });
+  }
+
+  /** Nearest road segment to p running along `brg` (either way), within maxD metres. */
+  nearestSeg(p: XY, maxD: number, brg: number): { a: number; b: number; way: OsmWay } | null {
+    const c = this.segCell;
+    const r = Math.ceil(maxD / c);
+    const cx = Math.floor(p[0] / c);
+    const cy = Math.floor(p[1] / c);
+    let best: (typeof this.segs)[number] | null = null;
+    let bestD = maxD;
+    const seen = new Set<number>();
+    for (let x = cx - r; x <= cx + r; x++)
+      for (let y = cy - r; y <= cy + r; y++)
+        for (const k of this.segGrid.get(`${x},${y}`) ?? []) {
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const sg = this.segs[k];
+          const pa = this.nodes.get(sg.a)!.p;
+          const pb = this.nodes.get(sg.b)!.p;
+          const dx = pb[0] - pa[0];
+          const dy = pb[1] - pa[1];
+          const l2 = dx * dx + dy * dy;
+          if (l2 < 1e-6) continue;
+          const turn = Math.abs(angleDiff(xyBearing(dx, dy), brg));
+          if (turn > 35 && turn < 145) continue;
+          const t = clamp(((p[0] - pa[0]) * dx + (p[1] - pa[1]) * dy) / l2, 0, 1);
+          const d = Math.hypot(pa[0] + dx * t - p[0], pa[1] + dy * t - p[1]);
+          if (d <= bestD) {
+            bestD = d;
+            best = sg;
+          }
+        }
+    return best;
   }
 
   private key(p: XY): string {
@@ -324,7 +417,8 @@ interface RawStrip {
 
 interface Strip extends RoadStrip {
   segTags: (Tags | undefined)[];
-  layer: number[];
+  /** Structure part of the height (decks, underpasses), relative to the split. */
+  struct: number[];
 }
 
 function toStrip(raw: RawStrip): Strip {
@@ -355,7 +449,7 @@ function toStrip(raw: RawStrip): Strip {
     name: repr?.name,
     ref: repr?.ref,
     segTags: tags,
-    layer: tags.map((t) => layerOf(t)),
+    struct: pts.map(() => 0),
   };
 }
 
@@ -385,28 +479,6 @@ function applyOffset(strip: Strip, off: (i: number) => number) {
     const o = off(i);
     return [p[0] + n[i][0] * o, p[1] + n[i][1] * o] as XY;
   });
-}
-
-/** Elevation profile: OSM layers become deck heights, ramped with a maximum grade, optionally pinned at anchors. */
-function elevate(strip: Strip, L0: number, anchorS: number | null) {
-  const n = strip.s.length;
-  const T = strip.layer.map((l) => (l - L0) * DECK);
-  const h = new Array<number>(n).fill(0);
-  for (let i = 0; i < n; i++) {
-    let up = 0;
-    let down = 0;
-    for (let j = 0; j < n; j++) {
-      const d = Math.abs(strip.s[i] - strip.s[j]);
-      if (T[j] > 0) up = Math.max(up, T[j] - GRADE * d);
-      else if (T[j] < 0) down = Math.min(down, T[j] + GRADE * d);
-    }
-    h[i] = up + down;
-    if (anchorS != null) {
-      const lim = 0.1 * Math.abs(strip.s[i] - anchorS);
-      h[i] = clamp(h[i], -lim, lim);
-    }
-  }
-  strip.h = h;
 }
 
 function lateralOf(p: XY, headingDeg: number): number {
@@ -521,10 +593,13 @@ export function buildScene(
     const s = fromOsm(cand, step, frame, before, after, osm, opts);
     if (s) scene = { ...base, ...s, source: 'osm' };
   }
-  scene ??= { ...base, ...schematic(route, cand, step, before, after), source: 'schematic' };
+  scene ??= { ...base, ...schematic(route, cand, step, before, after, frame, opts), source: 'schematic' };
   if (opts.surround) {
     try {
       scene.surround = surroundScene(opts.surround, frame, scene.roads, opts.lang);
+      // Place and shop labels float above the ground, wherever the ground is.
+      for (const lab of scene.surround.labels)
+        if (lab.kind !== 'road') for (const a of lab.anchors) a.h += groundAt(scene.ground, a.p[0], a.p[1]);
     } catch (err) {
       console.warn('[junction] surroundings skipped', err);
     }
@@ -540,7 +615,15 @@ function matchTags(g: RoadGraph, pts: XY[]): (Tags | undefined)[] {
   for (let i = 0; i < pts.length - 1; i++) {
     const a = ids[i];
     const b = ids[i + 1];
-    tags.push(a != null && b != null ? g.edge(a, b)?.way.tags : undefined);
+    let t = a != null && b != null ? g.edge(a, b)?.way.tags : undefined;
+    if (!t) {
+      // Route points need not sit on road nodes (simplified or sparse lines): match the segment instead.
+      const p = pts[i];
+      const q = pts[i + 1];
+      const brg = xyBearing(q[0] - p[0], q[1] - p[1]);
+      t = g.nearestSeg([(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], 4, brg)?.way.tags;
+    }
+    tags.push(t);
   }
   // Fill gaps from neighbours.
   for (let i = 1; i < tags.length; i++) if (!tags[i]) tags[i] = tags[i - 1];
@@ -591,13 +674,18 @@ function fromOsm(
   const isMerge = cand.kind === 'merge';
   const used = new Set<string>();
   const markUsed = (edges: GEdge[]) => edges.forEach((e) => used.add(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`));
-  // Mark the route's own segments as used.
+  // Mark the route's own segments as used (sampled along the line, so sparse lines work too).
   const markRoute = (pts: XY[]) => {
-    const ids = pts.map((p) => g.nearest(p, 2.5)?.id);
-    for (let i = 0; i < ids.length - 1; i++) {
-      const a = ids[i];
-      const b = ids[i + 1];
-      if (a != null && b != null) used.add(a < b ? `${a}-${b}` : `${b}-${a}`);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const q = pts[i + 1];
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      const brg = xyBearing(q[0] - p[0], q[1] - p[1]);
+      const n = Math.min(400, Math.max(1, Math.ceil(len / 3)));
+      for (let k = 0; k <= n; k++) {
+        const sg = g.nearestSeg([p[0] + ((q[0] - p[0]) * k) / n, p[1] + ((q[1] - p[1]) * k) / n], 2.5, brg);
+        if (sg) used.add(sg.a < sg.b ? `${sg.a}-${sg.b}` : `${sg.b}-${sg.a}`);
+      }
     }
   };
   markRoute(before);
@@ -682,12 +770,18 @@ function fromOsm(
   // Context: every other road segment near the junction, joined into runs.
   const context = contextStrips(g, used);
 
-  // Elevation relative to the approach level at the junction.
-  const L0 = approach.layer[approach.layer.length - 1] ?? 0;
-  elevate(approach, L0, 0);
-  elevate(taken, L0, 0);
-  for (const o of others) elevate(o, L0, 0);
-  for (const c of context) elevate(c, L0, null);
+  // Heights: ground plus structures, relative to the approach at the split.
+  const groundFn = terrainFn(opts.terrain, frame);
+  const model = new VerticalModel(osm, frame, { radius: 800, ground: groundFn });
+  const jTagsRoad = approach.segTags[approach.segTags.length - 1];
+  const datum = model.heightAt(J.p, jTagsRoad);
+  const structJ = model.structureAt(J.p, jTagsRoad);
+  for (const st of [approach, taken, ...others, ...context]) {
+    st.h = st.pts.map((p, i) => model.heightAt(p, st.segTags[i]) - datum);
+    st.struct = st.pts.map((p, i) => model.structureAt(p, st.segTags[i]) - structJ);
+  }
+  // Without terrain the ground is flat at the base of the structures.
+  const ground = sceneGround(opts.terrain, frame, datum, -datum);
 
   const roads: RoadStrip[] = [...context, ...others, approach, taken].filter((r) => r.pts.length >= 2);
 
@@ -725,7 +819,9 @@ function fromOsm(
     const probeS = isMerge ? cum[cum.length - 1] - 90 : 90;
     const hb = isMerge ? headingAt(st.pts, cum, probeS, 40) : headingAt(st.pts, cum, Math.min(probeS, cum[cum.length - 1] - 20), 40);
     const delta = angleDiff(isMerge ? takenBrg : approachBrg, hb);
-    const hAt = isMerge ? 0 : st.h[Math.min(st.h.length - 1, Math.round(140 / RESAMPLE))] ?? 0;
+    // Signed biggest change of structure level on this branch within 250 m of the split.
+    let hAt = 0;
+    if (!isMerge) for (let i = 0; i < st.s.length && st.s[i] <= 250; i++) if (Math.abs(st.struct[i]) > Math.abs(hAt)) hAt = st.struct[i];
     const expresswayBranch = classOf(firstTags) === 'motorway' || refs.some((r) => /^E\d/i.test(r));
     return {
       id: st.id,
@@ -757,7 +853,8 @@ function fromOsm(
   }
 
   slantArrows(signs, cand.kind);
-  const vert = verticalOf(taken, others);
+  const tunnelAhead = (isMerge ? approach : taken).tunnel.some(Boolean);
+  const profile = profileOf(approach, taken, others, isMerge, structJ, tunnelAhead, (p) => (groundFn ? groundFn(p) - datum : ground.level));
   return {
     roads,
     route: route_,
@@ -768,8 +865,10 @@ function fromOsm(
     signs,
     junctionName: localized(jTags, 'name', lang),
     exitRef: cand.kind === 'exit' ? exitRef : undefined,
-    vertical: vert,
+    vertical: verticalOf(profile.kind),
     expressway: approachExpressway,
+    ground,
+    profile,
   };
 }
 
@@ -788,26 +887,129 @@ function findJunctionNode(osm: OsmData, frame: LocalFrame) {
   return best;
 }
 
-function verticalOf(taken: Strip, others: Strip[]): Vertical {
-  const peak = (st: Strip) => {
-    let hi = 0;
-    let lo = 0;
-    for (let i = 0; i < st.s.length; i++) {
-      if (st.s[i] > 220) break;
-      hi = Math.max(hi, st.h[i]);
-      lo = Math.min(lo, st.h[i]);
+function verticalOf(kind: ProfileKind): Vertical {
+  if (kind === 'flyover' || kind === 'ascend') return 'up';
+  if (kind === 'underpass' || kind === 'tunnel' || kind === 'descend') return 'down';
+  return kind === 'level' ? 'level' : null;
+}
+
+/** Ground function in scene coordinates from a terrain patch. */
+function terrainFn(terrain: TerrainPatch | null | undefined, frame: LocalFrame): ((p: XY) => number) | undefined {
+  if (!terrain) return undefined;
+  const at0 = terrain.at(frame.toLngLat(0, 0));
+  if (at0 == null) return undefined;
+  return (p: XY) => terrain.at(frame.toLngLat(p[0], p[1])) ?? at0;
+}
+
+/** Ground grid for rendering, relative to the approach at the split. */
+function sceneGround(terrain: TerrainPatch | null | undefined, frame: LocalFrame, datum: number, flatLevel: number): SceneGround {
+  const fn = terrainFn(terrain, frame);
+  if (!fn) return { level: flatLevel };
+  const half = 900;
+  const cell = 30;
+  const n = Math.round((2 * half) / cell) + 1;
+  const h = new Float32Array(n * n);
+  let edge = 0;
+  let edgeN = 0;
+  for (let j = 0; j < n; j++)
+    for (let i = 0; i < n; i++) {
+      const v = fn([-half + i * cell, -half + j * cell]) - datum;
+      h[j * n + i] = v;
+      if (i === 0 || j === 0 || i === n - 1 || j === n - 1) {
+        edge += v;
+        edgeN++;
+      }
     }
-    return { hi, lo };
-  };
-  const t = peak(taken);
-  if (t.hi > 3) return 'up';
-  if (t.lo < -3) return 'down';
-  if (others.some((o) => {
-    const p = peak(o);
-    return p.hi > 3 || p.lo < -3;
-  }))
-    return 'level';
-  return null;
+  return { level: edge / edgeN, grid: { half, cell, n, h } };
+}
+
+/** Value of a strip array at distance s (linear between points), or null outside the strip. */
+function stripAt(st: Strip, arr: number[], s: number): number | null {
+  const ss = st.s;
+  if (s < ss[0] - 0.01 || s > ss[ss.length - 1] + 0.01) return null;
+  let lo = 0;
+  let hi = ss.length - 1;
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1;
+    if (ss[m] <= s) lo = m;
+    else hi = m;
+  }
+  const t = ss[hi] > ss[lo] ? clamp((s - ss[lo]) / (ss[hi] - ss[lo]), 0, 1) : 0;
+  return lerp(arr[lo], arr[hi], t);
+}
+
+/**
+ * Height profile of the route through the junction and what it means for the driver: up onto a
+ * flyover, down into an underpass or tunnel, down or up to street level, staying level while
+ * the other road climbs or dips, or just the lie of the land.
+ */
+function profileOf(
+  approach: Strip,
+  taken: Strip,
+  others: Strip[],
+  isMerge: boolean,
+  structJ: number,
+  tunnelAhead: boolean,
+  groundRel: (p: XY) => number,
+): VerticalProfile {
+  const s: number[] = [];
+  const h: number[] = [];
+  const structure: number[] = [];
+  const ground: number[] = [];
+  for (let d = PROFILE_FROM; d <= PROFILE_TO; d += 5) {
+    const st = d <= 0 ? approach : taken;
+    const hv = stripAt(st, st.h, d) ?? stripAt(d <= 0 ? taken : approach, (d <= 0 ? taken : approach).h, d);
+    if (hv == null) continue;
+    const sv = stripAt(st, st.struct, d) ?? 0;
+    const p = pointAtS(st, clamp(d, st.s[0], st.s[st.s.length - 1]));
+    s.push(d);
+    h.push(hv);
+    structure.push(sv);
+    ground.push(groundRel(p));
+  }
+  // The other road, from the split on (or up to the merge).
+  const main = [...others].sort((a, b) => Math.max(...b.lanes) - Math.max(...a.lanes))[0];
+  let other: VerticalProfile['other'];
+  if (main) {
+    const os: number[] = [];
+    const oh: number[] = [];
+    const from = isMerge ? PROFILE_FROM : 0;
+    const to = isMerge ? 0 : PROFILE_TO;
+    for (let d = from; d <= to; d += 5) {
+      const v = stripAt(main, main.h, d);
+      if (v == null) continue;
+      os.push(d);
+      oh.push(v);
+    }
+    if (os.length > 1) other = { s: os, h: oh };
+  }
+  // Our road's biggest change of structure level on the side of the split that matters.
+  let peak = { s: 0, h: 0 };
+  for (let i = 0; i < s.length; i++) {
+    if (isMerge ? s[i] > 0 : s[i] < 0) continue;
+    if (Math.abs(structure[i]) > Math.abs(peak.h)) peak = { s: s[i], h: structure[i] };
+  }
+  let otherPeak = 0;
+  if (main)
+    for (let i = 0; i < main.s.length; i++) {
+      const d = main.s[i];
+      if ((isMerge ? d > 0 || d < PROFILE_FROM : d < 0 || d > PROFILE_TO) || Math.abs(main.struct[i]) <= Math.abs(otherPeak)) continue;
+      otherPeak = main.struct[i];
+    }
+  let grade = 0;
+  for (let i = 1; i < s.length; i++) if (s[i] >= -150) grade = Math.max(grade, Math.abs(h[i] - h[i - 1]) / (s[i] - s[i - 1]));
+  // Merging: what matters is how we arrive, so a ramp coming up from below is a climb.
+  const change = isMerge ? -peak.h : peak.h;
+  let kind: ProfileKind;
+  if (change > 3) kind = (isMerge ? structJ > 3 : structJ >= -3) ? 'flyover' : 'ascend';
+  else if (change < -3) kind = (isMerge ? structJ < -3 : structJ <= 3) ? (tunnelAhead ? 'tunnel' : 'underpass') : 'descend';
+  else if (Math.abs(otherPeak) > 3) kind = 'level';
+  else {
+    const first = h[0] ?? 0;
+    const last = h[h.length - 1] ?? 0;
+    kind = last - first > 8 ? 'uphill' : last - first < -8 ? 'downhill' : 'flat';
+  }
+  return { s, h, structure, ground, other, peak, grade: Math.round(grade * 1000) / 10, kind };
 }
 
 function drivingLine(
@@ -937,6 +1139,8 @@ function schematic(
   step: Step,
   before: XY[],
   after: XY[],
+  frame: LocalFrame,
+  opts: SceneOptions,
 ): Built {
   const prev = route.steps[cand.stepIndex - 1];
   const highway = cand.highway;
@@ -1053,6 +1257,12 @@ function schematic(
   });
 
   slantArrows(signs, cand.kind);
+  // No road data: heights follow the terrain only, when it is known.
+  const groundFn = terrainFn(opts.terrain, frame);
+  const datum = groundFn ? groundFn([0, 0]) : 0;
+  if (groundFn) for (const st of [approach, taken, ...others]) st.h = st.pts.map((p) => groundFn(p) - datum);
+  const ground = sceneGround(opts.terrain, frame, datum, 0);
+  const profile = profileOf(approach, taken, others, isMerge, 0, false, (p) => (groundFn ? groundFn(p) - datum : 0));
   return {
     roads: [...others, approach, taken],
     route: drivingLine(approach, taken, isMerge, tg.offset, tg.lanes, 1, lw),
@@ -1064,6 +1274,8 @@ function schematic(
     exitRef: cand.kind === 'exit' ? step.exits?.split(';')[0] : undefined,
     vertical: null,
     expressway: highway,
+    ground,
+    profile,
   };
 }
 

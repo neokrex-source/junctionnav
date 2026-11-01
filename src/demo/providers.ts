@@ -5,11 +5,27 @@ import { labelRoutes, normalizeOsrm, type OsrmResponse, type OsrmRoute, type Osr
 import type { Route, RouteRequest, RouteResult, Router } from '../routing/types';
 import type { Category, PoiProvider, RawPoi } from '../search/categories';
 import { parseCoordinates, type Place, type PlaceSearchEngine } from '../search/places';
-import { buildDemo } from './network';
+import { buildDemo, DEMO_ORIGIN } from './network';
 import { buildDemoSurroundings } from './surroundings';
 import type { SurroundData, SurroundingsProvider } from '../junction/surroundings';
 import type { OsmWay } from '../junction/osmdata';
 import type { TunnelProvider } from '../nav/tunnels';
+import { DemoTerrainProvider } from '../junction/terrain';
+import type { XY } from '../geo/geo';
+
+/**
+ * Ground for the demo area (local metres from the demo origin): a gentle rise to the north,
+ * Bukit Demo (the hill the approach tunnel runs through) and a low ridge west of the JCT that
+ * the E1 branch climbs over.
+ */
+export function demoGround([x, y]: XY): number {
+  const bump = (cx: number, cy: number, rx: number, ry: number, h: number) => h * Math.exp(-2.2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2));
+  return 12 + 0.002 * y + bump(7, -400, 330, 300, 36) + bump(180, 3700, 220, 260, 14);
+}
+
+export function demoTerrain(): DemoTerrainProvider {
+  return new DemoTerrainProvider(demoGround, DEMO_ORIGIN);
+}
 
 /** Tunnel ways from the demo network, as Overpass would return them near the route. */
 export class DemoTunnelProvider implements TunnelProvider {

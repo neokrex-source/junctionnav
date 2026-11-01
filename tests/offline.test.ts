@@ -9,6 +9,8 @@ import { junctionData, tunnelWays } from '../src/offline/queries';
 import { OfflineRouter } from '../src/offline/router';
 import { normalizeOsrm, type OsrmResponse } from '../src/routing/osrm';
 import { CATEGORIES } from '../src/search/categories';
+import { detectJunctions } from '../src/junction/detect';
+import { buildScene } from '../src/junction/scene';
 import { demoPack, gridPack } from './offlineFixture';
 
 const demo = buildDemo();
@@ -128,6 +130,21 @@ describe('offline junction and tunnel data', () => {
     expect(ways.length).toBeGreaterThan(0);
     expect(ways.every((w) => w.tags.tunnel === 'yes')).toBe(true);
     expect(ways[0].tags['tunnel:name']).toBe('Terowong Bukit Demo');
+  });
+});
+
+describe('offline junction views', () => {
+  it('builds every junction view from offline road data, with flyover and underpass heights', () => {
+    const G = graph();
+    const r = routeOf(new OfflineRouter(G).route({ coords: [demo.start, demo.end], bearings: [0, null] }));
+    const js = detectJunctions(r);
+    expect(js.map((j) => j.kind)).toEqual(['fork', 'entry', 'merge', 'fork', 'exit']);
+    const scenes = js.map((j) => buildScene(r, j, junctionData(G, [j.location], 450)));
+    expect(scenes.every((sc) => sc.source === 'osm')).toBe(true);
+    expect(scenes[0].profile.kind).toBe('flyover');
+    expect(scenes[0].profile.peak.h).toBeCloseTo(6.8, 0);
+    expect(scenes[4].profile.kind).toBe('tunnel');
+    expect(scenes[4].exitRef).toBe('114');
   });
 });
 

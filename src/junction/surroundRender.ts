@@ -107,11 +107,33 @@ function triangulate(ring: XY[]): number[][] {
   }
 }
 
+/** Splits triangles until no edge is longer than `max` metres, so land use can lie on terrain. */
+function tessellate(tris: [XY, XY, XY][], max: number): [XY, XY, XY][] {
+  const out: [XY, XY, XY][] = [];
+  const stack = tris.slice();
+  while (stack.length) {
+    const t = stack.pop()!;
+    const d = [0, 1, 2].map((k) => Math.hypot(t[k][0] - t[(k + 1) % 3][0], t[k][1] - t[(k + 1) % 3][1]));
+    const k = d.indexOf(Math.max(...d));
+    if (d[k] <= max || out.length + stack.length > 60_000) {
+      out.push(t);
+      continue;
+    }
+    const a = t[k];
+    const b = t[(k + 1) % 3];
+    const c = t[(k + 2) % 3];
+    const m: XY = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    stack.push([a, m, c], [m, b, c]);
+  }
+  return out;
+}
+
 export function buildSurroundings(
   sc: SurroundScene,
   P: SurroundPalette,
   seed: number,
   focus: { pos: XY; heading: number },
+  ground: (x: number, y: number) => number = () => 0,
 ): Built {
   const objects: THREE.Object3D[] = [];
   const disposables: { dispose(): void }[] = [];
@@ -121,13 +143,15 @@ export function buildSurroundings(
   /** Distance ahead of the camera's position, to skip work behind it. */
   const ahead = (p: XY) => (p[0] - focus.pos[0]) * fwd[0] + (p[1] - focus.pos[1]) * fwd[1];
 
-  /* ---------- land use areas: flat, never occlude roads */
+  /* ---------- land use areas: on the ground, never occlude roads */
   const areaPos = new Map<AreaKind, number[]>();
+  const hilly = [focus.pos, [0, 0] as XY, [300, 300] as XY, [-300, 300] as XY].some((p) => Math.abs(ground(p[0], p[1]) - ground(0, 0)) > 0.5);
   for (const a of sc.areas) {
     const tris = triangulate(a.ring);
     if (!tris.length) continue;
     const arr = areaPos.get(a.kind) ?? areaPos.set(a.kind, []).get(a.kind)!;
-    for (const t of tris) for (const i of t) arr.push(...W(a.ring[i][0], a.ring[i][1], -0.03));
+    const flat = tris.map((t) => t.map((i) => a.ring[i]) as [XY, XY, XY]);
+    for (const t of hilly ? tessellate(flat, 40) : flat) for (const p of t) arr.push(...W(p[0], p[1], ground(p[0], p[1]) - 0.03));
   }
   const kinds: AreaKind[] = ['residential', 'commercial', 'industrial', 'farm', 'palm', 'forest', 'park', 'water'];
   kinds.forEach((k, idx) => {
@@ -153,7 +177,11 @@ export function buildSurroundings(
         const a = l.pts[i];
         const b = l.pts[i + 1];
         const h = l.width / 2;
-        const p = (q: XY, nn: XY, s: number) => W(q[0] + nn[0] * h * s, q[1] + nn[1] * h * s, -0.02);
+        const p = (q: XY, nn: XY, s: number) => {
+          const x = q[0] + nn[0] * h * s;
+          const y = q[1] + nn[1] * h * s;
+          return W(x, y, ground(x, y) - 0.02);
+        };
         pos.push(...p(a, n[i], -1), ...p(a, n[i], 1), ...p(b, n[i + 1], 1), ...p(a, n[i], -1), ...p(b, n[i + 1], 1), ...p(b, n[i + 1], -1));
       }
     }
@@ -190,8 +218,10 @@ export function buildSurroundings(
     const pal = b.kind === 'tower' ? P.towerWalls : b.kind === 'industrial' ? P.industrialWalls : P.walls;
     const wall = col.set(pal[Math.floor(r() * pal.length)]).clone();
     const roof = b.kind === 'house' ? col.set(P.roofs[Math.floor(r() * 2)]).clone() : wall.clone().multiplyScalar(0.86);
-    const base = b.kind === 'roof' ? b.height - 0.7 : 0;
-    const top = b.height;
+    // Buildings stand on the lowest ground under their footprint.
+    const g0 = Math.min(...ring.map((p) => ground(p[0], p[1])));
+    const base = g0 + (b.kind === 'roof' ? b.height - 0.7 : 0);
+    const top = g0 + b.height;
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i];
       const c = ring[(i + 1) % ring.length];
@@ -287,7 +317,7 @@ export function buildSurroundings(
       const s = 0.85 + r() * 0.3;
       m4.makeRotationY(r() * Math.PI);
       m4.scale(new THREE.Vector3(s, s, s));
-      const w = W(p[0], p[1], 0);
+      const w = W(p[0], p[1], ground(p[0], p[1]));
       m4.setPosition(w[0], w[1], w[2]);
       it.setMatrixAt(i, m4);
       ic.setMatrixAt(i, m4);
@@ -306,7 +336,7 @@ export function buildSurroundings(
     treeSpots.forEach((p, i) => {
       const s = 0.7 + r() * 0.8;
       m4.makeScale(s, s * (0.8 + r() * 0.5), s);
-      const w = W(p[0], p[1], 0);
+      const w = W(p[0], p[1], ground(p[0], p[1]));
       m4.setPosition(w[0], w[1], w[2]);
       ic.setMatrixAt(i, m4);
       ic.setColorAt(i, cols[i % cols.length]);

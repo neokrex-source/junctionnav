@@ -3,6 +3,8 @@ import { buildDemo } from '../src/demo/network';
 import { detectJunctions } from '../src/junction/detect';
 import { buildScene } from '../src/junction/scene';
 import { normalizeOsrm } from '../src/routing/osrm';
+import { demoTerrain } from '../src/demo/providers';
+import { groundAt } from '../src/junction/scene';
 
 const demo = buildDemo();
 const route = normalizeOsrm(structuredClone(demo.osrm), 'Demo')[0];
@@ -50,5 +52,51 @@ describe('demo junction scenes', () => {
       expect(sc.roads.length).toBeGreaterThanOrEqual(2);
       expect(sc.signs.some((s) => s.taken)).toBe(true);
     }
+  });
+});
+
+describe('junction heights', () => {
+  it('describes the climb onto the flyover with its height and grade', () => {
+    const sc = buildScene(route, js[0], demo.osm);
+    expect(sc.profile.kind).toBe('flyover');
+    expect(sc.profile.peak.h).toBeCloseTo(6.8, 0);
+    expect(sc.profile.peak.s).toBeGreaterThan(150);
+    expect(sc.profile.grade).toBeLessThanOrEqual(5);
+    // The road not taken stays on the ground.
+    expect(Math.max(...sc.profile.other!.h.map(Math.abs))).toBeLessThan(0.5);
+    // Without terrain the ground is flat at street level.
+    expect(sc.ground.level).toBeCloseTo(0, 5);
+  });
+
+  it('sees exit 114 drop under the road the expressway bridges', () => {
+    const sc = buildScene(route, js[4], demo.osm);
+    expect(sc.profile.kind).toBe('tunnel');
+    expect(sc.profile.peak.h).toBeLessThan(-6);
+    expect(Math.max(...sc.profile.other!.h)).toBeGreaterThan(5);
+    const signs = sc.signs.filter((s) => s.vertical);
+    expect(signs.find((s) => s.taken)?.vertical).toBe('down');
+  });
+
+  it('puts roads, ground and the profile on the terrain', async () => {
+    const terrain = await demoTerrain().fetch(js[3].location, 950);
+    const sc = buildScene(route, js[3], demo.osm, { terrain });
+    expect(sc.ground.grid).toBeTruthy();
+    // The E1 branch (not taken) climbs the ridge west of the JCT; ours stays low; no structures.
+    expect(Math.max(...sc.profile.other!.h)).toBeGreaterThan(5);
+    expect(sc.profile.structure.every((v) => Math.abs(v) < 0.5)).toBe(true);
+    expect(sc.vertical).toBeNull();
+    // Roads sit on the ground there.
+    const taken = sc.roads.find((r) => r.role === 'taken')!;
+    const i = Math.floor(taken.pts.length / 2);
+    expect(Math.abs(taken.h[i] - groundAt(sc.ground, taken.pts[i][0], taken.pts[i][1]))).toBeLessThan(1.5);
+  });
+
+  it('follows the terrain in a schematic view without road data', async () => {
+    const terrain = await demoTerrain().fetch(js[3].location, 950);
+    const sc = buildScene(route, js[3], null, { terrain });
+    expect(sc.source).toBe('schematic');
+    expect(sc.ground.grid).toBeTruthy();
+    const approach = sc.roads.find((r) => r.role === 'approach')!;
+    expect(approach.h[approach.h.length - 1]).toBeCloseTo(0, 5);
   });
 });

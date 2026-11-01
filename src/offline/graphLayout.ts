@@ -133,6 +133,9 @@ export const KEPT_TAGS = [
   'covered',
   'toll',
   'maxspeed',
+  // Headroom under bridges, for the junction view's deck heights.
+  'maxheight',
+  'maxheight:physical',
 ];
 
 export function parseTags(s: string): Record<string, string> {

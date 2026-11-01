@@ -556,12 +556,15 @@ button { cursor: pointer; }
   position: absolute;
   left: 10px;
   bottom: 10px;
+  z-index: 3;
   display: flex;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
   max-width: calc(100% - 120px);
+  pointer-events: none;
 }
-.jv-chip span {
+.jv-chip > span {
   background: rgba(8, 16, 12, 0.72);
   color: #fff;
   font-weight: 700;
@@ -584,6 +587,27 @@ button { cursor: pointer; }
 }
 .jv-lanes .lane { font-size: 26px; }
 .jv-tools { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; z-index: 3; }
+
+/* height pill in the junction chip: route height through the junction */
+.jv-chip .jv-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px 2px 4px;
+  background: var(--route);
+}
+.jv-chip .jv-profile[hidden] { display: none; }
+.jv-profile svg { display: block; flex: none; border-radius: 4px; background: rgba(255, 255, 255, 0.92); }
+.jv-profile .pv-ground { fill: #c5dfb0; }
+.jv-profile .pv-split { stroke: rgba(0, 0, 0, 0.3); stroke-width: 0.8; stroke-dasharray: 1.5 1.5; }
+.jv-profile .pv-other { fill: none; stroke: #6f7b87; stroke-width: 1.4; stroke-dasharray: 3 2; stroke-linecap: round; }
+.jv-profile .pv-route { fill: none; stroke: #1f5fd6; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.jv-profile .pv-car { fill: #fff; stroke: #1f5fd6; stroke-width: 1.6; }
+.jv-profile .pv-phrase::after { content: " ·"; }
+.jv-profile .pv-phrase[hidden] { display: none; }
+.jv-profile.is-down { background: #6a4bc4; }
+.jv[data-compact="true"] .jv-chip .jv-profile { padding: 2px 7px 2px 3px; gap: 5px; }
+.jv[data-compact="true"] .jv-profile .pv-phrase { display: none; }
 .jv-btn {
   min-width: 36px;
   height: 32px;
@@ -909,7 +933,7 @@ button { cursor: pointer; }
 .jv[data-compact="true"] .jv-dist-label { font-size: 11px; padding: 3px; }
 .jv[data-compact="true"] .jv-dist-track { width: 8px; }
 .jv[data-compact="true"] .jv-chip { left: 8px; bottom: 6px; gap: 4px; max-width: calc(100% - 96px); }
-.jv[data-compact="true"] .jv-chip span { font-size: 11.5px; padding: 3px 7px; border-radius: 6px; }
+.jv[data-compact="true"] .jv-chip > span { font-size: 11.5px; padding: 3px 7px; border-radius: 6px; }
 .jv[data-compact="true"] .jv-chip .jv-name { display: none; }
 .jv[data-compact="true"] .jv-tools { right: 6px; bottom: 6px; gap: 4px; }
 .jv[data-compact="true"] .jv-btn { height: 26px; min-width: 30px; font-size: 12px; padding: 0 6px; border-radius: 6px; }

@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { clamp, distToPolyline, lerp, rightNormals, rng, xyAt, type XY } from '../geo/geo';
-import { cameraPose, type JunctionScene, type RoadStrip } from './scene';
+import { cameraPose, groundAt, type JunctionScene, type RoadStrip, type SceneGround } from './scene';
 import { signCanvas, type SignTheme } from './signs';
 import { buildSurroundings, SURROUND_DAY, SURROUND_NIGHT } from './surroundRender';
 
@@ -157,14 +157,20 @@ function offsetPt(s: Sample, off: number, lift: number): number[] {
   return W(s.p[0] + s.n[0] * off, s.p[1] + s.n[1] * off, s.h + lift);
 }
 
+/** How far a strip point sits above (+) or below (-) the ground. */
+function above(st: RoadStrip, i: number, g: SceneGround | undefined): number {
+  return st.h[i] - groundAt(g, st.pts[i][0], st.pts[i][1]);
+}
+
 /** Index where a strip disappears into a tunnel portal, or -1. */
-function portalIndex(st: RoadStrip): number {
-  for (let i = 0; i < st.pts.length; i++) if (st.tunnel[i] && st.h[i] < -3.2) return i;
+function portalIndex(st: RoadStrip, g: SceneGround | undefined): number {
+  for (let i = 0; i < st.pts.length; i++) if (st.tunnel[i] && above(st, i, g) < -3.2) return i;
   return -1;
 }
 
-function hiddenUnderground(st: RoadStrip): boolean {
-  return st.h.every((h) => h < -3) || (st.role === 'context' && st.tunnel.every(Boolean) && st.h.some((h) => h < -1));
+function hiddenUnderground(st: RoadStrip, g: SceneGround | undefined): boolean {
+  const depth = st.pts.map((_, i) => above(st, i, g));
+  return depth.every((d) => d < -3) || (st.role === 'context' && st.tunnel.every(Boolean) && depth.some((d) => d < -1));
 }
 
 export class JunctionRenderer {
@@ -400,9 +406,10 @@ export class JunctionRenderer {
     groundGeo.rotateX(-Math.PI / 2);
     this.disposables.push(groundGeo);
     const ground = new THREE.Mesh(groundGeo, this.mat(P.ground, { depthWrite: false }));
-    ground.position.y = -0.05;
+    ground.position.y = jv.ground.level - 0.05;
     ground.renderOrder = -10;
     this.scene3.add(ground);
+    if (jv.ground.grid) this.addTerrain(jv.ground);
     this.addHills();
 
     const asphalt = new Acc();
@@ -416,15 +423,15 @@ export class JunctionRenderer {
     const tunnel = new Acc();
     const deck = new Acc();
 
-    const strips = jv.roads.filter((r) => !hiddenUnderground(r));
+    const strips = jv.roads.filter((r) => !hiddenUnderground(r, jv.ground));
     for (const st of strips) {
-      const portal = portalIndex(st);
+      const portal = portalIndex(st, jv.ground);
       const sub = portal >= 0 ? truncate(st, portal + 1) : st;
       if (sub.pts.length < 2) continue;
       const smp = new StripSampler(sub);
       const target = st.role === 'approach' || st.role === 'taken' ? asphaltRoute : st.cls === 'minor' ? asphaltMinor : asphalt;
       this.ribbonStrip(smp, target, (s) => -(s.w / 2 + sub.shoulder), (s) => s.w / 2 + sub.shoulder, 0);
-      if (sub.h.some((v) => v > 2)) this.deckOverlay(smp, deck);
+      if (sub.h.some((_, i) => above(sub, i, jv.ground) > 2)) this.deckOverlay(smp, deck);
       this.markings(smp, marks, edges);
       if (st.guardrail) this.guardrails(smp, rails, strips.filter((o) => o !== st));
       this.structures(smp, concrete, concreteDark);
@@ -445,7 +452,7 @@ export class JunctionRenderer {
     let blocked: ((p: XY) => boolean) | undefined;
     if (jv.surround) {
       const pose = cameraPose(jv, MAX_DIST);
-      const built = buildSurroundings(jv.surround, this.palette === NIGHT ? SURROUND_NIGHT : SURROUND_DAY, jv.seed, { pos: pose.pos, heading: pose.heading });
+      const built = buildSurroundings(jv.surround, this.palette === NIGHT ? SURROUND_NIGHT : SURROUND_DAY, jv.seed, { pos: pose.pos, heading: pose.heading }, (x, y) => groundAt(jv.ground, x, y));
       for (const o of built.objects) this.scene3.add(o);
       this.disposables.push(...built.disposables);
       blocked = built.blocked;
@@ -489,9 +496,10 @@ export class JunctionRenderer {
   private deckOverlay(smp: StripSampler, acc: Acc) {
     const st = smp.st;
     let prev: Sample | null = null;
+    const up = (x: Sample) => x.h - this.ground(x.p[0], x.p[1]);
     for (let d = 0; d <= smp.length + 0.01; d += 2) {
       const s = smp.at(Math.min(d, smp.length));
-      if (prev && (prev.h > 1.5 || s.h > 1.5)) {
+      if (prev && (up(prev) > 1.5 || up(s) > 1.5)) {
         const l = (x: Sample) => -(x.w / 2 + st.shoulder);
         const r = (x: Sample) => x.w / 2 + st.shoulder;
         acc.quad(offsetPt(prev, l(prev), 0.01), offsetPt(prev, r(prev), 0.01), offsetPt(s, r(s), 0.01), offsetPt(s, l(s), 0.01));
@@ -562,6 +570,11 @@ export class JunctionRenderer {
   private structures(smp: StripSampler, concrete: Acc, dark: Acc) {
     const st = smp.st;
     const VIADUCT = 4.6;
+    const g = (p: XY) => this.ground(p[0], p[1]);
+    // With terrain, roads in a shallow cut or on low fill read as on the ground: no walls.
+    const hilly = !!this.jv?.ground.grid;
+    const RAISED = hilly ? 1.2 : 0.25;
+    const SUNKEN = hilly ? -1.2 : -0.6;
     let lastPillar = -Infinity;
     let prev: Sample | null = null;
     for (let d = 0; d <= smp.length + 0.01; d += 2) {
@@ -570,26 +583,27 @@ export class JunctionRenderer {
         for (const sgn of [-1, 1]) {
           const offA = sgn * (prev.w / 2 + st.shoulder);
           const offB = sgn * (s.w / 2 + st.shoulder);
-          const hi = Math.max(prev.h, s.h);
-          if (hi > 0.25) {
-            const pA = addN(prev, offA);
-            const pB = addN(s, offB);
+          const pA = addN(prev, offA);
+          const pB = addN(s, offB);
+          const gA = g(pA);
+          const gB = g(pB);
+          const hi = Math.max(prev.h - gA, s.h - gB);
+          if (hi > RAISED) {
             if (hi <= VIADUCT) {
               // Embankment wall from the ground up to the parapet.
-              concrete.quad(W(pA[0], pA[1], 0), W(pB[0], pB[1], 0), W(pB[0], pB[1], s.h + 0.9), W(pA[0], pA[1], prev.h + 0.9));
+              concrete.quad(W(pA[0], pA[1], gA), W(pB[0], pB[1], gB), W(pB[0], pB[1], s.h + 0.9), W(pA[0], pA[1], prev.h + 0.9));
             } else {
               dark.quad(W(pA[0], pA[1], prev.h - 1.4), W(pB[0], pB[1], s.h - 1.4), W(pB[0], pB[1], s.h), W(pA[0], pA[1], prev.h));
               concrete.quad(W(pA[0], pA[1], prev.h), W(pB[0], pB[1], s.h), W(pB[0], pB[1], s.h + 0.9), W(pA[0], pA[1], prev.h + 0.9));
             }
           }
-          if (s.h < -0.6 || prev.h < -0.6) {
-            const pA = addN(prev, offA);
-            const pB = addN(s, offB);
-            concrete.quad(W(pA[0], pA[1], prev.h), W(pB[0], pB[1], s.h), W(pB[0], pB[1], 0.35), W(pA[0], pA[1], 0.35));
+          if (s.h - gB < SUNKEN || prev.h - gA < SUNKEN) {
+            // Retaining wall from the road up to just above the ground.
+            concrete.quad(W(pA[0], pA[1], prev.h), W(pB[0], pB[1], s.h), W(pB[0], pB[1], gB + 0.35), W(pA[0], pA[1], gA + 0.35));
           }
         }
       }
-      if (s.h > VIADUCT && d - lastPillar > 24) {
+      if (s.h - g(s.p) > VIADUCT && d - lastPillar > 24) {
         lastPillar = d;
         const offs = s.w > 12 ? [-s.w / 4, s.w / 4] : [0];
         for (const o of offs) this.pillar(s, o, Math.min(2.6, s.w * 0.35), dark, concrete);
@@ -610,10 +624,11 @@ export class JunctionRenderer {
       [c[0] - s.n[0] * hw + t[0] * hd, c[1] - s.n[1] * hw + t[1] * hd],
     ];
     const top = s.h - 1.3;
+    const foot = this.ground(c[0], c[1]) - 0.3;
     for (let i = 0; i < 4; i++) {
       const a = corners[i];
       const b = corners[(i + 1) % 4];
-      (i % 2 ? dark : light).quad(W(a[0], a[1], 0), W(b[0], b[1], 0), W(b[0], b[1], top), W(a[0], a[1], top));
+      (i % 2 ? dark : light).quad(W(a[0], a[1], foot), W(b[0], b[1], foot), W(b[0], b[1], top), W(a[0], a[1], top));
     }
   }
 
@@ -627,12 +642,56 @@ export class JunctionRenderer {
     const R: XY = [p[0] + n[0] * half, p[1] + n[1] * half];
     tunnel.quad(W(L[0], L[1], h), W(R[0], R[1], h), W(R[0], R[1], h + clear), W(L[0], L[1], h + clear));
     // Headwall above the opening up to ground level and a bit beyond the sides.
-    const top = 0.9;
+    const top = Math.max(h + clear + 0.6, this.ground(p[0], p[1]) + 0.9);
     const L2: XY = [p[0] - n[0] * (half + 2), p[1] - n[1] * (half + 2)];
     const R2: XY = [p[0] + n[0] * (half + 2), p[1] + n[1] * (half + 2)];
     concrete.quad(W(L2[0], L2[1], h + clear), W(R2[0], R2[1], h + clear), W(R2[0], R2[1], top), W(L2[0], L2[1], top));
     concrete.quad(W(L2[0], L2[1], h), W(L[0], L[1], h), W(L[0], L[1], h + clear), W(L2[0], L2[1], h + clear));
     concrete.quad(W(R[0], R[1], h), W(R2[0], R2[1], h), W(R2[0], R2[1], h + clear), W(R[0], R[1], h + clear));
+  }
+
+  /** Ground height at a scene point. */
+  private ground(x: number, y: number): number {
+    return groundAt(this.jv?.ground, x, y);
+  }
+
+  /** Terrain around the junction: a grid lit from the north-west so slopes read without lighting. */
+  private addTerrain(g: SceneGround) {
+    const gr = g.grid!;
+    const P = this.palette;
+    const n = gr.n;
+    const pos = new Float32Array(n * n * 3);
+    const col = new Float32Array(n * n * 3);
+    const base = new THREE.Color(P.ground);
+    const c = new THREE.Color();
+    const at = (i: number, j: number) => gr.h[clamp(j, 0, n - 1) * n + clamp(i, 0, n - 1)];
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const x = -gr.half + i * gr.cell;
+        const y = -gr.half + j * gr.cell;
+        const w = W(x, y, at(i, j) - 0.08);
+        pos.set(w, (j * n + i) * 3);
+        const dhdx = (at(i + 1, j) - at(i - 1, j)) / (2 * gr.cell);
+        const dhdy = (at(i, j + 1) - at(i, j - 1)) / (2 * gr.cell);
+        const shade = clamp(1 + 2.2 * (dhdx - dhdy), 0.72, 1.18);
+        c.copy(base).multiplyScalar(shade);
+        col.set([c.r, c.g, c.b], (j * n + i) * 3);
+      }
+    const idx: number[] = [];
+    for (let j = 0; j < n - 1; j++)
+      for (let i = 0; i < n - 1; i++) {
+        const a = j * n + i;
+        idx.push(a, a + 1, a + n + 1, a, a + n + 1, a + n);
+      }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    this.disposables.push(geo);
+    const mesh = new THREE.Mesh(geo, this.mat('#ffffff', { vertexColors: true, depthWrite: false }));
+    mesh.renderOrder = -9.5;
+    mesh.frustumCulled = false;
+    this.scene3.add(mesh);
   }
 
   private addHills() {
@@ -648,7 +707,8 @@ export class JunctionRenderer {
       const a1 = ((i + 1) / seg) * Math.PI * 2;
       const p0 = [Math.sin(a0) * R, Math.cos(a0) * R];
       const p1 = [Math.sin(a1) * R, Math.cos(a1) * R];
-      acc.quad(W(p0[0], p0[1], -2), W(p1[0], p1[1], -2), W(p1[0], p1[1], heights[i + 1]), W(p0[0], p0[1], heights[i]));
+      const base = this.jv!.ground.level;
+      acc.quad(W(p0[0], p0[1], base - 2), W(p1[0], p1[1], base - 2), W(p1[0], p1[1], base + heights[i + 1]), W(p0[0], p0[1], base + heights[i]));
     }
     const g = acc.geometry()!;
     this.disposables.push(g);
@@ -695,7 +755,7 @@ export class JunctionRenderer {
     const c2 = new THREE.Color(P.treeAlt);
     spots.forEach((sp, i) => {
       m.makeScale(sp.s, sp.s * (0.85 + r() * 0.4), sp.s);
-      const w = W(sp.p[0], sp.p[1], 0);
+      const w = W(sp.p[0], sp.p[1], this.ground(sp.p[0], sp.p[1]));
       m.setPosition(w[0], w[1], w[2]);
       crowns.setMatrixAt(i, m);
       trunks.setMatrixAt(i, m);
@@ -788,7 +848,7 @@ export class JunctionRenderer {
     const sOf = (rel: number) => clamp(rel - r.s[0], 0, smp.length);
     const start = sOf(-this.dist + 16);
     const takenRoad = jv.roads.find((x) => x.role === 'taken');
-    const portal = takenRoad ? portalIndex(takenRoad) : -1;
+    const portal = takenRoad ? portalIndex(takenRoad, jv.ground) : -1;
     let endRel = jv.kind === 'merge' ? 150 : 135;
     if (portal >= 0 && takenRoad) endRel = Math.min(endRel, takenRoad.s[portal] + 3);
     const end = sOf(endRel);

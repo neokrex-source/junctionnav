@@ -1,7 +1,7 @@
 /** JunctionNav app controller: search → place → directions → navigate. */
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/app.css';
-import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, DemoTunnelProvider } from './demo/providers';
+import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
 import { haversine, type LngLat } from './geo/geo';
 import { detectJunctions, type JunctionCandidate } from './junction/detect';
@@ -10,6 +10,7 @@ import { buildScene, type JunctionScene } from './junction/scene';
 import { OverpassSurroundProvider, SurroundCache, type SurroundData } from './junction/surroundings';
 import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
 import { ZoomMap } from './junction/zoomMap';
+import { TerrainCache, TerrariumProvider, type TerrainPatch } from './junction/terrain';
 import { MapView, routeBounds } from './map/mapView';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import type { StyleSpecification } from 'maplibre-gl';
@@ -98,6 +99,9 @@ class App {
   osmReady = new Map<string, OsmData | null>();
   surr!: SurroundCache;
   surroundReady = new Map<string, SurroundData>();
+  /** Ground elevation around junctions (online terrain tiles; the demo has its own hills). */
+  terrain = new TerrainCache(new TerrariumProvider());
+  terrainReady = new Map<string, TerrainPatch | null>();
   search!: PlaceSearchEngine;
   /** Stable engine handed to search boxes; forwards to whichever search is active (real or demo). */
   private searchProxy: PlaceSearchEngine = {
@@ -205,6 +209,8 @@ class App {
     this.cats = new CategorySearch(new HybridPois(new OverpassPoiProvider(overpass), sw));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
     this.search = new HybridSearch(() => photon, sw);
+    this.terrain = new TerrainCache(new TerrariumProvider());
+    this.terrainReady.clear();
     this.surroundReady.clear();
     this.osmReady.clear();
     this.sceneCache.clear();
@@ -1005,14 +1011,15 @@ class App {
   private sceneFor(route: Route, cand: JunctionCandidate): JunctionScene {
     const osm = this.osmReady.get(JunctionDataCache.key(cand.location)) ?? null;
     const surround = this.settings.jvSurround ? this.surroundReady.get(SurroundCache.key(cand.location)) ?? null : null;
-    const key = `${cand.id}|${osm ? 'osm' : 'schematic'}|${surround ? 'surr' : ''}|${this.L}`;
+    const terrain = this.terrainReady.get(TerrainCache.key(cand.location)) ?? null;
+    const key = `${cand.id}|${osm ? 'osm' : 'schematic'}|${surround ? 'surr' : ''}|${terrain ? 'dem' : ''}|${this.L}`;
     let sc = this.sceneCache.get(key);
     if (!sc) {
       try {
-        sc = buildScene(route, cand, osm, { lang: this.L, surround });
+        sc = buildScene(route, cand, osm, { lang: this.L, surround, terrain });
       } catch (err) {
         console.warn('[junction] OSM scene failed, using schematic', err);
-        sc = buildScene(route, cand, null, { lang: this.L });
+        sc = buildScene(route, cand, null, { lang: this.L, terrain });
       }
       this.sceneCache.set(key, sc);
     }
@@ -1028,6 +1035,18 @@ class App {
       if (!d) return;
       this.osmReady.set(k, d);
       then();
+    });
+  }
+
+  /** Get the ground elevation around a junction, then call back to redraw with hills and valleys. */
+  private loadTerrain(cand: JunctionCandidate, then: () => void) {
+    const k = TerrainCache.key(cand.location);
+    if (this.terrainReady.has(k)) return;
+    const cache = this.terrain;
+    cache.get(cand.location).then((t) => {
+      if (cache !== this.terrain || this.terrainReady.has(k)) return;
+      this.terrainReady.set(k, t);
+      if (t) then();
     });
   }
 
@@ -1052,6 +1071,7 @@ class App {
     const refresh = () => this.preview?.update(this.sceneFor(route, cand), this.themeFor(route), o);
     this.loadDetail(cand, refresh);
     this.loadSurround(cand, refresh);
+    this.loadTerrain(cand, refresh);
   }
 
   /* ================================================================ demo */
@@ -1063,6 +1083,8 @@ class App {
     this.jdata = new JunctionDataCache(new DemoJunctionProvider());
     this.surr = new SurroundCache(new DemoSurroundProvider());
     this.tunnels.provider = new DemoTunnelProvider();
+    this.terrain = new TerrainCache(demoTerrain());
+    this.terrainReady.clear();
     this.surroundReady.clear();
     this.cats = new CategorySearch(new DemoPoiProvider());
     this.search = new DemoPlaceSearch();
@@ -1610,9 +1632,11 @@ class App {
     this.tunnels.ensure(s);
     // Surroundings are heavier: only the next junctions within a few kilometres.
     for (const j of this.engine.junctions.filter((c) => c.s >= s - 50 && c.s - s <= 4000).slice(0, 3)) {
-      this.loadSurround(j, () => {
+      const redraw = () => {
         if (this.activeJ === j.id) this.showJunction(j, true);
-      });
+      };
+      this.loadSurround(j, redraw);
+      this.loadTerrain(j, redraw);
     }
     const upcoming = this.engine.junctions.filter((j) => j.s >= s - 50 && j.s <= s + 12000).slice(0, 12);
     const todo = upcoming.filter((j) => !this.osmReady.has(JunctionDataCache.key(j.location)));
@@ -1650,7 +1674,12 @@ class App {
       const cand = p.junction.cand;
       if (this.activeJ !== cand.id) {
         this.activeJ = cand.id;
-        if (!this.osmReady.has(JunctionDataCache.key(cand.location)) || !this.surroundReady.has(SurroundCache.key(cand.location))) this.prefetch(p.s);
+        if (
+          !this.osmReady.has(JunctionDataCache.key(cand.location)) ||
+          !this.surroundReady.has(SurroundCache.key(cand.location)) ||
+          !this.terrainReady.has(TerrainCache.key(cand.location))
+        )
+          this.prefetch(p.s);
         this.showJunction(cand);
       }
       if (this.panel.visible) {

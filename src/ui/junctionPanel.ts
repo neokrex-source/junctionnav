@@ -5,6 +5,7 @@ import { signCanvas, signHeight, type SignTheme } from '../junction/signs';
 import { formatDistance, type LangCode, type Units } from '../routing/instructions';
 import { h } from './dom';
 import { laneIcon } from './icons';
+import { profilePhrase, ProfileView } from './profileView';
 
 export type JvMode = 'illustration' | 'map' | 'both';
 
@@ -12,11 +13,6 @@ const KIND: Record<LangCode, Record<string, string>> = {
   en: { exit: 'Exit', entry: 'Entrance ramp', fork: 'Junction', merge: 'Merge', split: 'Road splits' },
   ms: { exit: 'Susur keluar', entry: 'Susur masuk', fork: 'Persimpangan', merge: 'Bergabung', split: 'Jalan berpecah' },
   ja: { exit: '出口', entry: '入口', fork: '分岐', merge: '合流', split: '分岐' },
-};
-const VERT: Record<LangCode, Record<string, string>> = {
-  en: { up: 'Up the ramp onto the flyover', down: 'Down into the underpass', level: 'Stay at street level' },
-  ms: { up: 'Naik ke jejantas', down: 'Turun ke lorong bawah', level: 'Kekal di aras jalan' },
-  ja: { up: '高架へ上がります', down: 'アンダーパスへ下ります', level: '地上の道を進みます' },
 };
 
 export interface PanelShowOptions {
@@ -43,6 +39,7 @@ export class JunctionPanel {
   private distFill: HTMLElement;
   private modeBtn: HTMLButtonElement;
   private fallback: HTMLElement;
+  private profileView = new ProfileView();
   private scene: JunctionScene | null = null;
   private theme: SignTheme | null = null;
   private opts: PanelShowOptions | null = null;
@@ -72,13 +69,13 @@ export class JunctionPanel {
     this.stage.append(
       this.signsEl,
       h('div', { class: 'jv-dist' }, this.distLabel, h('div', { class: 'jv-dist-track' }, this.distFill)),
-      this.chipEl,
       this.lanesEl,
       this.fallback,
     );
     // Tools sit on the panel, not the 3D stage, so they stay reachable in Map mode.
     const tools = h('div', { class: 'jv-tools' }, this.modeBtn, close);
-    this.el = h('section', { class: 'jv', hidden: true, 'aria-label': 'Junction view' }, this.stage, this.mapSlot, tools);
+    // The chip (kind, exit, height pill) sits on the panel so it shows in map mode as well.
+    this.el = h('section', { class: 'jv', hidden: true, 'aria-label': 'Junction view' }, this.stage, this.mapSlot, this.chipEl, tools);
     parent.append(this.el);
     this.renderer = new JunctionRenderer(this.stage);
     this.stage.prepend(this.renderer.canvas, this.renderer.labelLayer);
@@ -115,18 +112,23 @@ export class JunctionPanel {
     this.renderLanes();
     const kind = KIND[opts.lang][scene.kind] ?? '';
     const name = [scene.exitRef ? `${theme.exitLabel || '#'} ${scene.exitRef}`.trim() : '', scene.junctionName].filter(Boolean).join(' · ');
-    const vert = scene.vertical ? VERT[opts.lang][scene.vertical] : '';
-    this.chipEl.innerHTML = '';
-    this.chipEl.append(
+    // What the road does here, from the height model: up onto a flyover, down to street level...
+    this.profileView.show(scene, opts.lang, opts.units);
+    const vert = scene.vertical && this.profileView.el.hidden ? profilePhrase(scene.profile.kind, opts.lang) : '';
+    this.chipEl.replaceChildren(
       h('span', { class: 'jv-kind' }, kind),
       name ? h('span', { class: 'jv-name' }, name) : '',
+      this.profileView.el,
       vert ? h('span', { class: `jv-vert is-${scene.vertical}` }, vert) : '',
     );
+    this.profileView.el.classList.toggle('is-up', scene.vertical === 'up');
+    this.profileView.el.classList.toggle('is-down', scene.vertical === 'down');
   }
 
   setDistance(d: number) {
     if (!this.opts || !this.scene) return;
     this.renderer.setDistance(d);
+    this.profileView.setDistance(d);
     const frac = Math.max(0, Math.min(1, d / Math.max(1, this.opts.total)));
     this.distFill.style.transform = `scaleY(${frac})`;
     this.distLabel.textContent = formatDistance(Math.max(0, d), this.opts.units);
