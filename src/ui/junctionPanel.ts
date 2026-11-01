@@ -8,6 +8,9 @@ import { laneIcon } from './icons';
 import { profilePhrase, ProfileView } from './profileView';
 
 export type JvMode = 'illustration' | 'map' | 'both';
+/** How big the junction view is next to the map: a quarter of the screen, two fifths, or all of it. */
+export type JvSize = '1:3' | '2:3' | 'full';
+export const JV_SIZES: JvSize[] = ['1:3', '2:3', 'full'];
 
 const KIND: Record<LangCode, Record<string, string>> = {
   en: { exit: 'Exit', entry: 'Entrance ramp', fork: 'Junction', merge: 'Merge', split: 'Road splits' },
@@ -46,10 +49,12 @@ export class JunctionPanel {
   private ro: ResizeObserver;
   private lastSignWidth = 0;
   private mode: JvMode = 'illustration';
+  private size: JvSize = '1:3';
+  private sizeBtn: HTMLButtonElement;
 
   constructor(
     parent: HTMLElement,
-    private cb: { onClose?: () => void; onModeChange?: (m: JvMode) => void } = {},
+    private cb: { onClose?: () => void; onModeChange?: (m: JvMode) => void; onSizeChange?: (s: JvSize) => void } = {},
   ) {
     this.stage = h('div', { class: 'jv-stage' });
     this.mapSlot = h('div', { class: 'jv-map', hidden: true });
@@ -61,6 +66,12 @@ export class JunctionPanel {
     this.fallback = h('div', { class: 'jv-fallback', hidden: true }, '3D view needs WebGL');
     this.modeBtn = h('button', { class: 'jv-btn', type: 'button', title: 'Switch view', 'aria-label': 'Switch junction view' }) as HTMLButtonElement;
     this.modeBtn.addEventListener('click', () => this.cycleMode());
+    this.sizeBtn = h('button', { class: 'jv-btn jv-size', type: 'button', title: 'View size', hidden: !cb.onSizeChange }) as HTMLButtonElement;
+    this.sizeBtn.addEventListener('click', () => {
+      const next = JV_SIZES[(JV_SIZES.indexOf(this.size) + 1) % JV_SIZES.length];
+      this.setSize(next);
+      this.cb.onSizeChange?.(next);
+    });
     const close = h('button', { class: 'jv-btn', type: 'button', title: 'Hide', 'aria-label': 'Hide junction view', html: '&times;' });
     close.addEventListener('click', () => {
       this.hide();
@@ -73,9 +84,10 @@ export class JunctionPanel {
       this.fallback,
     );
     // Tools sit on the panel, not the 3D stage, so they stay reachable in Map mode.
-    const tools = h('div', { class: 'jv-tools' }, this.modeBtn, close);
+    const tools = h('div', { class: 'jv-tools' }, this.sizeBtn, this.modeBtn, close);
     // The chip (kind, exit, height pill) sits on the panel so it shows in map mode as well.
     this.el = h('section', { class: 'jv', hidden: true, 'aria-label': 'Junction view' }, this.stage, this.mapSlot, this.chipEl, tools);
+    this.setSize('1:3');
     parent.append(this.el);
     this.renderer = new JunctionRenderer(this.stage);
     this.stage.prepend(this.renderer.canvas, this.renderer.labelLayer);
@@ -145,6 +157,15 @@ export class JunctionPanel {
 
   get canvas(): HTMLCanvasElement {
     return this.renderer.canvas;
+  }
+
+  /** Shows the size on its button (the app lays the view out; see layoutJv in main.ts). */
+  setSize(s: JvSize) {
+    this.size = s;
+    this.el.dataset.size = s;
+    this.sizeBtn.textContent = s === 'full' ? 'Full' : s;
+    const next = JV_SIZES[(JV_SIZES.indexOf(s) + 1) % JV_SIZES.length];
+    this.sizeBtn.setAttribute('aria-label', `Junction view size ${s === 'full' ? 'full screen' : s}. Tap for ${next === 'full' ? 'full screen' : next}`);
   }
 
   private cycleMode() {

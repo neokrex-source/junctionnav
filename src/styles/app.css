@@ -612,7 +612,8 @@ button { cursor: pointer; }
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  max-width: calc(100% - 120px);
+  /* Clear of the tools on the right (size, mode, close). */
+  max-width: calc(100% - 170px);
   pointer-events: none;
 }
 .jv-chip > span {
@@ -810,7 +811,35 @@ button { cursor: pointer; }
   display: grid;
   place-items: center;
 }
-.puck svg { width: 34px; height: 34px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 8px var(--route-glow)); }
+.puck svg { position: relative; z-index: 1; width: 34px; height: 34px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 8px var(--route-glow)); }
+/* Radar pulse: two rings spreading from the car on the ground (the marker lies flat on the tilted
+   map, so the rings do too), one after the other. Compositor-only (transform and opacity). */
+.puck::before,
+.puck::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  border: 2px solid var(--route);
+  background: radial-gradient(circle, transparent 35%, var(--route-glow) 70%, transparent 72%);
+  opacity: 0;
+  pointer-events: none;
+  animation: radar 2.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+  will-change: transform, opacity;
+}
+.puck::after { animation-delay: 1.2s; }
+@keyframes radar {
+  0% { transform: scale(0.7); opacity: 0.85; }
+  70% { opacity: 0.18; }
+  100% { transform: scale(3.4); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .puck::before, .puck::after { animation: none; }
+}
 .puck .p-ring { fill: #ffffff; }
 .puck .p-core { fill: var(--route); }
 .puck .p-arrow { fill: var(--route-ink); }
@@ -989,6 +1018,10 @@ button { cursor: pointer; }
 @media (max-width: 480px) {
   .sim { max-width: calc(100% - 90px); }
 }
+/* Landscape: the bar sits right of the guidance and stops short of the recenter button. */
+@media (min-aspect-ratio: 5/4) and (min-width: 700px) {
+  .sim { max-width: calc(100% - min(46vw, 640px) - 100px); }
+}
 
 /* tunnel card */
 .tcard {
@@ -1038,7 +1071,7 @@ button { cursor: pointer; }
 .jv[data-compact="true"] .jv-dist { top: 6px; right: 6px; bottom: 38px; width: 24px; gap: 4px; }
 .jv[data-compact="true"] .jv-dist-label { font-size: 11px; padding: 3px; }
 .jv[data-compact="true"] .jv-dist-track { width: 8px; }
-.jv[data-compact="true"] .jv-chip { left: 8px; bottom: 6px; gap: 4px; max-width: calc(100% - 96px); }
+.jv[data-compact="true"] .jv-chip { left: 8px; bottom: 6px; gap: 4px; max-width: calc(100% - 136px); }
 .jv[data-compact="true"] .jv-chip > span { font-size: 11.5px; padding: 3px 7px; border-radius: 6px; }
 .jv[data-compact="true"] .jv-chip .jv-name { display: none; }
 .jv[data-compact="true"] .jv-tools { right: 6px; bottom: 6px; gap: 4px; }
@@ -1360,3 +1393,15 @@ button { cursor: pointer; }
 }
 .maplibregl-ctrl-attrib a { color: var(--ink); }
 :root[data-theme="dark"] .maplibregl-ctrl-attrib-button { filter: invert(1) hue-rotate(180deg); }
+
+/* Junction view size: 1:3 and 2:3 come from --jv-h; full screen also spans the whole width when
+   docked beside the map, and the map's own controls step aside while it is up. */
+.guide[data-jv-size="full"]:has(.jv:not([hidden])) .jv { border-bottom-width: 3px; border-radius: 0 0 14px 14px; box-shadow: var(--shadow); }
+@media (min-aspect-ratio: 5/4) and (min-width: 700px) {
+  .guide[data-jv-size="full"]:has(.jv:not([hidden])) { width: auto; right: 0; }
+  .app:has(.guide[data-jv-size="full"] .jv:not([hidden])) .foot,
+  .app:has(.guide[data-jv-size="full"] .jv:not([hidden])) .sim { visibility: hidden; }
+}
+.app:has(.guide[data-jv-size="full"] .jv:not([hidden])) .recenter,
+.app:has(.guide[data-jv-size="full"] .jv:not([hidden])) .scale-bar { visibility: hidden; }
+.jv-btn.jv-size { font-variant-numeric: tabular-nums; min-width: 40px; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoSpan, nearestDetent, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, zoomForSpan } from '../src/map/mapView';
+import { autoSpan, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, zoomForSpan } from '../src/map/mapView';
 
 describe('navigation map scale', () => {
   it('is wider at expressway speed and closes in to 100 m at a turn', () => {
@@ -53,5 +53,35 @@ describe('navigation map scale', () => {
     expect(nearestDetent(240)).toBe(200);
     expect(nearestDetent(260)).toBe(300);
     expect(nearestDetent(850)).toBe(1000);
+  });
+});
+
+describe('impulses along the route', () => {
+  const line = {
+    length: 5000,
+    slice: (a: number, b: number) => [
+      [101.7 + a / 1e5, 3.1],
+      [101.7 + b / 1e5, 3.1],
+    ] as [number, number][],
+  };
+  it('runs three streaks ahead of the car, sized to the map scale', () => {
+    const f = pulseFeatures(line, 1000, 200, 0.37);
+    expect(f.length).toBe(3);
+    // A 200 m scale: a 1.6 km stretch ahead, streaks of 90 m.
+    for (const p of f) {
+      const [a, b] = p.geometry.coordinates.map((c) => (c[0] - 101.7) * 1e5);
+      expect(a).toBeGreaterThanOrEqual(1000);
+      expect(a).toBeLessThan(1000 + 1600);
+      expect(b - a).toBeCloseTo(90, 5);
+      expect(p.properties.a).toBeGreaterThanOrEqual(0);
+      expect(p.properties.a).toBeLessThanOrEqual(1);
+    }
+  });
+  it('moves forward over time and stays inside the route near the end', () => {
+    const at = (t: number) => (pulseFeatures(line, 0, 200, t)[0].geometry.coordinates[0][0] - 101.7) * 1e5;
+    expect(at(0.5)).toBeGreaterThan(at(0.4));
+    const end = pulseFeatures(line, 4800, 200, 1.1);
+    for (const p of end) expect((p.geometry.coordinates[1][0] - 101.7) * 1e5).toBeLessThanOrEqual(5000 + 1e-6);
+    expect(pulseFeatures(line, 4990, 200, 1)).toEqual([]);
   });
 });

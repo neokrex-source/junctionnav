@@ -1269,6 +1269,13 @@ class App {
         const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
         if (cand) this.loadGroundMap(cand, () => this.activeJ === cand.id && this.showJunction(cand, true));
       },
+      onSizeChange: (sz) => {
+        this.settings = { ...this.settings, jvSize: sz };
+        saveSettings(this.settings);
+        this.layoutJv();
+        this.syncZoomMap();
+        this.refollow();
+      },
     });
     e.guide.prepend(this.banner.el, this.banner.then, e.reroute);
     e.guide.append(this.tunnelCard.el);
@@ -1277,7 +1284,10 @@ class App {
     new ResizeObserver(relayout).observe(this.banner.el);
     new ResizeObserver(relayout).observe(this.banner.then);
     new ResizeObserver(relayout).observe(e.reroute);
-    window.addEventListener('resize', relayout);
+    window.addEventListener('resize', () => {
+      relayout();
+      this.refollow();
+    });
     this.banner.el.classList.add('is-tappable');
     this.banner.el.addEventListener('click', () => this.toggleNavOverlay('steps'));
     this.zoom = new ZoomMap(this.panel.mapSlot, ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : this.baseStyle());
@@ -1689,6 +1699,7 @@ class App {
     }
     this.setView('nav');
     this.map.startFollowing();
+    this.map.setPulsing(true);
     // Dead reckoning: keeps the position moving through tunnels when GPS fixes stop.
     window.clearInterval(this.drTimer);
     this.drTimer = window.setInterval(() => {
@@ -1705,6 +1716,7 @@ class App {
   }
 
   private endNav() {
+    this.map.setPulsing(false);
     const run = this.testRun;
     this.stopTest();
     if (run) window.setTimeout(() => showTestResult(run, () => void this.runTestDrive(run.drive)), 400);
@@ -1960,25 +1972,57 @@ class App {
    * quarter of the space below the banner (the map the other three quarters); docked beside
    * the map it is a third of the map's height.
    */
+  /**
+   * Junction view height for the chosen size. 1:3: view and map share the space under the banner
+   * 1 to 3 (docked beside the map: a third of its height); 2:3: 2 to 3 (two thirds); full: the view
+   * takes everything down to the ETA card while it is up, over the map.
+   */
   private layoutJv() {
     const e = this.el;
     const H = window.innerHeight;
+    const size = this.settings.jvSize;
+    this.panel.setSize(size);
+    e.guide.dataset.jvSize = size;
+    let top = 0;
+    for (const el of [this.banner.el, this.banner.then, e.reroute]) {
+      if (el.hidden || !el.isConnected) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height > 0) top = Math.max(top, r.bottom);
+    }
     let jvH: number;
-    if (this.landscape()) {
-      jvH = H / 3;
-    } else {
-      let top = 0;
-      for (const el of [this.banner.el, this.banner.then, e.reroute]) {
-        if (el.hidden || !el.isConnected) continue;
+    if (size === 'full' && this.landscape()) {
+      // Docked beside the map the screen is short: the whole width and height under the banner
+      // (the ETA card and simulator bar step aside while it is up).
+      jvH = H - top;
+    } else if (size === 'full') {
+      // Down to whatever sits at the bottom: the ETA card, the speed, the simulator bar.
+      let bottom = H;
+      for (const el of [e.foot.querySelector('.eta'), e.speed, e.sim]) {
+        if (!el || (el as HTMLElement).hidden || e.foot.hidden) continue;
         const r = el.getBoundingClientRect();
-        if (r.height > 0) top = Math.max(top, r.bottom);
+        if (r.height > 0) bottom = Math.min(bottom, r.top - 8);
       }
-      jvH = (H - top) / 4;
+      jvH = bottom - top;
+    } else if (this.landscape()) {
+      jvH = size === '2:3' ? (H * 2) / 3 : H / 3;
+    } else {
+      jvH = size === '2:3' ? ((H - top) * 2) / 5 : (H - top) / 4;
     }
     jvH = Math.round(Math.max(110, jvH));
     if (e.guide.style.getPropertyValue('--jv-h') !== `${jvH}px`) e.guide.style.setProperty('--jv-h', `${jvH}px`);
     const compact = String(jvH < 240);
     if (this.panel.el.dataset.compact !== compact) this.panel.el.dataset.compact = compact;
+  }
+
+  /** The layout changed (view size, phone turned): put the car where the new padding wants it, also when stopped. */
+  private refollowFrame = 0;
+  private refollow() {
+    if (this.refollowFrame) return;
+    this.refollowFrame = requestAnimationFrame(() => {
+      this.refollowFrame = 0;
+      const p = this.engine.progress;
+      if (p && this.map.isFollowing) this.map.followNow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+    });
   }
 
   private followPadding() {
@@ -2034,6 +2078,10 @@ class App {
     this.map.setUnits(next.units);
     this.applyLang();
     this.paintMute();
+    if (prev.jvSize !== next.jvSize) {
+      this.layoutJv();
+      this.refollow();
+    }
     if (prev.appearance !== next.appearance) this.applyDayNight();
     else this.applyTheme();
     if (!this.demo) {

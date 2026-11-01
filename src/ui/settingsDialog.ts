@@ -61,6 +61,11 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['map', 'Zoomed map'],
       ['both', 'Both'],
     ]);
+    const jvSize = select('jvSize', current.jvSize, [
+      ['1:3', '1:3 (a quarter of the screen)'],
+      ['2:3', '2:3 (two fifths)'],
+      ['full', 'Full screen while it is up'],
+    ]);
     const voice = h('input', { id: 'voice', type: 'checkbox' }) as HTMLInputElement;
     voice.checked = current.voice;
     const laneAlerts = select('laneAlerts', current.laneAlerts, [
@@ -137,7 +142,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       opts.preview ? null : grp('MapTiler key', maptilerKey),
       h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
       h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)),
-      h('div', { class: 'row' }, grp('Junction view', jvMode), h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts'))),
+      h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)),
+      h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts')),
       grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances and junctions. The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.'),
       h(
         'div',
@@ -182,6 +188,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         lang: lang.value as Settings['lang'],
         units: units.value as Settings['units'],
         jvMode: jvMode.value as Settings['jvMode'],
+        jvSize: jvSize.value as Settings['jvSize'],
         voice: voice.checked,
         jvSurround: surround.checked,
         jvMapGround: mapGround.checked,

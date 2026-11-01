@@ -44,6 +44,9 @@ export interface Theme {
   alt: string;
   /** Text and arrow colour on top of the route colour. */
   routeInk: string;
+  /** The impulses that run along the route while navigating: a bright core and its glow. */
+  pulse: string;
+  pulseGlow: string;
   pin: string;
   map: MapPalette;
 }
@@ -56,6 +59,8 @@ export const DAY: Theme = {
   passed: '#b1a9bf',
   alt: '#b9aee0',
   routeInk: '#ffffff',
+  pulse: '#ffffff',
+  pulseGlow: '#a78bfa',
   pin: '#f43f5e',
   map: {
     land: '#f4f3f7',
@@ -93,6 +98,8 @@ export const NIGHT: Theme = {
   passed: '#4a3d63',
   alt: '#5d4d7d',
   routeInk: '#0b0910',
+  pulse: '#faf5ff',
+  pulseGlow: '#d8b4fe',
   pin: '#fb7185',
   map: {
     land: '#0d0a14',

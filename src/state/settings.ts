@@ -1,7 +1,7 @@
 import type { SignThemeId } from '../junction/signs';
 import type { LangCode, Units } from '../routing/instructions';
 import type { Avoid } from '../routing/types';
-import type { JvMode } from '../ui/junctionPanel';
+import type { JvMode, JvSize } from '../ui/junctionPanel';
 import { isDaylight } from './daylight';
 
 export interface Settings {
@@ -31,8 +31,10 @@ export interface Settings {
   offlineUse: 'auto' | 'always';
   /** Version of the app's look the settings were saved with (moves old default map styles on). */
   look: number;
-  /** How much map the navigation camera shows: 'auto', or a width of map in metres (100 to 1000). */
+  /** How much map the navigation camera shows: 'auto', or what the scale bar stands for (100 to 1000 m). */
   mapScale: 'auto' | number;
+  /** Junction view size next to the map: 1:3, 2:3, or full screen while it is up. */
+  jvSize: JvSize;
 }
 
 const env = import.meta.env;
@@ -64,6 +66,7 @@ export const DEFAULTS: Settings = {
   offlineUse: 'auto',
   look: 2,
   mapScale: 'auto',
+  jvSize: '1:3',
 };
 
 const KEY = 'junctionnav.settings.v1';

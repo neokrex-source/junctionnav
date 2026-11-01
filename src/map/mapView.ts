@@ -64,6 +64,30 @@ export function spanAtZoom(zoom: number, lat: number, widthPx: number): number {
   return (40075016.686 * Math.cos((lat * Math.PI) / 180) * widthPx) / (512 * 2 ** zoom);
 }
 
+/**
+ * The impulses on the route at time `t` (seconds): three streaks travelling from the car (at `s`)
+ * over the next stretch of road, each crossing it in 2.2 s and fading in and out at its ends. The
+ * stretch and the streaks scale with the map (`scale`: what the scale bar stands for, metres).
+ */
+export function pulseFeatures(line: { length: number; slice(a: number, b: number): LngLat[] }, s: number, scale: number, t: number): Feature<LineString, { a: number }>[] {
+  const left = line.length - s;
+  if (left < 30) return [];
+  const range = Math.min(left, Math.max(600, Math.min(4000, scale * 8)));
+  const len = Math.max(30, Math.min(400, scale * 0.45));
+  const speed = range / 2.2;
+  const out: Feature<LineString, { a: number }>[] = [];
+  for (let k = 0; k < 3; k++) {
+    const d = (t * speed + (k * range) / 3) % range;
+    const from = s + d;
+    const to = Math.min(line.length, from + len);
+    if (to - from < 2) continue;
+    const coordinates = line.slice(from, to);
+    if (coordinates.length < 2) continue;
+    out.push({ type: 'Feature', properties: { a: Math.pow(Math.sin((Math.PI * d) / range), 0.7) }, geometry: { type: 'LineString', coordinates } });
+  }
+  return out;
+}
+
 export interface FollowOptions {
   speed: number;
   distToNext: number;
@@ -404,7 +428,43 @@ export class MapView {
     m.setPaintProperty('route-casing', 'line-color', t.routeCasing);
     m.setPaintProperty('route-line', 'line-gradient', this.gradient());
     m.setPaintProperty('maneuver-casing', 'line-color', t.routeCasing);
+    m.setPaintProperty('route-pulse', 'line-color', t.pulse);
+    m.setPaintProperty('route-pulse-glow', 'line-color', t.pulseGlow);
   }
+
+  /* ------------------------------------------------------------ route impulses */
+
+  private pulsing = false;
+  private pulseRaf = 0;
+  private pulseLast = 0;
+  private progressS = 0;
+
+  /**
+   * Impulses running along the route ahead of the car while navigating: three short bright streaks
+   * in flight at a time, from the car towards the destination, spaced and sized to the map scale.
+   */
+  setPulsing(on: boolean) {
+    if (on === this.pulsing) return;
+    this.pulsing = on;
+    if (on && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) this.pulseRaf = requestAnimationFrame(this.pulseFrame);
+    else {
+      cancelAnimationFrame(this.pulseRaf);
+      this.pulseRaf = 0;
+      (this.map.getSource('route-pulse') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: [] });
+    }
+  }
+
+  private pulseFrame = (now: number) => {
+    if (!this.pulsing) return;
+    this.pulseRaf = requestAnimationFrame(this.pulseFrame);
+    // About 30 frames a second is smooth enough, and nothing while the app is in the background.
+    if (now - this.pulseLast < 33 || document.hidden) return;
+    this.pulseLast = now;
+    const src = this.map.getSource('route-pulse') as GeoJSONSource | undefined;
+    const r = this.routes[this.selected];
+    if (!src || !r) return;
+    src.setData({ type: 'FeatureCollection', features: pulseFeatures(r.line, this.progressS, this.scaleShown || 200, now / 1000) });
+  };
 
   private installLayers() {
     const m = this.map;
@@ -413,6 +473,7 @@ export class MapView {
     m.addSource('route-main', { type: 'geojson', data: this.routesFC(true), lineMetrics: true });
     m.addSource('maneuver', { type: 'geojson', data: this.arrow });
     m.addSource('tunnels', { type: 'geojson', data: this.tunnelFC() });
+    m.addSource('route-pulse', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     const before = this.beforeId();
     m.addLayer(
       {
@@ -475,6 +536,36 @@ export class MapView {
       },
       before,
     );
+    // Impulses firing along the route ahead of the car, like signals down a nerve.
+    m.addLayer(
+      {
+        id: 'route-pulse-glow',
+        type: 'line',
+        source: 'route-pulse',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': this.theme.pulseGlow,
+          'line-opacity': ['*', 0.75, ['get', 'a']],
+          'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 9, 16, 22, 19, 40],
+        },
+      },
+      before,
+    );
+    m.addLayer(
+      {
+        id: 'route-pulse',
+        type: 'line',
+        source: 'route-pulse',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': this.theme.pulse,
+          'line-opacity': ['get', 'a'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 4.5, 19, 9],
+        },
+      },
+      before,
+    );
     m.addLayer({
       id: 'maneuver-casing',
       type: 'line',
@@ -527,6 +618,7 @@ export class MapView {
     this.routes = routes;
     this.selected = selected;
     this.progressFrac = 0;
+    this.progressS = 0;
     const r = routes[selected];
     this.tunnelSpans = r ? tunnelsFromRoute(r) : [];
     this.refreshRouteData();
@@ -566,6 +658,7 @@ export class MapView {
   }
 
   setProgress(s: number) {
+    this.progressS = s;
     const r = this.routes[this.selected];
     if (!r) return;
     const f = s / Math.max(1, r.line.length);
