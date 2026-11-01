@@ -43,7 +43,7 @@ describe('test drive checklist', () => {
       expect(run.done.has(id), id).toBe(true);
     }
     expect(run.done.get('exitNumber')).toBe('Exit 114');
-    expect(run.done.get('flyover')).toMatch(/^\+\d+\.\d m, steepest \d/);
+    expect(run.done.get('flyover')).toMatch(/^\+\d+\.\d m$/);
     expect(ticks[0]).toBe('route');
     expect(ticks[ticks.length - 1]).toBe('arrival');
     expect(ticks.indexOf('tunnelSign')).toBeLessThan(ticks.indexOf('dr'));

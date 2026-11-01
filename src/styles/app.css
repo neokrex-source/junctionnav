@@ -1095,6 +1095,45 @@ button { cursor: pointer; }
 .drive-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .drive-tags em { font-style: normal; font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 99px; background: var(--sign); color: var(--sign-ink); }
 
+.drive strong small { font: 600 13px var(--font-ui); color: var(--muted); }
+
+/* test drive checklist: button in the simulator bar, list above it, result dialog */
+.sim .test-btn { background: var(--sign); color: var(--sign-ink); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.sim .test-btn.is-done { background: var(--ink); color: var(--bg); }
+.sim .test-btn.is-flash { animation: test-flash 0.9s ease-out; }
+@keyframes test-flash { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sign) 70%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
+.test-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(56vh, 460px);
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+.test-panel header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.test-panel header > span { display: grid; }
+.test-panel header small { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--warn); }
+.test-panel header strong { font: 700 16px var(--font-cond); }
+.sim .test-panel .test-close { background: transparent; font-size: 20px; line-height: 1; padding: 2px 6px; color: var(--muted); }
+.test-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.test-list li { display: grid; grid-template-columns: 20px 1fr; gap: 6px; align-items: start; }
+.test-mark { font-weight: 800; color: var(--muted); text-align: center; line-height: 1.25; }
+.test-list li.is-ok .test-mark { color: var(--sign-fg); }
+.test-result .test-list li:not(.is-ok) .test-mark { color: var(--danger); }
+.test-text { display: grid; gap: 1px; min-width: 0; }
+.test-text b { font-size: 14px; font-weight: 700; }
+.test-text small { font-size: 12.5px; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; }
+.test-list li.is-ok .test-text small { color: var(--ink); }
+.sim .test-panel .test-fix, .test-fix { justify-self: start; margin-top: 4px; padding: 5px 9px; font-size: 12.5px; background: var(--sign); color: var(--sign-ink); }
+.test-views { margin-top: 12px; font-size: 13px; }
+.test-views summary { cursor: pointer; font-weight: 700; }
+.test-views ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 /* offline maps in settings */
 .off { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
 .settings .off-status { font-size: 14px; line-height: 1.4; color: var(--ink); }

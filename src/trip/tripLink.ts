@@ -7,6 +7,7 @@
  * for a point on a named road between its neighbours, on the carriageway heading the right
  * way. On the origin, "road:REF~3" means about 3 km before the next place. A stop written
  * "name@auto" is passed in the direction from the previous place (right carriageway).
+ * Coordinates can carry a name for the trip editor: "3.0393,101.7056@0 (Plaza Tol Sungai Besi)".
  */
 import { angleDiff, bearing, haversine, type LngLat } from '../geo/geo';
 import { parseOverpass, type OsmWay } from '../junction/osmdata';
@@ -15,7 +16,7 @@ import type { Avoid } from '../routing/types';
 type BearingSpec = number | 'auto';
 
 export type PlaceRef =
-  | { kind: 'coord'; lngLat: LngLat; bearing?: BearingSpec }
+  | { kind: 'coord'; lngLat: LngLat; bearing?: BearingSpec; label?: string }
   | { kind: 'text'; q: string; bearing?: BearingSpec }
   | { kind: 'road'; names: string[]; km?: number }
   | { kind: 'here' };
@@ -53,13 +54,20 @@ export function parsePlaceRef(raw: string): PlaceRef | null {
     const names = road[1].split('|').map((n) => n.trim()).filter(Boolean);
     return names.length ? { kind: 'road', names, km: road[2] ? Number(road[2]) : undefined } : null;
   }
-  const { rest, bearing: b } = parseBearing(s);
-  const c = /^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(rest);
-  if (c) {
+  // A name in brackets after coordinates ("3.04,101.71@0 (Toll plaza)"); text keeps its brackets.
+  const named = /^(.*?)\s*\(([^()]+)\)\s*$/.exec(s);
+  const coord = (str: string, label?: string): PlaceRef | null => {
+    const { rest, bearing: b } = parseBearing(str);
+    const c = /^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(rest);
+    if (!c) return null;
     const lat = Number(c[1]);
     const lng = Number(c[2]);
-    if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { kind: 'coord', lngLat: [lng, lat], bearing: b };
-  }
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    return label ? { kind: 'coord', lngLat: [lng, lat], bearing: b, label } : { kind: 'coord', lngLat: [lng, lat], bearing: b };
+  };
+  const hit = (named && coord(named[1], named[2].trim())) || coord(s);
+  if (hit) return hit;
+  const { rest, bearing: b } = parseBearing(s);
   return { kind: 'text', q: rest, bearing: b };
 }
 
@@ -211,7 +219,7 @@ export class TripLinkError extends Error {}
 function labelOf(r: PlaceRef): string {
   switch (r.kind) {
     case 'coord':
-      return `${r.lngLat[1].toFixed(5)}, ${r.lngLat[0].toFixed(5)}`;
+      return r.label ?? `${r.lngLat[1].toFixed(5)}, ${r.lngLat[0].toFixed(5)}`;
     case 'text':
       return r.q;
     case 'road':

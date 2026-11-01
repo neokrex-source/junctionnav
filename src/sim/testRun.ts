@@ -59,9 +59,8 @@ const HEIGHT_CHECKS: Partial<Record<ProfileKind, CheckId>> = {
 export const LIFTED = 2.5;
 
 export function heightText(scene: JunctionScene): string {
-  const p = scene.profile;
-  const h = p.peak.h;
-  return `${h >= 0 ? '+' : '−'}${Math.abs(h).toFixed(1)} m, steepest ${p.grade}%`;
+  const h = scene.profile.peak.h;
+  return `${h >= 0 ? '+' : '−'}${Math.abs(h).toFixed(1)} m`;
 }
 
 function laneText(l: LaneState): string {

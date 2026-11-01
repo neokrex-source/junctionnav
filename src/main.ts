@@ -39,7 +39,9 @@ import { AUTH_REQUIRED, createAuthProvider, type AuthProvider, type User } from 
 import { AuthScreen } from './ui/authScreen';
 import { hideSplash, SPLASH_MIN_MS } from './ui/splash';
 import { openDrives } from './ui/drivesDialog';
-import { driveQuery, KL_DRIVES } from './sim/drives';
+import { driveQuery, KL_DRIVES, type TestDrive } from './sim/drives';
+import { TestRun, type CheckId } from './sim/testRun';
+import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 
 const KL: LngLat = [101.6869, 3.139];
@@ -156,6 +158,9 @@ class App {
   private endingNav = false;
   private stillSince = 0;
   stopsPassed = 0;
+  /** The KL test drive running now, with its checklist. */
+  private testRun: TestRun | null = null;
+  private testCard = new TestCard((id) => this.checkFix(id));
   navDest: LngLat | null = null;
   navPlace: CategoryPlace | null = null;
 
@@ -724,19 +729,55 @@ class App {
     this.setUser(await screen.open(), true);
   }
 
-  /** Plans the trip from a trip link (see src/trip/tripLink.ts) and starts the simulator if asked. */
-  /** Ready-made KL drives: pick one and it plans the route and starts the simulator. */
+  /** Ready-made KL drives: pick one and it plans the route, starts the simulator and the checklist. */
   private async pickTestDrive() {
     const d = await openDrives(KL_DRIVES, { offlineReady: this.offlineSw.available(), online: navigator.onLine });
-    if (!d) return;
+    if (d) await this.runTestDrive(d);
+  }
+
+  private async runTestDrive(d: TestDrive) {
     const spec = parseTripLink(driveQuery(d));
     if (!spec) return;
     if (this.demo) this.leaveDemo();
+    this.stopTest();
     if (this.view === 'nav') this.endNav();
-    await this.openTripLink(spec);
+    await this.openTripLink(spec, d);
   }
 
-  private async openTripLink(spec: TripLinkSpec) {
+  /** The checklist starts with the simulator, once the route is planned. */
+  private startTest(d: TestDrive) {
+    const run = new TestRun(d, (id) => this.testCard.ticked(id));
+    this.testRun = run;
+    this.testCard.start(run);
+    const route = this.engine.route;
+    if (route) run.routePlanned(route.provider, route.distance);
+  }
+
+  private stopTest() {
+    this.testRun = null;
+    this.testCard.stop();
+  }
+
+  /** Settings a check depends on, with a button to turn them on during the drive. */
+  private checkFix(id: CheckId): CheckFix | null {
+    const st = this.settings;
+    const apply = (change: Partial<Settings>) => {
+      this.settings = { ...this.settings, ...change };
+      saveSettings(this.settings);
+      this.engine.laneMode = this.settings.laneAlerts;
+      this.engine.tunnelAlerts = this.settings.tunnelAlerts;
+      const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
+      if (cand && this.panel.visible) this.showJunction(cand, true);
+      this.testCard.refresh();
+    };
+    if (id === 'map3d' && st.jvMode === 'illustration') return { label: 'Show the map view', run: () => apply({ jvMode: 'both' }) };
+    if (id === 'lanes' && st.laneAlerts === 'off') return { label: 'Turn on lane alerts', run: () => apply({ laneAlerts: 'gps' }) };
+    if ((id === 'tunnelSign' || id === 'dr') && !st.tunnelAlerts) return { label: 'Turn on tunnel alerts', run: () => apply({ tunnelAlerts: true }) };
+    return null;
+  }
+
+  /** Plans the trip from a trip link (see src/trip/tripLink.ts) and starts the simulator if asked. */
+  private async openTripLink(spec: TripLinkSpec, test?: TestDrive) {
     toast('Planning the trip from the link…', 4000);
     try {
       const pts = await resolveTrip(spec, {
@@ -779,6 +820,7 @@ class App {
         if (!this.routes.length) return;
         this.settings = { ...this.settings, simSpeed: spec.sim! };
         this.startNav(true);
+        if (test) this.startTest(test);
       }, 100);
     } catch (err) {
       const msg = isNetworkError(err) && !this.offlineSw.available() ? 'No connection. Download the offline maps in Settings to plan this without internet.' : (err as Error).message;
@@ -1249,6 +1291,8 @@ class App {
       e.simSpeed,
       jump,
       h('span', { class: 'sim-lanes', role: 'group', 'aria-label': 'Simulated lane' }, laneLeft, this.simLaneLabel, laneRight, this.simAuto),
+      this.testCard.button,
+      this.testCard.panel,
     );
     e.app.append(e.guide, e.foot, e.recenter, e.sim);
   }
@@ -1533,6 +1577,9 @@ class App {
   }
 
   private endNav() {
+    const run = this.testRun;
+    this.stopTest();
+    if (run) window.setTimeout(() => showTestResult(run, () => void this.runTestDrive(run.drive)), 400);
     this.source?.stop();
     this.source = null;
     this.sim = null;
@@ -1606,7 +1653,8 @@ class App {
     const kmh = Math.round(p.speed * 3.6);
     this.el.speed.innerHTML = `<div>${units === 'imperial' ? Math.round(kmh / 1.609) : kmh}<small>${units === 'imperial' ? 'mph' : 'km/h'}</small></div>`;
 
-    for (const pr of this.engine.prompts(p)) {
+    const prompts = this.engine.prompts(p);
+    for (const pr of prompts) {
       const text = this.promptText(pr);
       if (pr.kind === 'laneWrong') {
         if (!this.simLaneWarnedAt) this.simLaneWarnedAt = performance.now();
@@ -1617,6 +1665,7 @@ class App {
         this.say(text, pr.kind === 'laneLate' || (pr.kind === 'maneuver' && pr.distance == null));
       }
     }
+    this.testRun?.progress(p, prompts, this.settings.tunnelAlerts);
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
       toast(describeStep(route.steps.find((st) => st.waypoint === p.stopsPassed) ?? p.next, this.L).action);
@@ -1680,7 +1729,9 @@ class App {
     const route = this.engine.route;
     if (!route || (this.jvDismissed === cand.id && !force)) return;
     this.layoutJv();
-    this.panel.show(this.sceneFor(route, cand), this.themeFor(route), {
+    const scene = this.sceneFor(route, cand);
+    this.testRun?.junctionShown(cand, scene);
+    this.panel.show(scene, this.themeFor(route), {
       night: isNight(this.settings),
       lang: this.L,
       units: this.settings.units,
@@ -1713,7 +1764,8 @@ class App {
       }
       if (this.panel.visible) {
         this.panel.setDistance(p.junction.dist);
-        if (this.settings.jvMode !== 'illustration') this.zoom.updatePuck(p.snapped, p.heading);
+        if (this.settings.jvMode !== 'illustration' && this.zoom.updatePuck(p.snapped, p.heading) && this.testRun && this.panel.current)
+          this.testRun.map3dShown(this.panel.current);
       }
     } else if (this.activeJ) {
       this.activeJ = null;

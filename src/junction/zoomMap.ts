@@ -108,15 +108,17 @@ export class ZoomMap {
     });
   }
 
-  updatePuck(p: LngLat, heading: number) {
-    if (!this.map || !this.marker) return;
+  /** Moves the car; true when it rides on the 3D route (near a junction drawn in 3D). */
+  updatePuck(p: LngLat, heading: number): boolean {
+    if (!this.map || !this.marker) return false;
     // Near the junction the car rides on the 3D route at its real height.
     if (this.layer3d.active && this.layer3d.setCar(p, heading)) {
       this.marker.remove();
-      return;
+      return true;
     }
     this.marker.setLngLat(p).setRotation(heading);
     if (!this.marker.getElement().isConnected) this.marker.addTo(this.map);
+    return false;
   }
 
   resize() {

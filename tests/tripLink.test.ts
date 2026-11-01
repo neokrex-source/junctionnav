@@ -25,6 +25,10 @@ describe('trip links', () => {
     expect(spec.sim).toBe(2);
     expect(spec.avoid).toEqual({ ferries: true });
     expect(parsePlaceRef('3.139, 101.6869@350')).toEqual({ kind: 'coord', lngLat: [101.6869, 3.139], bearing: 350 });
+    expect(parsePlaceRef('3.0393,101.70557@0 (Plaza Tol Sungai Besi)')).toEqual({ kind: 'coord', lngLat: [101.70557, 3.0393], bearing: 0, label: 'Plaza Tol Sungai Besi' });
+    expect(parsePlaceRef('3.0393,101.70557 (SUKE)')).toEqual({ kind: 'coord', lngLat: [101.70557, 3.0393], bearing: undefined, label: 'SUKE' });
+    // Brackets in a place name stay part of the search.
+    expect(parsePlaceRef('Taman Impian Indah (Paragon Height)')).toEqual({ kind: 'text', q: 'Taman Impian Indah (Paragon Height)', bearing: undefined });
     expect(parsePlaceRef('here')).toEqual({ kind: 'here' });
     expect(parseTripLink('?from=KL')).toBeNull(); // no destination
     expect(parseTripLink('?to=KLCC')!.from).toEqual({ kind: 'here' });
