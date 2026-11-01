@@ -69,6 +69,7 @@ Trip links work the same on the hosted site, e.g. `https://<user>.github.io/junc
 - **Directions.** From (your location by default), up to 3 stops, and To, with swap. Toggle **Avoid tolls**, **Avoid highways** and **Avoid ferries**; the choice is remembered.
 - **Route cards.** Fastest / Toll-free / Shorter / Alternative labels, travel time, arrival time, distance, the main roads used, kilometres on toll roads, and how many junction views the route has. When the fastest routes use tolls, a toll-free option is requested alongside.
 - **Steps.** Every maneuver with distance. Tap a step to see it on the map; steps with a junction view have a **Junction view** button that opens a preview with a drive-up slider.
+- **Arriving.** Within 300 m of the destination the app says "You have reached your destination" (with the side of the road when known) and voice guidance stops; the map keeps showing the last stretch. Navigation ends at the end of the route, or after the car has been parked for 30 seconds inside that zone. Leaving the route there (into a car park, say) does not trigger a reroute.
 - **While driving.** Tap the green banner for the remaining steps. The search button finds categories along the route ahead (within 400 m of it, next 60 km) so you can **Add as stop** or **Go here** instead. The ETA line shows the next stop when you have one.
 
 ### Trip links

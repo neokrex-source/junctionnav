@@ -719,6 +719,15 @@ export function lanePhrase(kind: LanePhraseKind, l: LaneState, lang: LangCode, u
   }
 }
 
+/* ------------------------------------------------------------------ arrival */
+
+/** Said once inside the arrival radius, with the side of the road when the router knows it. */
+export function arrivalSpeech(lang: LangCode, side?: 'left' | 'right'): string {
+  if (lang === 'ms') return `Anda telah sampai ke destinasi.${side ? ` Destinasi di sebelah ${side === 'left' ? 'kiri' : 'kanan'}.` : ''}`;
+  if (lang === 'ja') return `目的地に到着しました。${side ? `目的地は${side === 'left' ? '左' : '右'}側です。` : ''}`;
+  return `You have reached your destination.${side ? ` It is on your ${side}.` : ''}`;
+}
+
 /* ------------------------------------------------------------------ tunnels */
 
 /** Spoken warning before a tunnel: distance, name, length, headlights. */

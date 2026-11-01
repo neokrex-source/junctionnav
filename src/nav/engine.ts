@@ -5,6 +5,14 @@ import type { Route, Step } from '../routing/types';
 import { LaneTracker, laneState, signedOffset, upcomingTarget, type LaneState } from './lanes';
 import { TUNNEL_MIN_VOICE, tunnelStateAt, type TunnelSpan, type TunnelState } from './tunnels';
 
+/** "You have reached your destination" is said this far before the end of the route. */
+export const ARRIVAL_RADIUS = 300;
+
+/** Short routes (under twice the radius) only announce arrival at the end itself. */
+export function arrivalRadius(route: Route): number {
+  return route.line.length >= ARRIVAL_RADIUS * 2 ? ARRIVAL_RADIUS : 25;
+}
+
 export interface Fix {
   lngLat: LngLat;
   accuracy: number;
@@ -43,6 +51,8 @@ export interface Progress {
   tunnel: TunnelState | null;
   /** Position estimated without GPS. */
   dr: boolean;
+  /** Within the arrival radius of the final destination: arrival is announced, voice guidance ends. */
+  nearDestination: boolean;
 }
 
 export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel';
@@ -247,6 +257,7 @@ export class NavEngine {
       lane,
       tunnel,
       dr: !!fix.dr,
+      nearDestination: remaining <= arrivalRadius(route),
     };
     if (!fix.dr && onRoute && fix.accuracy <= 50) this.real = { s, speed, time: fix.time };
     this.lastProgress = p;
@@ -258,6 +269,9 @@ export class NavEngine {
     const out: Prompt[] = [];
     const route = this.route!;
     const step = p.next;
+    // In the arrival zone the app says "You have reached your destination" and voice guidance
+    // stops; the final arrival step gets no "in 500 metres" prompts of its own either.
+    if (p.nearDestination || (step.type === 'arrive' && !step.waypoint)) return out;
     const prev = route.steps[step.index - 1];
     const legLen = prev ? step.s - prev.s : step.s;
     const fast = p.speed > 17 || (prev?.intersections[0]?.classes ?? []).includes('motorway') || (prev && prev.duration > 0 && prev.distance / prev.duration > 19);

@@ -15,7 +15,7 @@ import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
-import { describeStep, formatDistance, formatDuration, lanePhrase, LANGS, spokenInstruction, t, tunnelSpeech, type UiKey } from './routing/instructions';
+import { arrivalSpeech, describeStep, formatDistance, formatDuration, lanePhrase, LANGS, spokenInstruction, t, tunnelSpeech, type UiKey } from './routing/instructions';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
@@ -131,6 +131,8 @@ class App {
   lastReroute = 0;
   lastPrefetch = 0;
   arrivedAnnounced = false;
+  private endingNav = false;
+  private stillSince = 0;
   stopsPassed = 0;
   navDest: LngLat | null = null;
   navPlace: CategoryPlace | null = null;
@@ -1336,6 +1338,8 @@ class App {
     this.jvDismissed = null;
     this.lastStepIdx = -1;
     this.arrivedAnnounced = false;
+    this.endingNav = false;
+    this.stillSince = 0;
     this.stopsPassed = 0;
     this.navDest = route.geometry[route.geometry.length - 1];
     this.trip.stops = this.trip.stops.filter((p): p is Place => !!p);
@@ -1463,16 +1467,27 @@ class App {
       console.error('[junction] view failed', err);
     }
 
-    if (p.arrived && !this.arrivedAnnounced) {
+    // Arrival: announced within 300 m of the destination; navigation ends at the end of the
+    // route, or once the car has been parked for half a minute inside that zone.
+    if (p.nearDestination && !this.arrivedAnnounced) {
       this.arrivedAnnounced = true;
       const arrive = route.steps[route.steps.length - 1];
-      const msg = describeStep(arrive, this.L).speech;
+      const m = arrive.modifier ?? '';
+      const msg = arrivalSpeech(this.L, m.includes('left') ? 'left' : m.includes('right') ? 'right' : undefined);
       this.say(msg);
       toast(msg, 5000);
-      window.setTimeout(() => this.view === 'nav' && this.endNav(), 6000);
+    }
+    if (this.arrivedAnnounced) {
+      this.stillSince = p.speed < 1.5 ? this.stillSince || Date.now() : 0;
+      const parked = this.stillSince > 0 && Date.now() - this.stillSince > 30_000;
+      if ((p.arrived || parked) && !this.endingNav) {
+        this.endingNav = true;
+        window.setTimeout(() => this.view === 'nav' && this.endNav(), p.arrived ? 6000 : 1500);
+      }
     }
 
-    if (p.offRoute && !this.sim && !this.demo) this.reroute(fix);
+    // Inside the arrival zone (car parks, side streets) leaving the route is expected.
+    if (p.offRoute && !this.sim && !this.demo && !this.arrivedAnnounced) this.reroute(fix);
     else if (!this.rerouting) this.el.reroute.hidden = true;
 
     if (Date.now() - this.lastPrefetch > 15000) this.prefetch(p.s);
