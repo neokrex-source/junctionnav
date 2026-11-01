@@ -21,19 +21,43 @@ export function samePlace(a: Place, b: Place): boolean {
 
 export class PlaceStore {
   data: SavedPlaces = { favourites: [], recents: [] };
+  private key = KEY;
 
   constructor() {
+    this.load();
+  }
+
+  private load() {
+    this.data = { favourites: [], recents: [] };
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = localStorage.getItem(this.key);
       if (raw) this.data = { favourites: [], recents: [], ...(JSON.parse(raw) as Partial<SavedPlaces>) };
     } catch {
       /* storage unavailable */
     }
   }
 
+  /**
+   * Saved places belong to the signed-in account. The first account to sign in on a device
+   * takes over places saved before accounts existed.
+   */
+  useScope(userId: string | null) {
+    this.key = userId ? `${KEY}.${userId}` : KEY;
+    try {
+      if (userId && !localStorage.getItem(this.key) && !localStorage.getItem(`${KEY}.migrated`)) {
+        const legacy = localStorage.getItem(KEY);
+        if (legacy) localStorage.setItem(this.key, legacy);
+        localStorage.setItem(`${KEY}.migrated`, '1');
+      }
+    } catch {
+      /* storage unavailable */
+    }
+    this.load();
+  }
+
   private persist() {
     try {
-      localStorage.setItem(KEY, JSON.stringify(this.data));
+      localStorage.setItem(this.key, JSON.stringify(this.data));
     } catch {
       /* storage unavailable */
     }

@@ -15,8 +15,17 @@ function grp(label: string, control: HTMLElement, hint?: string) {
   return h('div', { class: 'grp' }, h('label', { for: id }, label), control, hint ? h('div', { class: 'hint' }, hint) : null);
 }
 
+export interface AccountOptions {
+  name: string;
+  email: string;
+  /** 'local' accounts live in this browser and can be removed here. */
+  kind: 'local' | 'supabase';
+  onSignOut: () => void;
+  onRemove?: () => void;
+}
+
 /** Opens the settings dialog; resolves with new settings, or null if cancelled. */
-export function openSettings(current: Settings, opts: { offline?: boolean } = {}): Promise<Settings | null> {
+export function openSettings(current: Settings, opts: { offline?: boolean; account?: AccountOptions | null; onSignIn?: () => void } = {}): Promise<Settings | null> {
   return new Promise((resolve) => {
     const style = select('mapStyle', current.mapStyle, STYLES.map((s) => [s.id, s.label]));
     const customStyleUrl = h('input', { id: 'customStyleUrl', type: 'url', value: current.customStyleUrl, placeholder: 'https://…/style.json' }) as HTMLInputElement;
@@ -63,10 +72,48 @@ export function openSettings(current: Settings, opts: { offline?: boolean } = {}
       photonUrl.value = DEFAULTS.photonUrl;
     });
 
+    let accountEl: HTMLElement | null = null;
+    const acc = opts.account;
+    if (acc) {
+      const initials = acc.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';
+      const signOut = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Sign out');
+      signOut.addEventListener('click', () => {
+        dlg.close('cancel');
+        acc.onSignOut();
+      });
+      const remove = acc.onRemove ? h('button', { type: 'button', class: 'btn btn-ghost acct-remove' }, 'Remove account') : null;
+      remove?.addEventListener('click', () => {
+        if (!window.confirm(`Remove the account for ${acc.email} and its saved places from this browser?`)) return;
+        dlg.close('cancel');
+        acc.onRemove!();
+      });
+      accountEl = h(
+        'div',
+        { class: 'acct' },
+        h('span', { class: 'acct-avatar', 'aria-hidden': 'true' }, initials),
+        h('div', { class: 'acct-who' }, h('strong', {}, acc.name), h('span', {}, acc.email), h('small', {}, acc.kind === 'local' ? 'Account saved in this browser' : 'Account synced online')),
+        h('div', { class: 'acct-actions' }, signOut, remove),
+      );
+    } else if (opts.account === null) {
+      const signIn = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Sign in');
+      signIn.addEventListener('click', () => {
+        dlg.close('cancel');
+        opts.onSignIn?.();
+      });
+      accountEl = h(
+        'div',
+        { class: 'acct' },
+        h('span', { class: 'acct-avatar', 'aria-hidden': 'true' }, '?'),
+        h('div', { class: 'acct-who' }, h('strong', {}, 'Not signed in'), h('small', {}, 'Saved places stay in this browser')),
+        h('div', { class: 'acct-actions' }, signIn),
+      );
+    }
+
     const form = h(
       'form',
       { method: 'dialog' },
       h('h2', {}, 'Settings'),
+      accountEl,
       opts.offline ? null : grp('Map', style),
       opts.offline ? null : grp('Custom style URL', customStyleUrl),
       opts.offline ? null : grp('MapTiler key', maptilerKey),

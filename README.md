@@ -30,6 +30,23 @@ GPS needs HTTPS. Two options:
 1. `npm run dev:https` serves on your LAN with a self-signed certificate. Open `https://<your-pc-ip>:5173` on the phone and accept the warning.
 2. `npm run build` and upload `dist/` to any static host (Cloudflare Pages, Netlify, Vercel, GitHub Pages). It installs as a home-screen app (PWA manifest included) and asks for a screen wake lock while navigating.
 
+### Splash screen and accounts
+
+The app opens on a splash screen (drawn by `index.html` itself, so it shows before the code has loaded), checks for a saved session, then shows either the app or the sign-in screen. The map loads behind it in the meantime. Demo drives and trip links start once someone is signed in.
+
+**Sign in / Create account.** The header is an overhead sign whose two destinations are the tabs. Registration asks for name, email and a password of at least 8 characters, with a strength hint; "Keep me signed in" decides whether the session survives closing the browser (30 days) or only the tab. Errors name the field to fix. Settings shows the signed-in account with **Sign out** (and **Remove account** for browser accounts). Saved places (Home, Work, favourites, recents) belong to the account.
+
+Two backends, chosen at build time:
+
+| | Accounts in this browser (default) | Supabase |
+| --- | --- | --- |
+| Setup | None; works on GitHub Pages as is | A free Supabase project; set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` |
+| Where accounts live | `localStorage` of that browser; passwords stored only as PBKDF2-SHA256 hashes (310,000 rounds, random salt) | Supabase Auth, on every device |
+| Forgot password | Not recoverable; the account can be removed and registered again | Reset link by email, with a "Choose a new password" screen when the link is opened |
+| Email confirmation | No | Follows your Supabase project setting |
+
+Browser accounts keep people apart on a shared device and personalise the app, but they are not a security boundary: anyone with the device can read that browser's storage. Use Supabase when accounts must be real. Set `VITE_AUTH_REQUIRED=false` to add "Continue without an account". For GitHub Pages, add these as repository variables; the workflow passes them to the build.
+
 ### GitHub Pages
 
 The build uses relative paths, so it works at `https://<user>.github.io/<repo>/` (or any folder on any static host). GitHub Pages serves HTTPS, so GPS works on phones.

@@ -28,6 +28,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          # Optional: set these as repository variables (Settings → Secrets and variables → Actions → Variables).
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

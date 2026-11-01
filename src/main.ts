@@ -29,6 +29,9 @@ import { JvPreview } from './ui/jvPreview';
 import { openSettings } from './ui/settingsDialog';
 import { stepsList } from './ui/stepsList';
 import { TunnelCard } from './ui/tunnelCard';
+import { AUTH_REQUIRED, createAuthProvider, type AuthProvider, type User } from './auth';
+import { AuthScreen } from './ui/authScreen';
+import { hideSplash, SPLASH_MIN_MS } from './ui/splash';
 import { parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 
 const KL: LngLat = [101.6869, 3.139];
@@ -89,6 +92,11 @@ class App {
   private themeSetByApp = false;
   cats = new CategorySearch(new OverpassPoiProvider(() => overpassList(this.settings)));
   engine = new NavEngine();
+  auth: AuthProvider = createAuthProvider();
+  user: User | null = null;
+  private signedIn = false;
+  private afterSignIn: (() => void)[] = [];
+  private authScreen: AuthScreen | null = null;
   tunnelCard = new TunnelCard();
   tunnels = new TunnelLoader(new OverpassTunnelProvider(() => overpassList(this.settings)), (spans) => this.onTunnels(spans));
   private drTimer = 0;
@@ -204,8 +212,11 @@ class App {
       });
 
     const tripLink = parseTripLink(location.search);
-    if (new URLSearchParams(location.search).has('demo')) this.startDemo(true);
-    else if (tripLink) void this.openTripLink(tripLink);
+    // Demo drives and trip links start once someone is signed in.
+    this.whenSignedIn(() => {
+      if (new URLSearchParams(location.search).has('demo')) this.startDemo(true);
+      else if (tripLink) void this.openTripLink(tripLink);
+    });
     (window as unknown as { __app: App }).__app = this;
   }
 
@@ -517,6 +528,63 @@ class App {
     this.setView('directions');
     this.renderDirEditor();
     this.computeRoutes();
+  }
+
+  /* ================================================================ accounts */
+
+  private whenSignedIn(fn: () => void) {
+    if (this.signedIn) fn();
+    else this.afterSignIn.push(fn);
+  }
+
+  /**
+   * Start-up: the splash stays up while the saved session is checked (and at least long enough
+   * to finish drawing), then either the app or the sign-in screen appears. The map loads behind.
+   */
+  async boot() {
+    const t0 = performance.now();
+    let user: User | null = null;
+    try {
+      user = await this.auth.current();
+    } catch {
+      user = null;
+    }
+    const left = SPLASH_MIN_MS - (performance.now() - t0);
+    if (left > 0) await new Promise((r) => setTimeout(r, left));
+    if (user) {
+      hideSplash();
+      return this.setUser(user, false);
+    }
+    const screen = (this.authScreen ??= new AuthScreen(this.auth, { allowGuest: !AUTH_REQUIRED }));
+    const pending = screen.open();
+    hideSplash();
+    this.setUser(await pending, true);
+  }
+
+  private setUser(user: User | null, fresh: boolean) {
+    this.user = user;
+    this.places.useScope(user?.id ?? null);
+    this.signedIn = true;
+    if (fresh && user) toast(`Welcome, ${user.name.split(/\s+/)[0]}`, 2500);
+    const todo = this.afterSignIn.splice(0);
+    for (const fn of todo) fn();
+    if (this.view === 'browse') this.renderSheet();
+  }
+
+  private async signOut(removeAccount = false) {
+    if (this.view === 'nav') this.endNav();
+    try {
+      if (removeAccount && this.user && this.auth.deleteAccount) await this.auth.deleteAccount(this.user.email, '');
+      else await this.auth.signOut();
+    } catch (err) {
+      toast((err as Error).message, 5000);
+    }
+    toast(removeAccount ? 'Account removed' : 'Signed out', 2500);
+    this.user = null;
+    this.signedIn = false;
+    this.places.useScope(null);
+    const screen = (this.authScreen ??= new AuthScreen(this.auth, { allowGuest: !AUTH_REQUIRED }));
+    this.setUser(await screen.open(), true);
   }
 
   /** Plans the trip from a trip link (see src/trip/tripLink.ts) and starts the simulator if asked. */
@@ -1572,7 +1640,22 @@ class App {
   }
 
   private async editSettings() {
-    const next = await openSettings(this.settings, { offline: ARTIFACT });
+    const u = this.user;
+    const next = await openSettings(this.settings, {
+      offline: ARTIFACT,
+      account: u
+        ? {
+            name: u.name,
+            email: u.email,
+            kind: this.auth.kind,
+            onSignOut: () => void this.signOut(),
+            onRemove: this.auth.kind === 'local' ? () => void this.signOut(true) : undefined,
+          }
+        : this.signedIn
+          ? null
+          : undefined,
+      onSignIn: () => void this.signOut(),
+    });
     if (!next) return;
     this.engine.laneMode = next.laneAlerts;
     this.engine.tunnelAlerts = next.tunnelAlerts;
@@ -1605,4 +1688,6 @@ class App {
   }
 }
 
-new App().init();
+const app = new App();
+app.init();
+void app.boot();
