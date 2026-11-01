@@ -1,0 +1,48 @@
+# Checks the online JunctionNav map on OpenFreeMap (tile layers, fields, fonts) and takes a day and
+# a night picture of central KL, pushed to the map-check branch for a look.
+name: Map check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/map/techStyle.ts'
+      - 'src/theme/**'
+      - 'scripts/dev/map-*'
+      - '.github/workflows/map-check.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Check the style against OpenFreeMap
+        run: npx vite-node scripts/dev/map-check.ts map-check
+      - name: Day and night pictures
+        run: |
+          python3 -m http.server 4173 >/dev/null 2>&1 &
+          sleep 2
+          node scripts/dev/map-shots.cjs map-check
+          ls -la map-check
+      - name: Push the pictures
+        run: |
+          cd map-check
+          git init -q -b map-check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Map check from ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" map-check
+      - name: Fail on problems
+        run: test "$(cat map-check/problems.json)" = "[]"
