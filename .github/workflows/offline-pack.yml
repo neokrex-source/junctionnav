@@ -1,0 +1,60 @@
+# Builds the offline maps for Peninsular Malaysia (roads for routing, place names, map tiles)
+# and stores them in the Actions cache. The Pages workflow publishes the newest pack with the
+# site under offline/. Building takes 10 to 20 minutes, so it runs on its own: app deploys never
+# wait for it, and a new push never cancels it.
+#
+# It rebuilds once a month with fresh OpenStreetMap data, when the builder scripts change, or
+# when started by hand (Actions → Offline maps → Run workflow). Otherwise it finishes in seconds.
+name: Offline maps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '23 19 2 * *' # 2nd of each month
+
+permissions:
+  contents: read
+  actions: write # to start the Pages deploy when a new pack is ready
+
+concurrency:
+  group: offline-pack
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    if: vars.OFFLINE_MAPS != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: key
+        run: echo "key=offline-pack-v1-$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/**', 'src/offline/graphLayout.ts') }}" >> "$GITHUB_OUTPUT"
+      - id: have
+        uses: actions/cache/restore@v4
+        with:
+          path: offline-pack
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+      - name: Build offline maps
+        if: steps.have.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORK: ${{ runner.temp }}/pack-work
+        run: |
+          bash scripts/offline/build-pack.sh offline-pack
+          du -sh offline-pack
+      - if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: offline-pack
+          key: ${{ steps.key.outputs.key }}
+      - name: Publish with the site
+        if: steps.have.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"

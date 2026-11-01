@@ -1,17 +1,14 @@
 # Builds the app and publishes it to GitHub Pages on every push to main.
 # One-time setup: repository Settings → Pages → Build and deployment → Source: "GitHub Actions".
 #
-# The offline maps for Peninsular Malaysia (roads for routing, place names, map tiles) are built
-# here too and published under offline/. Building them takes 10 to 20 minutes, so the result is
-# cached and rebuilt once a month with fresh OpenStreetMap data (and on the first push of a month).
+# The offline maps (built by offline-pack.yml and kept in the Actions cache) are published with
+# the site under offline/. When a new pack is ready, that workflow starts this one again.
 name: Deploy to GitHub Pages
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '23 19 2 * *' # monthly refresh of the offline maps
 
 permissions:
   contents: read
@@ -25,7 +22,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,39 +38,19 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
           VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
 
-      # ---- offline maps
-      - id: month
-        run: echo "key=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
-      - id: pack
-        uses: actions/cache/restore@v4
+      # ---- offline maps: the newest pack in the cache
+      - uses: actions/cache/restore@v4
         with:
           path: offline-pack
-          key: offline-pack-v1-${{ steps.month.outputs.key }}
-          # Last month's pack keeps the site working if this month's build fails.
+          key: offline-pack-v1-newest
           restore-keys: offline-pack-v1-
-      - name: Build offline maps
-        id: build-pack
-        if: steps.pack.outputs.cache-hit != 'true' && vars.OFFLINE_MAPS != 'off'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORK: ${{ runner.temp }}/pack-work
-        run: |
-          rm -rf offline-pack-new
-          bash scripts/offline/build-pack.sh offline-pack-new
-          rm -rf offline-pack && mv offline-pack-new offline-pack
-      - if: steps.build-pack.outcome == 'success'
-        uses: actions/cache/save@v4
-        with:
-          path: offline-pack
-          key: offline-pack-v1-${{ steps.month.outputs.key }}
       - name: Add offline maps to the site
         run: |
           if [ -f offline-pack/manifest.json ]; then
             cp -r offline-pack dist/offline
             du -sh dist/offline
           else
-            echo "::warning::No offline maps this time; the site is published without them."
+            echo "::notice::No offline maps yet; the site is published without them (see the Offline maps workflow)."
           fi
           du -sh dist
 

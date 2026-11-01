@@ -104,7 +104,12 @@ export class OfflineStore {
   /** The pack published with the site. */
   async remote(): Promise<PackManifest> {
     const res = await fetch(this.manifestUrl, { cache: 'no-cache' });
-    if (!res.ok) throw new Error(res.status === 404 ? 'No offline maps are published with this site yet.' : `Could not get the offline map list (${res.status}).`);
+    if (!res.ok)
+      throw new Error(
+        res.status === 404
+          ? 'The offline maps are still being prepared on the server (this takes about 20 minutes after an update). Tap Download again in a few minutes.'
+          : `Could not get the offline map list (${res.status}). Tap Download to try again.`,
+      );
     return (await res.json()) as PackManifest;
   }
 

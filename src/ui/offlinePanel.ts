@@ -107,21 +107,34 @@ export function offlinePanel(store: OfflineStore, use: HTMLSelectElement): { el:
       actions.append(del);
       return;
     }
+    // Not on this device yet: the Download button is always there. Without a published pack it
+    // checks the server again and starts as soon as the maps are there.
+    const get = btn(checking ? 'Checking…' : 'Download', () => void (remote ? store.download() : lookUp(true).then(() => remote && store.download())), 'btn btn-primary');
+    actions.append(get);
     if (remote === undefined || checking) {
+      get.setAttribute('disabled', '');
       status.textContent = 'Checking which offline maps are available…';
       void lookUp();
       return;
     }
     if (!remote) {
-      status.textContent = remoteError || 'Offline maps are not available right now.';
-      actions.append(btn('Try again', () => void lookUp(true)));
+      status.textContent = remoteError || 'Offline maps are not available right now. Tap Download to try again.';
       return;
     }
     status.textContent = `${remote.name}: about ${formatBytes(downloadSize(remote))} to download, ${formatBytes(deviceSize(remote))} on this device. Use Wi‑Fi if you can.`;
-    actions.append(btn('Download', download, 'btn btn-primary'));
   }
 
   render(store.state);
   const off = store.onChange(render);
-  return { el, dispose: off };
+  // While the maps are still being prepared on the server, look again every 30 seconds.
+  const poll = window.setInterval(() => {
+    if (remote === null && !store.installed && store.state.status === 'idle') void lookUp(true);
+  }, 30_000);
+  return {
+    el,
+    dispose: () => {
+      off();
+      clearInterval(poll);
+    },
+  };
 }
