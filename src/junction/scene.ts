@@ -996,8 +996,14 @@ function profileOf(
       if ((isMerge ? d > 0 || d < PROFILE_FROM : d < 0 || d > PROFILE_TO) || Math.abs(main.struct[i]) <= Math.abs(otherPeak)) continue;
       otherPeak = main.struct[i];
     }
+  // Steepest grade over 20 m stretches (what a driver feels), from 150 m before the split on.
   let grade = 0;
-  for (let i = 1; i < s.length; i++) if (s[i] >= -150) grade = Math.max(grade, Math.abs(h[i] - h[i - 1]) / (s[i] - s[i - 1]));
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] < -150) continue;
+    let j = i;
+    while (j < s.length - 1 && s[j] - s[i] < 20) j++;
+    if (s[j] - s[i] >= 19) grade = Math.max(grade, Math.abs(h[j] - h[i]) / (s[j] - s[i]));
+  }
   // Merging: what matters is how we arrive, so a ramp coming up from below is a climb.
   const change = isMerge ? -peak.h : peak.h;
   let kind: ProfileKind;
