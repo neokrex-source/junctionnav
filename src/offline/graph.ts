@@ -1,6 +1,8 @@
 /** Reads graph.bin and answers spatial questions about it (nearest road, roads near a point). */
 import { angleDiff, bearing, haversine, LocalFrame, type LngLat } from '../geo/geo';
-import { D_BWD, D_FWD, GRAPH_MAGIC, parseTags, sectionOffsets, type GraphHeader } from './graphLayout';
+import { CLASSES, D_BWD, D_FWD, GRAPH_MAGIC, parseTags, sectionOffsets, type GraphHeader } from './graphLayout';
+
+const LIVING_STREET = CLASSES.indexOf('living_street');
 
 const CTOR = { i32: Int32Array, u32: Uint32Array, f32: Float32Array, u16: Uint16Array, u8: Uint8Array } as const;
 
@@ -173,7 +175,8 @@ export class OfflineGraph {
           const segL = Math.sqrt(l2);
           if (d <= radius) {
             const brg = (Math.atan2(dx, dy) * 180) / Math.PI;
-            let score = d;
+            // Real streets win over car park and service ways unless those are much nearer.
+            let score = d + (this.wayClass[this.segWay[seg]] >= LIVING_STREET ? 15 : 0);
             if (bearingDeg != null) {
               const fwd = Math.abs(angleDiff(brg, bearingDeg)) < 60 && this.allowed(seg, 0);
               const bwd = Math.abs(angleDiff(brg + 180, bearingDeg)) < 60 && this.allowed(seg, 1);
