@@ -1,0 +1,57 @@
+import { describe, expect, it } from 'vitest';
+import { autoSpan, nearestDetent, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, zoomForSpan } from '../src/map/mapView';
+
+describe('navigation map scale', () => {
+  it('is wider at expressway speed and closes in to 100 m at a turn', () => {
+    expect(autoSpan(30, 5000)).toBe(300);
+    expect(autoSpan(18, 5000)).toBe(200);
+    expect(autoSpan(10, 5000)).toBe(150);
+    expect(autoSpan(4, 5000)).toBe(120);
+    // Approaching the next maneuver: about a third of the distance left.
+    expect(autoSpan(30, 600)).toBe(240);
+    expect(autoSpan(8, 150)).toBe(SCALE_MIN);
+    expect(autoSpan(5, 20)).toBe(SCALE_MIN);
+    // With the junction view open the map steps back to show the area around it.
+    expect(autoSpan(10, 5000, true)).toBe(225);
+    expect(autoSpan(30, 5000, true)).toBe(450);
+    for (const [v, d, w] of [[0, 0, false], [40, 99999, true], [12, 300, false]] as const) {
+      const s = autoSpan(v, d, w);
+      expect(s).toBeGreaterThanOrEqual(SCALE_MIN);
+      expect(s).toBeLessThanOrEqual(SCALE_MAX);
+    }
+  });
+
+  it('means what the scale bar shows at the car', () => {
+    // 100 px on screen stand for the scale: 100 m is street level, 1 km the area around.
+    const z100 = zoomForSpan(100, 3.14, SCALE_PX);
+    const z1k = zoomForSpan(1000, 3.14, SCALE_PX);
+    expect(z100).toBeCloseTo(16.25, 1);
+    expect(z1k).toBeCloseTo(12.93, 1);
+    expect(z100 - z1k).toBeCloseTo(Math.log2(10), 5);
+    expect(spanAtZoom(z1k, 3.14, SCALE_PX)).toBeCloseTo(1000, 6);
+    // Further from the equator the same scale is a little further zoomed out.
+    expect(zoomForSpan(1000, 35.7, SCALE_PX)).toBeLessThan(z1k);
+  });
+
+  it('rounds the bar to lengths a scale bar shows', () => {
+    expect(roundScale(1020)).toBe(1000);
+    expect(roundScale(999.5)).toBe(1000);
+    expect(roundScale(520)).toBe(500);
+    expect(roundScale(204)).toBe(200);
+    expect(roundScale(160)).toBe(150);
+    expect(roundScale(102)).toBe(100);
+    expect(roundScale(74)).toBe(70);
+    expect(roundScale(2600)).toBe(2000);
+  });
+
+  it('steps through auto, 1 km, 500 m, 200 m and 100 m, and pinches settle on detents', () => {
+    expect(SCALE_STEPS).toEqual(['auto', 1000, 500, 200, 100]);
+    expect(SCALE_DETENTS[0]).toBe(SCALE_MIN);
+    expect(SCALE_DETENTS[SCALE_DETENTS.length - 1]).toBe(SCALE_MAX);
+    expect(nearestDetent(120)).toBe(100);
+    expect(nearestDetent(130)).toBe(150);
+    expect(nearestDetent(240)).toBe(200);
+    expect(nearestDetent(260)).toBe(300);
+    expect(nearestDetent(850)).toBe(1000);
+  });
+});

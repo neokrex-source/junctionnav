@@ -12,6 +12,58 @@ import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
 export const PUCK_SVG = '<svg viewBox="0 0 40 40" aria-hidden="true"><circle class="p-ring" cx="20" cy="20" r="17"/><circle class="p-core" cx="20" cy="20" r="14"/><path class="p-arrow" d="M20 8 L28.5 28 L20 23.5 L11.5 28 Z"/></svg>';
 const PIN_SVG = `<svg viewBox="0 0 30 40" aria-hidden="true"><path class="pin-body" d="M15 39s13-12.3 13-23A13 13 0 0 0 2 16c0 10.7 13 23 13 23z" stroke-width="2"/><circle class="pin-dot" cx="15" cy="15.5" r="5"/></svg>`;
 
+/**
+ * How much map the follow camera shows, the way a car navigation unit states it: the length the
+ * scale bar stands for at the car (SCALE_PX screen pixels), from 100 m (streets close up) to 1 km
+ * (the area around), or 'auto' (wider at speed, closing in to 100 m as the next turn comes up).
+ */
+export type FollowScale = 'auto' | number;
+export const SCALE_MIN = 100;
+export const SCALE_MAX = 1000;
+/** What the recenter button steps through. */
+export const SCALE_STEPS: FollowScale[] = ['auto', 1000, 500, 200, 100];
+/** The scale bar's full length on screen; a scale of 200 m means this many pixels cover 200 m at the car. */
+export const SCALE_PX = 100;
+/** Scales a pinch or the mouse wheel settles on, like the detents of a car unit's zoom. */
+export const SCALE_DETENTS = [100, 150, 200, 300, 500, 700, 1000];
+
+const clampSpan = (m: number) => Math.min(SCALE_MAX, Math.max(SCALE_MIN, m));
+
+/** The detent nearest to a scale (by ratio, so 120 m goes to 100 m and 130 m to 150 m). */
+export function nearestDetent(m: number): number {
+  let best = SCALE_DETENTS[0];
+  for (const d of SCALE_DETENTS) if (Math.abs(Math.log(d / m)) < Math.abs(Math.log(best / m))) best = d;
+  return best;
+}
+
+/** The round length a scale bar shows for at most `m` metres: 1, 1.5, 2, 3, 5 or 7 times a power of ten. */
+export function roundScale(m: number): number {
+  const p = 10 ** Math.floor(Math.log10(m));
+  const f = m / p;
+  // A hair of tolerance so 199.99 m reads as 200 m.
+  const step = [10, 7, 5, 3, 2, 1.5, 1].find((x) => f >= x * 0.999) ?? 1;
+  return step * p;
+}
+
+/** Automatic scale: wider on fast roads, closer in town, and down to 100 m as the next turn comes up. */
+export function autoSpan(speed: number, distToNext: number, wide = false): number {
+  let span = speed > 24 ? 300 : speed > 14 ? 200 : speed > 7 ? 150 : 120;
+  // Close in for the turn: the scale bar about a third of the distance left.
+  if (distToNext < span * 3) span = Math.min(span, distToNext / 3 + 40);
+  // The junction view shows the close-up, so the map steps back to show the area around it.
+  if (wide) span = Math.max(span * 1.5, 200);
+  return clampSpan(span);
+}
+
+/** Zoom at which `widthPx` screen pixels cover `span` metres at latitude `lat`. */
+export function zoomForSpan(span: number, lat: number, widthPx: number): number {
+  return Math.log2((40075016.686 * Math.cos((lat * Math.PI) / 180) * widthPx) / (512 * span));
+}
+
+export function spanAtZoom(zoom: number, lat: number, widthPx: number): number {
+  return (40075016.686 * Math.cos((lat * Math.PI) / 180) * widthPx) / (512 * 2 ** zoom);
+}
+
 export interface FollowOptions {
   speed: number;
   distToNext: number;
@@ -32,7 +84,6 @@ export class MapView {
   private styleFailed = false;
   private currentStyle: string | StyleSpecification;
   private following = false;
-  private suppressUserEvent = false;
   private userPanCb: (() => void) | null = null;
   private routeClickCb: ((idx: number) => void) | null = null;
   private resultMarkers: maplibregl.Marker[] = [];
@@ -58,7 +109,16 @@ export class MapView {
       maxPitch: 70,
       fadeDuration: 0,
     });
-    this.map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+    // Scale bar of our own: measured at the car while following (MapLibre's measures across the
+    // middle of the screen, which on a tilted map is much further away than the car).
+    this.scaleEl = document.createElement('div');
+    this.scaleEl.className = 'scale-bar';
+    this.scaleEl.setAttribute('aria-hidden', 'true');
+    this.scaleEl.innerHTML = '<span class="sb-label"></span><span class="sb-line"></span>';
+    container.append(this.scaleEl);
+    this.map.on('move', () => this.queueScale());
+    this.map.on('resize', () => this.queueScale());
+    this.map.once('load', () => this.queueScale());
     const puckEl = document.createElement('div');
     puckEl.className = 'puck';
     puckEl.innerHTML = PUCK_SVG;
@@ -99,16 +159,63 @@ export class MapView {
       // The style document itself failed (blocked, offline, wrong URL).
       if (this.isRemote() && !this.map.isStyleLoaded() && /style|404|403|Failed to fetch|NetworkError|Load failed|AJAXError/i.test(msg)) this.fail(msg);
     });
+    // Only gestures carry an originalEvent; the follow camera's own moves do not.
     const userMove = (e: { originalEvent?: unknown }) => {
-      if (e.originalEvent && !this.suppressUserEvent) {
+      if (e.originalEvent && this.following) {
         this.following = false;
+        this.userZooming = false;
         this.userPanCb?.();
       }
     };
     this.map.on('dragstart', userMove);
     this.map.on('rotatestart', userMove);
     this.map.on('pitchstart', userMove);
-    this.map.on('zoomstart', userMove);
+    // Zooming while following keeps following: the new zoom becomes the scale (100 m to 1 km).
+    this.map.on('zoomstart', (e) => {
+      if (e.originalEvent && this.following) this.userZooming = true;
+    });
+    this.map.on('zoomend', () => {
+      if (this.userZooming && !this.holding) this.finishUserZoom();
+    });
+    // The follow camera moves several times a second, and each move would cut a gesture short:
+    // while a finger or the mouse button is down, or the wheel is turning, it holds still.
+    const canvas = this.map.getCanvasContainer();
+    const pointers = new Set<number>();
+    canvas.addEventListener('pointerdown', (e) => {
+      pointers.add(e.pointerId);
+      this.holding = true;
+      // End the follow camera's move in flight so the gesture starts from a still map.
+      if (this.following) this.map.stop();
+    });
+    const release = (e: PointerEvent) => {
+      if (!pointers.delete(e.pointerId) || pointers.size) return;
+      this.holding = false;
+      if (this.userZooming && !this.map.isZooming()) this.finishUserZoom();
+      else this.flushFollow();
+    };
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+    // The mouse wheel while following steps the scale itself (the map's own wheel zoom would be
+    // cut short by the next camera move): up closer, down wider, within 100 m and 1 km.
+    canvas.addEventListener(
+      'wheel',
+      (e) => {
+        if (!this.following) return;
+        e.preventDefault();
+        e.stopPropagation();
+        // One detent per notch (a trackpad's small deltas add up to one).
+        const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+        this.wheelAcc += px;
+        if (Math.abs(this.wheelAcc) < 60) return;
+        const dir = Math.sign(this.wheelAcc);
+        this.wheelAcc = 0;
+        const cur = nearestDetent(this.scale === 'auto' ? this.spanNow : this.scale);
+        const i = SCALE_DETENTS.indexOf(cur);
+        this.setFollowScale(SCALE_DETENTS[Math.max(0, Math.min(SCALE_DETENTS.length - 1, i + dir))]);
+        this.refollow();
+      },
+      { passive: false, capture: true },
+    );
     this.map.on('click', (e) => {
       if (!this.routes.length || !this.map.getLayer('route-alt')) return;
       const hit = this.map.queryRenderedFeatures(e.point, { layers: ['route-alt'] })[0];
@@ -211,6 +318,72 @@ export class MapView {
 
   get isFollowing() {
     return this.following;
+  }
+
+  /* ------------------------------------------------------------ scale bar */
+
+  private scaleEl: HTMLElement;
+  private scaleRaf = 0;
+  private puckAt: LngLat | null = null;
+  private imperial = false;
+  /** What the scale bar shows now (metres), for the recenter button. */
+  scaleShown = 0;
+
+  setUnits(u: 'metric' | 'imperial') {
+    this.imperial = u === 'imperial';
+    this.queueScale();
+  }
+
+  private queueScale() {
+    if (this.scaleRaf) return;
+    this.scaleRaf = requestAnimationFrame(() => {
+      this.scaleRaf = 0;
+      this.paintScale();
+    });
+  }
+
+  /** The bar: a round length that fits in SCALE_PX pixels, measured across the car (or the middle). */
+  private paintScale() {
+    const m = this.map;
+    const el = m.getContainer();
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (!w || !h) return;
+    let y = h / 2;
+    let x = w / 2;
+    if (this.following && this.puckAt) {
+      const pt = m.project(this.puckAt);
+      if (pt.y > 0 && pt.y < h) [x, y] = [Math.min(w - SCALE_PX / 2, Math.max(SCALE_PX / 2, pt.x)), pt.y];
+    }
+    const a = m.unproject([x - SCALE_PX / 2, y]);
+    const b = m.unproject([x + SCALE_PX / 2, y]);
+    const metres = a.distanceTo(b);
+    if (!(metres > 0)) return;
+    let len: number;
+    let label: string;
+    if (this.imperial) {
+      const feet = metres * 3.28084;
+      const miles = feet / 5280;
+      if (miles >= 0.1) {
+        const r = roundScale(miles);
+        len = r / miles;
+        label = `${r} mi`;
+      } else {
+        const r = roundScale(feet);
+        len = r / feet;
+        label = `${r} ft`;
+      }
+      this.scaleShown = metres;
+    } else {
+      const r = roundScale(metres);
+      len = r / metres;
+      label = r >= 1000 ? `${r / 1000} km` : `${r} m`;
+      this.scaleShown = r;
+    }
+    const line = this.scaleEl.lastElementChild as HTMLElement;
+    const text = this.scaleEl.firstElementChild as HTMLElement;
+    line.style.width = `${Math.round(len * SCALE_PX)}px`;
+    if (text.textContent !== label) text.textContent = label;
   }
 
   private beforeId(): string | undefined {
@@ -425,6 +598,7 @@ export class MapView {
   }
 
   setPuck(p: LngLat | null, heading = 0) {
+    this.puckAt = p;
     if (!p) {
       this.puck.remove();
       return;
@@ -477,19 +651,82 @@ export class MapView {
   /** Centre on a point with the camera flat and north-up (for previewing a maneuver). */
   showPoint(p: LngLat, bearing = 0, zoom = 17) {
     this.following = false;
-    this.suppressUserEvent = true;
+    this.followCb?.();
     this.map.easeTo({ center: p, zoom, bearing, pitch: 45, duration: 600 });
-    window.setTimeout(() => (this.suppressUserEvent = false), 700);
   }
 
   startFollowing() {
     this.following = true;
+    this.followCb?.();
   }
+
+  /** The follow camera's scale: 'auto' or a fixed width of map in metres (100 m to 1 km). */
+  get followScale(): FollowScale {
+    return this.scale;
+  }
+  setFollowScale(s: FollowScale) {
+    this.scale = s === 'auto' ? 'auto' : clampSpan(s);
+    if (this.scale !== 'auto') this.spanNow = this.scale;
+    this.followCb?.();
+  }
+  /** The scale right now (what the scale bar stands for at the car), metres. */
+  get followSpan(): number {
+    return this.spanNow;
+  }
+  /** Called when following starts or stops or the scale changes. */
+  onFollowChange(cb: () => void) {
+    this.followCb = cb;
+  }
+  /** A zoom gesture ended: its zoom becomes the follow scale, and the camera catches up. */
+  private finishUserZoom() {
+    this.userZooming = false;
+    if (!this.following) return;
+    // Settle on the nearest detent (100, 150, 200, 300, 500, 700 m or 1 km).
+    this.scale = nearestDetent(clampSpan(spanAtZoom(this.map.getZoom(), this.map.getCenter().lat, SCALE_PX * 0.98)));
+    this.spanNow = this.scale;
+    this.followCb?.();
+    this.flushFollow();
+  }
+
+  private flushFollow() {
+    const args = this.pendingFollow;
+    this.pendingFollow = null;
+    if (args) this.follow(...args);
+  }
+
+  /** Move the camera now (recenter), without waiting for the update window. */
+  followNow(p: LngLat, heading: number, o: FollowOptions) {
+    this.lastFollow = 0;
+    this.pendingFollow = null;
+    this.follow(p, heading, o);
+  }
+
+  /** Apply the camera again at the last position (after the scale changed). */
+  refollow() {
+    const args = this.pendingFollow ?? this.lastArgs;
+    this.pendingFollow = null;
+    if (!args) return;
+    this.lastFollow = 0;
+    this.follow(...args);
+  }
+  private lastArgs: [LngLat, number, FollowOptions] | null = null;
+  private wheelAcc = 0;
+
+  private holding = false;
+  private scale: FollowScale = 'auto';
+  private spanNow = 200;
+  private userZooming = false;
+  private followCb: (() => void) | null = null;
 
   private lastFollow = 0;
 
   follow(p: LngLat, heading: number, o: FollowOptions) {
     if (!this.following) return;
+    // Let a gesture finish before the camera moves again (the latest position waits).
+    if (this.userZooming || this.holding) {
+      this.pendingFollow = [p, heading, o];
+      return;
+    }
     const now = performance.now();
     const since = now - this.lastFollow;
     if (since < 180) {
@@ -507,34 +744,32 @@ export class MapView {
       return;
     }
     this.pendingFollow = null;
+    this.lastArgs = [p, heading, o];
     this.lastFollow = now;
-    let zoom = o.speed > 24 ? 15.6 : o.speed > 14 ? 16.3 : 16.9;
-    if (o.wide) zoom -= 0.9;
-    else if (o.distToNext < 250) zoom += 0.5;
-    this.suppressUserEvent = true;
+    // Scale as the scale bar's length at the car, eased so the camera breathes in and out smoothly
+    // instead of jumping when the next turn changes. The zoom puts the scale a hair under the bar's
+    // full length, so the bar shows the round number itself.
+    const target = this.scale === 'auto' ? autoSpan(o.speed, o.distToNext, o.wide) : this.scale;
+    const k = Math.min(1, since / 1500);
+    this.spanNow = Math.exp(Math.log(this.spanNow) + (Math.log(target) - Math.log(this.spanNow)) * (this.scale === 'auto' ? k : 1));
+    const zoom = zoomForSpan(this.spanNow, p[1], SCALE_PX * 0.98);
     const c = this.map.getCenter();
     const far = Math.abs(c.lng - p[0]) + Math.abs(c.lat - p[1]) > 0.03;
     const opts = { center: p, bearing: heading, pitch: 55, zoom, padding: o.padding };
     if (far) this.map.jumpTo(opts);
     else this.map.easeTo({ ...opts, duration: Math.min(1100, since * 1.05), easing: (t: number) => t });
-    window.clearTimeout(this.unsuppress);
-    this.unsuppress = window.setTimeout(() => (this.suppressUserEvent = false), Math.min(1200, since * 1.1) + 50);
   }
-  private unsuppress = 0;
   private followTimer = 0;
   private pendingFollow: [LngLat, number, FollowOptions] | null = null;
 
   fit(bounds: LngLatBoundsLike, padding: { top: number; bottom: number; left: number; right: number }) {
-    this.suppressUserEvent = true;
     this.following = false;
+    this.followCb?.();
     this.map.fitBounds(bounds, { padding, duration: 700, bearing: 0, pitch: 0, maxZoom: 16 });
-    window.setTimeout(() => (this.suppressUserEvent = false), 800);
   }
 
   flyTo(p: LngLat, zoom = 14) {
-    this.suppressUserEvent = true;
     this.map.jumpTo({ center: p, zoom });
-    this.suppressUserEvent = false;
   }
 }
 

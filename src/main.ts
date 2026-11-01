@@ -13,7 +13,7 @@ import { OverpassSurroundProvider, SurroundCache, type SurroundData } from './ju
 import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
 import { ZoomMap } from './junction/zoomMap';
 import { TerrainCache, TerrariumProvider, type TerrainPatch } from './junction/terrain';
-import { MapView, routeBounds } from './map/mapView';
+import { MapView, SCALE_STEPS, routeBounds } from './map/mapView';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
@@ -72,6 +72,7 @@ const ICON = {
   volume: svg(`<path fill="currentColor" d="M4 9v6h4l5 4V5L8 9z"/><path ${S} d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>`),
   mute: svg(`<path fill="currentColor" d="M4 9v6h4l5 4V5L8 9z"/><path ${S} d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>`),
   overview: svg(`<path ${S} d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>`),
+  recenter: svg(`<circle ${S} cx="12" cy="12" r="7"/><path ${S} d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/>`),
   dot: '<span class="dot" aria-hidden="true"></span>',
 };
 
@@ -188,7 +189,7 @@ class App {
     etaSub: h('div', { class: 'eta-sub' }),
     speed: h('div', { class: 'speed card' }),
     mute: h('button', { class: 'icon-btn', type: 'button' }) as HTMLButtonElement,
-    recenter: h('button', { class: 'chip-btn recenter', type: 'button', hidden: true }) as HTMLButtonElement,
+    recenter: h('button', { class: 'recenter', type: 'button', hidden: true }) as HTMLButtonElement,
     sim: h('div', { class: 'sim card', hidden: true }),
     simPlay: h('button', { type: 'button' }, 'Pause') as HTMLButtonElement,
     simSpeed: h('button', { type: 'button' }, '×1') as HTMLButtonElement,
@@ -326,9 +327,18 @@ class App {
     this.map.fallback = fallback;
     this.map.onFallback = () => this.zoom?.setStyle(fallback());
     this.map.onLongPress((p) => this.pickOnMap(p));
-    this.map.onUserPan(() => {
-      if (this.view === 'nav') e.recenter.hidden = false;
+    this.map.onUserPan(() => this.paintRecenter());
+    this.map.onFollowChange(() => {
+      // A scale picked by pinch or wheel is kept for next time, like one picked with the button.
+      const sc = this.map.followScale;
+      if (sc !== this.settings.mapScale) {
+        this.settings = { ...this.settings, mapScale: sc };
+        saveSettings(this.settings);
+      }
+      this.paintRecenter();
     });
+    this.map.setFollowScale(this.settings.mapScale);
+    this.map.setUnits(this.settings.units);
     this.map.onRouteClick((idx) => this.selectRoute(idx));
 
     this.buildTopbar();
@@ -508,7 +518,7 @@ class App {
     e.guide.hidden = !nav;
     e.foot.hidden = !nav;
     e.sim.hidden = !(nav && this.sim);
-    e.recenter.hidden = true;
+    e.recenter.hidden = !nav;
     e.app.dataset.view = v;
     if (!nav) {
       this.panel.hide();
@@ -1277,7 +1287,6 @@ class App {
       const r = this.engine.route;
       if (!r) return;
       this.map.fit(routeBounds([r]), this.overviewPadding());
-      e.recenter.hidden = false;
     });
     const find = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Search along route', html: ICON.search });
     find.addEventListener('click', () => this.toggleNavOverlay('search'));
@@ -1291,11 +1300,21 @@ class App {
     });
     this.paintMute();
     e.foot.append(h('div', { class: 'eta card' }, h('div', { style: 'min-width:0' }, e.etaMain, e.etaSub), h('div', { class: 'eta-btns' }, find, e.mute, overview, end)), e.speed);
+    // Recenter: back to the car when the map was moved; when already following, steps the scale
+    // (auto, 1 km, 500 m, 200 m, 100 m: what the scale bar stands for at the car). Pinch zoom or
+    // the mouse wheel while following set it too, settling on 100, 150, 200, 300, 500, 700 m or 1 km.
+    e.recenter.append(h('span', { class: 'rc-ico', html: ICON.recenter }), h('span', { class: 'rc-label' }), h('span', { class: 'rc-auto' }, 'Auto'));
     e.recenter.addEventListener('click', () => {
-      this.map.startFollowing();
-      e.recenter.hidden = true;
+      if (this.map.isFollowing) {
+        const cur = this.map.followScale;
+        const i = SCALE_STEPS.findIndex((x) => x === cur);
+        this.map.setFollowScale(SCALE_STEPS[(i + 1) % SCALE_STEPS.length]);
+      } else {
+        this.map.startFollowing();
+      }
       const p = this.engine.progress;
-      if (p) this.map.follow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+      if (p) this.map.followNow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+      this.paintRecenter();
     });
 
     e.simPlay.addEventListener('click', () => {
@@ -1534,11 +1553,43 @@ class App {
   private applyLang() {
     document.documentElement.lang = this.L;
     this.el.q.placeholder = this.tr('search');
-    this.el.recenter.textContent = this.tr('recenter');
+    this.paintRecenter();
     this.el.reroute.textContent = this.tr('rerouting');
     this.renderChips(this.el.chips, (c) => this.runNearby(c), !ARTIFACT);
     if (this.view === 'directions') this.renderDirEditor();
     this.renderSheet();
+  }
+
+  /**
+   * The recenter button: a "Re-centre" pill when the map has been moved away from the car, else the
+   * scale the map is shown at (what the scale bar stands for at the car), marked Auto when automatic.
+   */
+  private paintRecenter() {
+    const b = this.el.recenter;
+    const label = b.querySelector<HTMLElement>('.rc-label');
+    if (!label) return;
+    const following = this.map.isFollowing;
+    const sc = this.map.followScale;
+    const auto = sc === 'auto';
+    // Automatic: the round number the scale bar shows right now.
+    const text = following ? this.scaleText(auto ? this.map.scaleShown || this.map.followSpan : sc, auto) : this.tr('recenter');
+    if (label.textContent !== text) label.textContent = text;
+    b.classList.toggle('is-free', !following);
+    b.classList.toggle('is-auto', following && auto);
+    const aria = following ? `Map scale ${text}${auto ? ', automatic' : ''}. Tap for ${this.nextScaleName()}` : this.tr('recenter');
+    if (b.getAttribute('aria-label') !== aria) b.setAttribute('aria-label', aria);
+  }
+
+  private nextScaleName(): string {
+    const i = SCALE_STEPS.findIndex((x) => x === this.map.followScale);
+    const next = SCALE_STEPS[(i + 1) % SCALE_STEPS.length];
+    return next === 'auto' ? 'automatic scale' : this.scaleText(next, false);
+  }
+
+  /** "1 km", "500 m", "150 m" (or feet and miles). */
+  private scaleText(m: number, _auto: boolean): string {
+    if (this.settings.units === 'imperial') return formatDistance(m, 'imperial');
+    return m >= 995 ? `${Math.round(m / 100) / 10} km` : `${Math.round(m)} m`;
   }
 
   /** Day or night now (from the settings, the sun, or the viewer's theme in the preview). */
@@ -1718,6 +1769,7 @@ class App {
       if (this.navOverlay === 'steps') this.renderSheet();
     }
     this.map.follow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+    this.paintRecenter();
 
     this.driveSimLanes(p);
     this.banner.update(p.next, p.after, p.distToNext, this.L, units, true, p.lane);
@@ -1979,6 +2031,7 @@ class App {
     const prev = this.settings;
     this.settings = next;
     saveSettings(next);
+    this.map.setUnits(next.units);
     this.applyLang();
     this.paintMute();
     if (prev.appearance !== next.appearance) this.applyDayNight();

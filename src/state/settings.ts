@@ -31,6 +31,8 @@ export interface Settings {
   offlineUse: 'auto' | 'always';
   /** Version of the app's look the settings were saved with (moves old default map styles on). */
   look: number;
+  /** How much map the navigation camera shows: 'auto', or a width of map in metres (100 to 1000). */
+  mapScale: 'auto' | number;
 }
 
 const env = import.meta.env;
@@ -61,6 +63,7 @@ export const DEFAULTS: Settings = {
   tunnelAlerts: true,
   offlineUse: 'auto',
   look: 2,
+  mapScale: 'auto',
 };
 
 const KEY = 'junctionnav.settings.v1';

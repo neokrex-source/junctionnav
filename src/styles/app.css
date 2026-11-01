@@ -712,13 +712,55 @@ button { cursor: pointer; }
   gap: 10px;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 100px);
 }
+/* Recenter: the map scale (width of map across the screen at the car) while following, a
+   "Re-centre" pill in the route colour once the map has been moved away from the car. */
 .recenter {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
-  z-index: 4;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 100px);
+  z-index: 5;
+  min-width: 58px;
+  height: 58px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--surface-solid);
+  color: var(--ink);
+  box-shadow: var(--shadow), var(--edge);
+  font: 700 13px/1 var(--font-cond);
+  transition: background-color 0.2s, color 0.2s;
 }
+.recenter .rc-ico .ico { width: 22px; height: 22px; color: var(--route); }
+.recenter .rc-label { font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: 0.01em; }
+.recenter .rc-auto {
+  position: absolute;
+  top: -7px;
+  right: -6px;
+  display: none;
+  padding: 3px 6px;
+  border-radius: 99px;
+  background: var(--route);
+  color: var(--route-ink);
+  font: 700 10px/1 var(--font-ui);
+}
+.recenter.is-auto .rc-auto { display: block; }
+.recenter.is-free {
+  grid-auto-flow: column;
+  gap: 8px;
+  height: 48px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
+  background: var(--route);
+  color: var(--route-ink);
+  font: 700 15px/1 var(--font-ui);
+  box-shadow: 0 8px 22px var(--route-glow);
+}
+.recenter.is-free .rc-ico .ico { color: var(--route-ink); }
+@media (prefers-reduced-motion: reduce) { .recenter { transition: none; } }
 .sim {
   position: absolute;
   left: max(12px, env(safe-area-inset-left, 0px));
@@ -808,7 +850,6 @@ button { cursor: pointer; }
   .jv[data-mode="both"] { height: auto; aspect-ratio: 16 / 18; }
   .foot { left: auto; right: 0; width: calc(100% - min(46vw, 640px)); }
   .sim { left: calc(min(46vw, 640px) + 12px); }
-  .recenter { left: calc(min(46vw, 640px) + (100% - min(46vw, 640px)) / 2); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -831,6 +872,7 @@ button { cursor: pointer; }
   }
   .eta { max-width: none; }
   .eta-main { font-size: 24px; }
+  .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 150px); }
 }
 
 /* hosted-preview note */
@@ -1250,7 +1292,7 @@ button { cursor: pointer; }
 /* While driving the map moves every frame: solid panels instead of blurred glass save the GPU. */
 .app[data-view="nav"] .card,
 .app[data-view="nav"] .icon-btn:not(.danger),
-.app[data-view="nav"] .tcard {
+.app[data-view="nav"] .tcard:not([data-phase="inside"]) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background: color-mix(in srgb, var(--surface-solid) 95%, transparent);
@@ -1264,8 +1306,35 @@ button { cursor: pointer; }
 }
 
 /* Map attribution and scale in the theme's colours (they are white by default, glaring at night). */
-.maplibregl-ctrl.maplibregl-ctrl-attrib,
-.maplibregl-ctrl.maplibregl-ctrl-scale { background: color-mix(in srgb, var(--surface-solid) 86%, transparent); color: var(--muted); }
-.maplibregl-ctrl.maplibregl-ctrl-scale { border-color: var(--muted); }
+.maplibregl-ctrl.maplibregl-ctrl-attrib { background: color-mix(in srgb, var(--surface-solid) 86%, transparent); color: var(--muted); }
+
+/* Scale bar (measured at the car while navigating): a round length over a bar that long. In
+   navigation it sits above the recenter button, which shows the same scale. */
+.scale-bar {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  z-index: 2;
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  padding: 3px 6px 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
+  color: var(--ink);
+  font: 700 12px/1 var(--font-cond);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.sb-line { display: block; height: 6px; border: 2px solid currentColor; border-top: 0; min-width: 8px; }
+.app[data-view="nav"] .scale-bar {
+  left: auto;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 174px);
+  justify-items: end;
+}
+@media (max-width: 480px) {
+  .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 224px); }
+}
 .maplibregl-ctrl-attrib a { color: var(--ink); }
 :root[data-theme="dark"] .maplibregl-ctrl-attrib-button { filter: invert(1) hue-rotate(180deg); }
