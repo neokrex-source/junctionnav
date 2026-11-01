@@ -41,6 +41,7 @@ export type UiKey =
   | 'start'
   | 'simulate'
   | 'demo'
+  | 'klDrives'
   | 'end'
   | 'avoidTolls'
   | 'avoidHighways'
@@ -183,6 +184,7 @@ const en: LangPack = {
     start: "Start",
     simulate: "Simulate",
     demo: "Demo drive",
+    klDrives: "KL test drives",
     end: "End",
     avoidTolls: "Avoid tolls",
     avoidHighways: "Avoid highways",
@@ -307,6 +309,7 @@ const ms: LangPack = {
     start: "Mula",
     simulate: "Simulasi",
     demo: "Pandu demo",
+    klDrives: "Pandu uji KL",
     end: "Tamat",
     avoidTolls: "Elak tol",
     avoidHighways: "Elak lebuh raya",
@@ -430,6 +433,7 @@ const ja: LangPack = {
     start: "案内開始",
     simulate: "シミュレーション",
     demo: "デモ走行",
+    klDrives: "KLテスト走行",
     end: "終了",
     avoidTolls: "有料道路を避ける",
     avoidHighways: "高速道路を避ける",

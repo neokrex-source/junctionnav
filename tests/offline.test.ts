@@ -5,7 +5,8 @@ import { tunnelsFromRoute } from '../src/nav/tunnels';
 import { OfflineGraph } from '../src/offline/graph';
 import { PlaceIndex } from '../src/offline/places';
 import { kindsOf } from '../src/offline/providers';
-import { junctionData, tunnelWays } from '../src/offline/queries';
+import { junctionData, roadWays, tunnelWays } from '../src/offline/queries';
+import { parseTripLink, resolveTrip } from '../src/trip/tripLink';
 import { OfflineRouter } from '../src/offline/router';
 import { normalizeOsrm, type OsrmResponse } from '../src/routing/osrm';
 import { CATEGORIES } from '../src/search/categories';
@@ -145,6 +146,38 @@ describe('offline junction views', () => {
     expect(scenes[0].profile.peak.h).toBeCloseTo(6.8, 0);
     expect(scenes[4].profile.kind).toBe('tunnel');
     expect(scenes[4].exitRef).toBe('114');
+  });
+});
+
+describe('offline trip links', () => {
+  it('finds road points by ref or name without Overpass', () => {
+    const G = graph();
+    const e35 = roadWays(G, ['E35'], frame.toLngLat(400, 3800), 2000);
+    expect(e35.length).toBeGreaterThan(0);
+    expect(e35.every((w) => (w.tags.ref ?? '').includes('E35'))).toBe(true);
+    const byName = roadWays(G, ['Lebuhraya Demo'], frame.toLngLat(300, 2500), 1500);
+    expect(byName.some((w) => w.tags.name === 'Lebuhraya Demo')).toBe(true);
+    // Ramps are never picked as road points.
+    expect(roadWays(G, ['E1'], frame.toLngLat(300, 2500), 3000).every((w) => !w.tags.highway.endsWith('_link'))).toBe(true);
+  });
+
+  it('plans a test drive from a link on the offline maps', async () => {
+    const G = graph();
+    const P = new PlaceIndex(demoPack().places);
+    const pts = await resolveTrip(parseTripLink('?from=road:E35~1.2&to=Restoran Sungai Buloh&sim=2')!, {
+      geocode: async (q, near) => {
+        const hit = P.search(q, near, 1)[0];
+        return hit ? { lngLat: hit.lngLat, label: hit.name } : null;
+      },
+      roads: async (names, center, radius) => roadWays(G, names, center, radius),
+      here: async () => null,
+      near: null,
+    });
+    expect(pts[0].bearing).not.toBeNull();
+    const r = new OfflineRouter(G).route({ coords: pts.map((p) => p.lngLat), bearings: [pts[0].bearing, null] });
+    expect(r.code).toBe('Ok');
+    const route = routeOf(r);
+    expect(route.steps.some((s) => s.type === 'off ramp' && s.exits === '114')).toBe(true);
   });
 });
 

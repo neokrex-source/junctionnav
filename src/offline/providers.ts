@@ -119,6 +119,8 @@ export function describeKind(kind: string): string {
     services: 'Rest area',
     rest_area: 'Rest area',
     motorway_junction: 'Interchange',
+    toll_booth: 'Toll plaza',
+    toll_gantry: 'Toll gantry',
     station: 'Station',
     aerodrome: 'Airport',
     mall: 'Shopping mall',

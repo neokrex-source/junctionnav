@@ -1075,6 +1075,26 @@ button { cursor: pointer; }
 .acct-actions .btn { flex: 1; padding: 10px 12px; font-size: 15px; }
 .acct-remove { color: var(--danger); }
 
+/* KL test drives */
+.drives { display: grid; gap: 8px; }
+.drive {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.drive:hover, .drive:focus-visible { border-color: var(--sign); }
+.drive strong { font: 700 17px var(--font-cond); }
+.drive > span { font-size: 13.5px; color: var(--muted); }
+.drive-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.drive-tags em { font-style: normal; font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 99px; background: var(--sign); color: var(--sign-ink); }
+
 /* offline maps in settings */
 .off { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
 .settings .off-status { font-size: 14px; line-height: 1.4; color: var(--ink); }

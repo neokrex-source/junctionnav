@@ -82,6 +82,11 @@ export class OfflineClient {
     await this.loading;
     return this.call({ type: 'nearest', p });
   }
+  /** Main roads by ref or name near a point (trip link road points without Overpass). */
+  async roads(names: string[], center: LngLat, radius: number): Promise<OsmWay[]> {
+    await this.loading;
+    return this.call({ type: 'roads', names, center, radius });
+  }
   async pois(kinds: string[], points: LngLat[], radius: number): Promise<(OfflinePlace & { dist: number })[]> {
     await this.loading;
     return this.call({ type: 'pois', kinds, points, radius });

@@ -1,0 +1,53 @@
+# Runs the KL test drives on the real Peninsular Malaysia pack and prints a report of every
+# junction view along them (what the road does, how high, how steep). Runs when the drives or
+# the junction code change, and after each new offline pack.
+name: KL test drives
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/sim/**'
+      - 'src/junction/**'
+      - 'src/offline/**'
+      - 'src/trip/**'
+      - 'tests/drives.real.test.ts'
+  workflow_run:
+    workflows: ['Offline maps']
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drives
+  cancel-in-progress: true
+
+jobs:
+  drives:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        with:
+          path: offline-pack
+          key: offline-pack-v1-newest
+          restore-keys: offline-pack-v1-
+      - name: Unpack the road graph and place index
+        run: |
+          mkdir -p pack
+          cat offline-pack/graph.bin.gz.* | gunzip > pack/graph.bin
+          cat offline-pack/places.bin.gz.* | gunzip > pack/places.bin
+          grep -o '"built": *"[^"]*"' offline-pack/manifest.json || true
+          ls -la pack
+      - name: Drive the KL test drives
+        env:
+          PACK_DIR: pack
+        run: npx vitest run tests/drives.real.test.ts --reporter=verbose

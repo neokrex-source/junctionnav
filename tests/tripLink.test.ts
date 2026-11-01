@@ -70,11 +70,11 @@ describe('trip links', () => {
     const spec = parseTripLink('?from=road:E19~3&via=Toll@0&via=road:E19&to=Tower')!;
     const toll = destination([101.70, 3.00], 0, 4000);
     const tower: LngLat = [101.705, 3.14];
-    const queries: string[] = [];
+    const queries: string[][] = [];
     const pts = await resolveTrip(spec, {
       geocode: async (q) => (q === 'Toll' ? { lngLat: toll, label: 'Toll plaza' } : q === 'Tower' ? { lngLat: tower, label: 'Tower' } : null),
-      overpass: async (q) => {
-        queries.push(q);
+      roads: async (names) => {
+        queries.push(names);
         return [nb, sb, ew];
       },
       here: async () => null,
@@ -83,7 +83,7 @@ describe('trip links', () => {
     expect(pts.map((p) => p.label)).toEqual(['E19', 'Toll plaza', 'E19', 'Tower']);
     const auto = await resolveTrip(parseTripLink('?from=road:E19~3&via=Toll@auto&to=Tower')!, {
       geocode: async (q) => (q === 'Toll' ? { lngLat: toll, label: 'Toll plaza' } : { lngLat: tower, label: 'Tower' }),
-      overpass: async () => [nb, sb],
+      roads: async () => [nb, sb],
       here: async () => null,
       near: null,
     });
@@ -96,7 +96,7 @@ describe('trip links', () => {
     await expect(
       resolveTrip(parseTripLink('?from=road:E1&via=road:E2&to=X')!, {
         geocode: async () => ({ lngLat: tower, label: 'X' }),
-        overpass: async () => [],
+        roads: async () => [],
         here: async () => null,
         near: null,
       }),

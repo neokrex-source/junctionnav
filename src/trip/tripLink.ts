@@ -184,8 +184,8 @@ export function pickRoadPoint(ways: OsmWay[], prev: LngLat | null, next: LngLat 
 
 export interface TripDeps {
   geocode(q: string, near: LngLat | null): Promise<{ lngLat: LngLat; label: string } | null>;
-  /** Runs an Overpass query and returns the ways. */
-  overpass(query: string): Promise<OsmWay[]>;
+  /** Main-road ways matching a ref or name within `radius` of `center` (Overpass or the offline maps). */
+  roads(names: string[], center: LngLat, radius: number): Promise<OsmWay[]>;
   here(): Promise<LngLat | null>;
   near: LngLat | null;
 }
@@ -235,7 +235,7 @@ export async function resolveTrip(spec: TripLinkSpec, deps: TripDeps): Promise<R
       const km = r.km ?? 3;
       const center: LngLat = prev && next ? [(prev[0] + next[0]) / 2, (prev[1] + next[1]) / 2] : (prev ?? next)!;
       const radius = prev && next ? Math.min(25_000, haversine(prev, next) * 0.75 + 2000) : km * 1000 + 2500;
-      const ways = await deps.overpass(buildRoadQuery(r.names, center, radius));
+      const ways = await deps.roads(r.names, center, radius);
       const pick = pickRoadPoint(ways, prev, next, km);
       if (!pick) throw new TripLinkError(`No stretch of ${labelOf(r)} found that leads the right way.`);
       out[i] = { lngLat: pick.lngLat, bearing: pick.bearing, label: labelOf(r) };

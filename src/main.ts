@@ -38,7 +38,9 @@ import { TunnelCard } from './ui/tunnelCard';
 import { AUTH_REQUIRED, createAuthProvider, type AuthProvider, type User } from './auth';
 import { AuthScreen } from './ui/authScreen';
 import { hideSplash, SPLASH_MIN_MS } from './ui/splash';
-import { parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
+import { openDrives } from './ui/drivesDialog';
+import { driveQuery, KL_DRIVES } from './sim/drives';
+import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 
 const KL: LngLat = [101.6869, 3.139];
 const MAX_STOPS = 3;
@@ -451,7 +453,9 @@ class App {
     if (withDemo) {
       const d = h('button', { class: 'cat-chip is-demo', type: 'button', id: 'btn-demo' }, this.tr('demo'));
       d.addEventListener('click', () => this.startDemo(false));
-      target.append(d);
+      const kl = h('button', { class: 'cat-chip is-demo', type: 'button', id: 'btn-kl' }, this.tr('klDrives'));
+      kl.addEventListener('click', () => void this.pickTestDrive());
+      target.append(d, kl);
     }
   }
 
@@ -721,6 +725,17 @@ class App {
   }
 
   /** Plans the trip from a trip link (see src/trip/tripLink.ts) and starts the simulator if asked. */
+  /** Ready-made KL drives: pick one and it plans the route and starts the simulator. */
+  private async pickTestDrive() {
+    const d = await openDrives(KL_DRIVES, { offlineReady: this.offlineSw.available(), online: navigator.onLine });
+    if (!d) return;
+    const spec = parseTripLink(driveQuery(d));
+    if (!spec) return;
+    if (this.demo) this.leaveDemo();
+    if (this.view === 'nav') this.endNav();
+    await this.openTripLink(spec);
+  }
+
   private async openTripLink(spec: TripLinkSpec) {
     toast('Planning the trip from the link…', 4000);
     try {
@@ -729,7 +744,18 @@ class App {
           const r = await this.search.search(q, near, this.L);
           return r[0] ? { lngLat: r[0].lngLat, label: r[0].name } : null;
         },
-        overpass: (query) => runOverpass(overpassList(this.settings), query),
+        // Road points: Overpass online, the offline maps without a connection.
+        roads: async (names, center, radius) => {
+          const offline = () => this.offlineClient.roads(names, center, radius);
+          const sw = this.offlineSw;
+          if (sw.available() && (sw.mode() === 'always' || !navigator.onLine)) return offline();
+          try {
+            return await runOverpass(overpassList(this.settings), buildRoadQuery(names, center, radius));
+          } catch (e) {
+            if (!sw.available()) throw e;
+            return offline();
+          }
+        },
         here: async () => this.myPos ?? (await currentPosition().catch(() => null)),
         near: this.myPos ?? lastPosition() ?? KL,
       });

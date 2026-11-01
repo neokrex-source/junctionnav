@@ -91,7 +91,13 @@ That one starts on the North–South Expressway (E2) about 3 km before the Sunga
 | `sim` | Start the simulator once the route is ready; `sim=4` for ×4. |
 | `avoid` | `tolls`, `highways`, `ferries`, comma separated, for this trip only. |
 
-Road points use Overpass and places use the search service, so trip links need the full app with internet access; the offline preview shows a note instead.
+Road points use Overpass and places use the search service when online. With the offline maps downloaded, both work without internet too (road points come from the offline road graph, places from the offline index). The self-contained preview has only the demo roads and shows a note instead.
+
+### KL test drives
+
+The **KL test drives** button (next to Demo drive) lists ready-made simulated drives through Kuala Lumpur interchanges, picked to show the junction views and ramp heights: through the Sungai Besi toll and up onto the elevated SUKE, along AKLEH and down to street level at KLCC, into the SMART tunnel, and along DUKE. Each is a trip link (`src/sim/drives.ts`), so it plans with the normal router or the offline maps and starts the simulator at ×2.
+
+`.github/workflows/drives.yml` drives all of them on the real Peninsular Malaysia pack after each pack build and whenever the junction code changes, and prints every junction view on the way: what the road does there (flyover, underpass, tunnel, down to street level), the height change and the steepest grade.
 
 ### Lane alerts
 

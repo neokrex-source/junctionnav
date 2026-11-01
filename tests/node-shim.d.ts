@@ -13,4 +13,7 @@ declare module 'node:os' {
 declare module 'node:path' {
   export function join(...parts: string[]): string;
 }
-declare const process: { execPath: string };
+declare module 'node:zlib' {
+  export function inflateSync(data: Uint8Array): Uint8Array;
+}
+declare const process: { execPath: string; env: Record<string, string | undefined> };

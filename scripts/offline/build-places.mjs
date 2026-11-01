@@ -10,12 +10,13 @@ import { PLACES_MAGIC, align4 } from '../../src/offline/graphLayout.ts';
 const [geojsonPath, streetsPath, output] = process.argv.slice(2);
 
 /** Which tag gives a feature its kind, in priority order. */
-const KIND_KEYS = ['place', 'aeroway', 'railway', 'highway', 'amenity', 'shop', 'tourism', 'leisure', 'healthcare', 'office', 'building'];
+const KIND_KEYS = ['place', 'aeroway', 'railway', 'highway', 'barrier', 'amenity', 'shop', 'tourism', 'leisure', 'healthcare', 'office', 'building'];
 const KEEP = {
   place: null, // any
   aeroway: new Set(['aerodrome', 'terminal']),
   railway: new Set(['station', 'halt']),
-  highway: new Set(['services', 'rest_area', 'motorway_junction']),
+  highway: new Set(['services', 'rest_area', 'motorway_junction', 'toll_gantry']),
+  barrier: new Set(['toll_booth']),
   amenity: null,
   shop: null,
   tourism: null,
