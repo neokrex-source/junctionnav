@@ -46,10 +46,10 @@ export const KL_DRIVES: TestDrive[] = [
   },
   {
     id: 'akleh',
-    title: 'AKLEH into KLCC',
-    summary: 'Along the elevated Ampang highway and down the ramp to street level at Jalan Tun Razak.',
-    link: 'from=road:E12|AKLEH~7.5&to=Suria KLCC&sim=2',
-    shows: ['descend'],
+    title: 'SUKE and AKLEH into KLCC',
+    summary: 'Off the elevated SUKE at Ampang, along the elevated AKLEH and down to street level at Jalan Tun Razak.',
+    link: 'from=road:E19|SUKE~10&to=Suria KLCC&sim=2',
+    shows: ['flyover', 'descend'],
   },
   {
     id: 'smart',
