@@ -1,22 +1,26 @@
 /**
  * The KL test drives on the real Peninsular Malaysia pack. Runs only where the pack is
- * available (PACK_DIR with graph.bin and places.bin, as on GitHub Actions); prints a report of
- * every junction view along each drive: what the road does, how high, how steep.
+ * available (PACK_DIR with graph.bin and places.bin, as on GitHub Actions). Replays each drive
+ * the way the simulator drives it, with the test drive checklist watching, and fails when one of
+ * the drive's checks would not tick. Prints every junction view along the way (what the road
+ * does, how high, how steep) and a suggested shorter version of the drive.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LngLat } from '../src/geo/geo';
 import { detectJunctions } from '../src/junction/detect';
-import { buildScene } from '../src/junction/scene';
+import { buildScene, type JunctionScene } from '../src/junction/scene';
 import { GridPatch, TERRAIN_URL, type TerrainPatch } from '../src/junction/terrain';
 import { OfflineGraph } from '../src/offline/graph';
 import { PlaceIndex } from '../src/offline/places';
-import { junctionData, roadWays } from '../src/offline/queries';
+import { junctionData, roadWays, tunnelWays } from '../src/offline/queries';
 import { OfflineRouter } from '../src/offline/router';
 import { normalizeOsrm } from '../src/routing/osrm';
-import { tunnelsFromRoute } from '../src/nav/tunnels';
+import { matchTunnelWays, mergeTunnels, tunnelsFromRoute } from '../src/nav/tunnels';
 import { driveQuery, KL_DRIVES } from '../src/sim/drives';
+import { replayDrive } from '../src/sim/replay';
+import { CHECKS, TestRun, type CheckId } from '../src/sim/testRun';
 import { parseTripLink, resolveTrip } from '../src/trip/tripLink';
 import { decodePng } from './png';
 
@@ -108,45 +112,73 @@ describe.skipIf(!dir)('KL test drives on the real pack', () => {
       lines.push(`  route ${(route.distance / 1000).toFixed(1)} km, ${Math.round(route.duration / 60)} min, ${route.steps.length} steps; roads: ${roads.slice(0, 18).join(' > ')}`);
       const js = detectJunctions(route);
       lines.push(`  junction views: ${js.length}`);
-      const kinds = new Set<string>();
-      /** Where the interesting things are along the route (structures, tunnels, the toll). */
-      const marks: number[] = [];
+      const scenes = new Map<string, JunctionScene>();
       for (const j of js) {
         const terrain = await terrainAt(j.location);
         const sc = buildScene(route, j, junctionData(G, [j.location], 450), { terrain });
+        scenes.set(j.id, sc);
         const p = sc.profile;
-        kinds.add(p.kind);
-        if (!['flat', 'uphill', 'downhill', 'level'].includes(p.kind)) marks.push(j.s);
         const step = route.steps[j.stepIndex];
         const g0 = terrain?.at(j.location);
+        const ref = sc.exitRef ?? sc.signs.find((x) => x.taken)?.exitRef;
         lines.push(
-          `  ${(j.s / 1000).toFixed(2).padStart(6)} km ${j.kind.padEnd(5)} ${sc.source.padEnd(9)} ${p.kind.padEnd(9)} peak ${p.peak.h >= 0 ? '+' : ''}${p.peak.h.toFixed(1)} m @${p.peak.s} grade ${p.grade}% ground ${g0 != null ? g0.toFixed(0) + ' m' : '-'}` +
+          `  ${(j.s / 1000).toFixed(2).padStart(6)} km ${j.kind.padEnd(5)} ${sc.source.padEnd(9)} ${p.kind.padEnd(9)} peak ${p.peak.h >= 0 ? '+' : ''}${p.peak.h.toFixed(1)} m @${p.peak.s} grade ${p.grade}% ground ${g0 != null ? g0.toFixed(0) + ' m' : '-'}${ref ? ' exit ' + ref : ''}` +
             `  ${step.type}/${step.modifier ?? ''} ${step.ref ?? ''} ${step.name ?? ''} ${step.destinations ? '-> ' + step.destinations : ''} ${j.location[1].toFixed(5)},${j.location[0].toFixed(5)}`,
         );
       }
-      const tunnels = tunnelsFromRoute(route).filter((t) => t.length >= 150);
-      for (const t of tunnels) {
-        kinds.add('tunnelSpan');
-        marks.push(t.fromS, t.toS);
+      const tunnels = mergeTunnels(tunnelsFromRoute(route), matchTunnelWays(route, tunnelWays(G, route.geometry)));
+      lines.push(`  tunnels: ${tunnels.map((t) => `${(t.fromS / 1000).toFixed(2)}-${(t.toS / 1000).toFixed(2)} km ${Math.round(t.length)} m ${t.name ?? ''}`).join(', ') || 'none'}`);
+
+      // Replay the drive as the simulator would, with the checklist watching. A probe run with
+      // every check shows what else the drive could test.
+      const all = Object.keys(CHECKS) as CheckId[];
+      const where = new Map<CheckId, [number, number]>();
+      let span: [number, number] = [0, 0];
+      const run = new TestRun(drive);
+      const probe = new TestRun({ ...drive, checks: all }, (id) => where.set(id, span));
+      run.routePlanned(route.provider, route.distance);
+      probe.routePlanned(route.provider, route.distance);
+      const rep = replayDrive(route, {
+        junctions: js,
+        tunnels,
+        onProgress: (p, prompts) => {
+          const lane = prompts.find((x) => x.lane)?.lane;
+          span = [p.s, Math.max(p.s, lane ? lane.target.step.s + 150 : 0, p.tunnel ? p.tunnel.span.toS + 150 : 0)];
+          for (const r of [run, probe]) r.progress(p, prompts);
+        },
+        onJunction: (cand) => {
+          const sc = scenes.get(cand.id)!;
+          span = [cand.showFromS, cand.s + 400];
+          for (const r of [run, probe]) {
+            r.junctionShown(cand, sc);
+            r.map3dShown(sc);
+          }
+        },
+      });
+      lines.push(`  replay: ${Math.round(rep.seconds / 60)} min simulated (${Math.round(rep.seconds / 120)} min at x2), ${rep.fixes} fixes, ${rep.estimated} estimated, ${rep.offRoute} off route`);
+      for (const id of all) {
+        const d = probe.done.get(id);
+        const w = where.get(id);
+        lines.push(`  ${drive.checks.includes(id) ? (run.done.has(id) ? 'PASS' : 'FAIL') : d != null ? 'also' : '    '} ${id.padEnd(10)} ${d != null ? `${d}${w ? ` (${(w[0] / 1000).toFixed(1)} km)` : ''}` : '-'}`);
       }
-      lines.push(`  tunnels: ${tunnels.map((t) => `${(t.fromS / 1000).toFixed(2)}-${(t.toS / 1000).toFixed(2)} km ${t.name ?? ''}`).join(', ') || 'none'}`);
-      lines.push(`  kinds seen: ${[...kinds].join(', ')}; terrain CORS: ${corsHeader ?? 'none'}`);
-      // Stops on the way (a toll plaza), by where the route passes them.
-      const stopS = pts.slice(1, -1).map((p) => ({ p, s: route.line.project(p.lngLat).s }));
-      const keep = stopS.filter((x) => /tol|toll/i.test(x.p.label));
-      for (const k of keep) marks.push(k.s);
-      if (marks.length) {
-        // A shorter test version: from 2 km before the first interesting thing to 900 m after the last.
-        const a = Math.max(0, Math.min(...marks) - 2000);
-        const b = Math.min(route.line.length, Math.max(...marks) + 900);
+
+      // A shorter version around what the drive tests: from 2 km before the first check to just
+      // past the last one, keeping to about 5 km.
+      const focus = drive.checks.filter((c) => !['route', 'junction', 'arrival'].includes(c) && where.has(c)).map((c) => where.get(c)!);
+      if (focus.length) {
+        focus.sort((x, y) => x[0] - y[0]);
+        const first = focus[0][0];
+        const near = focus.filter((f) => f[0] <= first + 4500);
+        const a = Math.max(0, first - 2000);
+        const b = Math.min(route.line.length, Math.max(...near.map((f) => f[1])) + 700);
         const at = (sv: number) => route.line.pointAt(sv);
         const fmt = (q: LngLat) => `${q[1].toFixed(5)},${q[0].toFixed(5)}`;
+        const stopS = pts.slice(1, -1).map((p) => ({ p, s: route.line.project(p.lngLat).s }));
         const vias = stopS.filter((x) => x.s > a + 300 && x.s < b - 300).map((x) => `via=${fmt(x.p.lngLat)}@${x.p.bearing ?? Math.round(route.line.bearingAt(x.s))}`);
-        lines.push(`  TRIM ${((b - a) / 1000).toFixed(1)} km: from=${fmt(at(a))}@${Math.round(route.line.bearingAt(a + 10, 40))}${vias.map((v) => '&' + v).join('')}&to=${fmt(at(b))}`);
+        lines.push(`  TRIM ${((b - a) / 1000).toFixed(1)} km${near.length < focus.length ? ' (not all checks)' : ''}: from=${fmt(at(a))}@${Math.round(route.line.bearingAt(a + 10, 40))}${vias.map((v) => '&' + v).join('')}&to=${fmt(at(b))}`);
       }
-      const want = drive.shows.map((k) => (k === 'tunnel' ? (kinds.has('tunnel') || kinds.has('tunnelSpan') ? k : null) : kinds.has(k) ? k : null));
-      expect(want.filter((k) => !k), `expected to see ${drive.shows.join(', ')}`).toEqual([]);
-      expect(js.length).toBeGreaterThan(1);
+      expect(run.missing, `checks that did not tick`).toEqual([]);
+      expect(rep.offRoute, 'fixes off the route').toBe(0);
     }
   }
 

@@ -58,6 +58,23 @@ export function currentPosition(timeout = 8000): Promise<LngLat> {
   });
 }
 
+/** Simulated speed at along-route position s: the router's speed for the step, slowing for turns. */
+export function simSpeedAt(route: Route, s: number): number {
+  const steps = route.steps;
+  let k = 0;
+  while (k < steps.length - 1 && steps[k + 1].s <= s) k++;
+  const st = steps[k];
+  let v = st.duration > 0 ? st.distance / st.duration : 12;
+  v = Math.max(6, Math.min(33, v));
+  const next = steps[k + 1];
+  if (next) {
+    const d = next.s - s;
+    const slow = next.type === 'turn' || next.type === 'end of road' || next.type === 'roundabout' || next.type === 'rotary' || next.type === 'arrive';
+    if (slow && d < 70) v = Math.min(v, 7 + d * 0.08);
+  }
+  return v;
+}
+
 /** Drives along the route at the router's speeds (times a factor), slowing for turns. */
 export class Simulator implements LocationSource {
   s = 0;
@@ -83,19 +100,7 @@ export class Simulator implements LocationSource {
   }
 
   private speedAt(s: number): number {
-    const steps = this.route.steps;
-    let k = 0;
-    while (k < steps.length - 1 && steps[k + 1].s <= s) k++;
-    const st = steps[k];
-    let v = st.duration > 0 ? st.distance / st.duration : 12;
-    v = Math.max(6, Math.min(33, v));
-    const next = steps[k + 1];
-    if (next) {
-      const d = next.s - s;
-      const slow = next.type === 'turn' || next.type === 'end of road' || next.type === 'roundabout' || next.type === 'rotary' || next.type === 'arrive';
-      if (slow && d < 70) v = Math.min(v, 7 + d * 0.08);
-    }
-    return v;
+    return simSpeedAt(this.route, s);
   }
 
   start(onFix: (f: Fix) => void) {

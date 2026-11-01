@@ -1,13 +1,21 @@
 /** Picker for the ready-made KL test drives. */
 import type { TestDrive } from '../sim/drives';
+import type { CheckId } from '../sim/testRun';
 import { h } from './dom';
 
-const SHOWS: Record<TestDrive['shows'][number], string> = {
+/** Short tags for what a drive tests (every drive also checks the route, junction views and arrival). */
+const TAGS: Partial<Record<CheckId, string>> = {
+  toll: 'Toll plaza',
+  lanes: 'Lane advice',
+  exitNumber: 'Exit number',
   flyover: 'Ramp up to a flyover',
   descend: 'Down to street level',
   underpass: 'Underpass',
-  tunnel: 'Tunnel',
+  tunnel: 'Into a tunnel',
   ascend: 'Up to street level',
+  map3d: '3D map view',
+  tunnelSign: 'Tunnel sign',
+  dr: 'No GPS in the tunnel',
 };
 
 export function openDrives(drives: TestDrive[], opts: { offlineReady: boolean; online: boolean }): Promise<TestDrive | null> {
@@ -18,9 +26,9 @@ export function openDrives(drives: TestDrive[], opts: { offlineReady: boolean; o
       const b = h(
         'button',
         { type: 'button', class: 'drive' },
-        h('strong', {}, d.title),
+        h('strong', {}, d.title, h('small', {}, ` · ${d.km} km`)),
         h('span', {}, d.summary),
-        h('span', { class: 'drive-tags' }, ...d.shows.map((s) => h('em', {}, SHOWS[s]))),
+        h('span', { class: 'drive-tags' }, ...d.checks.filter((c) => TAGS[c]).map((c) => h('em', {}, TAGS[c]!))),
       );
       b.addEventListener('click', () => {
         picked = d;
@@ -37,7 +45,7 @@ export function openDrives(drives: TestDrive[], opts: { offlineReady: boolean; o
       'form',
       { method: 'dialog' },
       h('h2', {}, 'KL test drives'),
-      h('p', { class: 'hint' }, 'Simulated drives through Kuala Lumpur interchanges, to see the junction views, ramp heights and lane advice.'),
+      h('p', { class: 'hint' }, 'Short simulated drives through Kuala Lumpur interchanges. Each one has a checklist (the Checks button beside the simulator controls) that ticks off the functions as they show up, and a result at the end.'),
       list,
       h('p', { class: 'hint' }, note),
       h('menu', {}, h('button', { value: 'cancel', class: 'btn btn-ghost' }, 'Close')),
