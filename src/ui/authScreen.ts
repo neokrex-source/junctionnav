@@ -10,7 +10,7 @@ type Mode = 'signin' | 'signup' | 'forgot' | 'reset';
 const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20 11h-5v10.5H9V11H4z" fill="currentColor"/></svg>';
 // Same mark as public/icon.svg, inline so it also works where files cannot load.
 const LOGO =
-  '<svg viewBox="0 0 512 512" width="34" height="34" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#0b1630"/><path d="M256 300L150 170" fill="none" stroke="#fff" stroke-opacity=".38" stroke-width="56" stroke-linecap="round"/><path d="M256 448V300" fill="none" stroke="#fff" stroke-width="56" stroke-linecap="round"/><path d="M256 300l106-130" fill="none" stroke="#2ce6ff" stroke-width="56" stroke-linecap="round"/><path d="M300 120l122-26-14 124z" fill="#2ce6ff"/></svg>';
+  '<svg viewBox="0 0 512 512" width="34" height="34" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#1a0d2e"/><path d="M256 300L150 170" fill="none" stroke="#fff" stroke-opacity=".38" stroke-width="56" stroke-linecap="round"/><path d="M256 448V300" fill="none" stroke="#fff" stroke-width="56" stroke-linecap="round"/><path d="M256 300l106-130" fill="none" stroke="#c084fc" stroke-width="56" stroke-linecap="round"/><path d="M300 120l122-26-14 124z" fill="#c084fc"/></svg>';
 const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
 
 export interface AuthScreenOptions {

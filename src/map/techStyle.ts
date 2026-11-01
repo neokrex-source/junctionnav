@@ -1,10 +1,10 @@
 /**
- * The JunctionNav map: one look in two modes (bright day cockpit, dark night cockpit), for the
+ * The JunctionNav map: one look in two modes (light purple by day, dark purple by night), for the
  * online tiles (OpenFreeMap, OpenMapTiles schema) and the offline pack (Protomaps).
  *
  * The map is the stage for the route: quiet land, water and parks, roads in three tiers
  * (expressways stand out a little), labels in the palette's ink, no icons. The route line on top
- * (electric blue by day, lumen cyan by night) is the brightest thing on screen.
+ * (violet by day, glowing lilac by night) is the brightest thing on screen.
  */
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { namedFlavor, type Flavor } from '@protomaps/basemaps';

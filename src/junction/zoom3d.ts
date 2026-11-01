@@ -30,26 +30,26 @@ interface Palette {
   routeEdge: string;
 }
 const DAY: Palette = {
-  deck: '#f4f7fb',
-  deckEdge: '#b7c3d3',
-  side: '#9aa6b6',
-  wall: '#cbd3de',
-  pillar: '#b2bccb',
-  trench: '#8d97a6',
+  deck: '#f7f5fa',
+  deckEdge: '#c4bcd3',
+  side: '#a49cb3',
+  wall: '#d2ccdc',
+  pillar: '#bab3c6',
+  trench: '#958ea3',
   shadow: '#000000',
-  route: '#0a64ff',
-  routeEdge: '#0b2e7a',
+  route: '#7c3aed',
+  routeEdge: '#3b1680',
 };
 const NIGHT: Palette = {
-  deck: '#2c3a58',
-  deckEdge: '#45598a',
-  side: '#1a2440',
-  wall: '#24304d',
-  pillar: '#26324f',
-  trench: '#121a2e',
+  deck: '#33284a',
+  deckEdge: '#4e3f70',
+  side: '#1d1729',
+  wall: '#2a2238',
+  pillar: '#2c2440',
+  trench: '#15111f',
   shadow: '#000000',
-  route: '#2ce6ff',
-  routeEdge: '#05303f',
+  route: '#b77bff',
+  routeEdge: '#2e0f57',
 };
 
 /** Collects triangles per colour. */

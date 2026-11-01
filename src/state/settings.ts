@@ -67,7 +67,7 @@ export const DEFAULTS: Settings = {
 };
 
 const KEY = 'junctionnav.settings.v1';
-/** The current look: 2 is the day and night cockpit theme. */
+/** The current look: 2 is the JunctionNav day and night theme (and its map as the default). */
 const LOOK = 2;
 
 export function loadSettings(): Settings {

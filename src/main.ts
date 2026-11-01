@@ -1630,7 +1630,7 @@ class App {
       this.themeSetByApp = true;
     }
     // The browser bar matches the instrument panel.
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isNight(this.settings) ? '#070c1a' : '#0b1630');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isNight(this.settings) ? '#1a0d2e' : '#7c3aed');
     this.themeMutating = false;
   }
 

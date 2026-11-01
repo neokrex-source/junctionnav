@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>JunctionNav</title>
     <meta name="description" content="Turn-by-turn navigation with junction views for ramps, forks, exits and divider splits." />
-    <meta name="theme-color" content="#0b1630" />
+    <meta name="theme-color" content="#7c3aed" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -16,7 +16,7 @@
         position: fixed; inset: 0; z-index: 1000;
         display: grid; place-content: center; justify-items: center; gap: 14px;
         padding: 24px; text-align: center;
-        background: radial-gradient(120% 80% at 50% 30%, #15264f 0%, #0b1630 55%, #070c1a 100%); color: #fff;
+        background: radial-gradient(120% 80% at 50% 30%, #3b1d6e 0%, #1a0d2e 55%, #0b0910 100%); color: #fff;
         font-family: "Saira", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
         transition: opacity 0.35s ease, visibility 0.35s;
       }
@@ -25,15 +25,15 @@
       #splash .sp-mark path { fill: none; stroke: #fff; stroke-width: 56; stroke-linecap: round; stroke-linejoin: round; }
       #splash .sp-trunk, #splash .sp-other, #splash .sp-taken { stroke-dasharray: 260; stroke-dashoffset: 260; animation: sp-draw 0.55s ease-out forwards; }
       #splash .sp-other { stroke-opacity: 0.45; animation-delay: 0.45s; }
-      #splash .sp-taken { animation-delay: 0.45s; stroke: #2ce6ff; filter: drop-shadow(0 0 18px rgba(44, 230, 255, 0.55)); }
-      #splash .sp-head { fill: #2ce6ff; opacity: 0; transform-origin: 360px 160px; animation: sp-pop 0.3s 0.95s ease-out forwards; }
+      #splash .sp-taken { animation-delay: 0.45s; stroke: #c084fc; filter: drop-shadow(0 0 18px rgba(192, 132, 252, 0.6)); }
+      #splash .sp-head { fill: #c084fc; opacity: 0; transform-origin: 360px 160px; animation: sp-pop 0.3s 0.95s ease-out forwards; }
       #splash .sp-name { font: 700 48px/1 "Saira Condensed", "Arial Narrow", system-ui, sans-serif; letter-spacing: 0.02em; margin-top: 6px; }
       #splash .sp-tag { font-size: 16px; font-weight: 500; opacity: 0.86; max-width: 30ch; }
       /* Lane markings sliding past while the app loads. */
       #splash .sp-lane {
         width: 132px; height: 6px; margin-top: 18px; border-radius: 3px;
-        background: repeating-linear-gradient(90deg, #2ce6ff 0 22px, transparent 22px 40px);
-        box-shadow: 0 0 12px rgba(44, 230, 255, 0.5);
+        background: repeating-linear-gradient(90deg, #c084fc 0 22px, transparent 22px 40px);
+        box-shadow: 0 0 12px rgba(192, 132, 252, 0.55);
         background-size: 40px 6px; animation: sp-lane 0.6s linear infinite;
       }
       @keyframes sp-draw { to { stroke-dashoffset: 0; } }
