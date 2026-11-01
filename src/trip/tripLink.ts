@@ -147,7 +147,14 @@ function candidates(ways: OsmWay[]): Candidate[] {
  * about `km` before the next place, heading toward it; on the destination, `km` after the
  * previous place.
  */
-export function pickRoadPoint(ways: OsmWay[], prev: LngLat | null, next: LngLat | null, km = 3): { lngLat: LngLat; bearing: number } | null {
+export function pickRoadPoint(
+  ways: OsmWay[],
+  prev: LngLat | null,
+  next: LngLat | null,
+  km = 3,
+  /** Directions set on the neighbouring places, when they have one: the road point lines up behind (or after) them. */
+  dirs: { prev?: number | null; next?: number | null } = {},
+): { lngLat: LngLat; bearing: number } | null {
   const cands = candidates(ways);
   if (!cands.length || (!prev && !next)) return null;
   const target = km * 1000;
@@ -167,10 +174,19 @@ export function pickRoadPoint(ways: OsmWay[], prev: LngLat | null, next: LngLat 
       const a = Math.abs(angleDiff(c.dir, bearing(c.p, next)));
       if (a > 50) continue;
       score = Math.abs(haversine(c.p, next) - target) + a * 15;
+      if (dirs.next != null) {
+        // The next place is passed heading this way, so start behind it on that carriageway.
+        if (Math.abs(angleDiff(bearing(c.p, next), dirs.next)) > 60) continue;
+        score += Math.abs(angleDiff(c.dir, dirs.next)) * 5;
+      }
     } else {
       const a = Math.abs(angleDiff(bearing(prev!, c.p), c.dir));
       if (a > 50) continue;
       score = Math.abs(haversine(prev!, c.p) - target) + a * 15;
+      if (dirs.prev != null) {
+        if (Math.abs(angleDiff(bearing(prev!, c.p), dirs.prev)) > 60) continue;
+        score += Math.abs(angleDiff(c.dir, dirs.prev)) * 5;
+      }
     }
     if (score < bestScore) {
       bestScore = score;
@@ -236,7 +252,7 @@ export async function resolveTrip(spec: TripLinkSpec, deps: TripDeps): Promise<R
       const center: LngLat = prev && next ? [(prev[0] + next[0]) / 2, (prev[1] + next[1]) / 2] : (prev ?? next)!;
       const radius = prev && next ? Math.min(25_000, haversine(prev, next) * 0.75 + 2000) : km * 1000 + 2500;
       const ways = await deps.roads(r.names, center, radius);
-      const pick = pickRoadPoint(ways, prev, next, km);
+      const pick = pickRoadPoint(ways, prev, next, km, { prev: i > 0 ? out[i - 1]?.bearing : null, next: i < refs.length - 1 ? out[i + 1]?.bearing : null });
       if (!pick) throw new TripLinkError(`No stretch of ${labelOf(r)} found that leads the right way.`);
       out[i] = { lngLat: pick.lngLat, bearing: pick.bearing, label: labelOf(r) };
     }

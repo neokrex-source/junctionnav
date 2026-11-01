@@ -66,6 +66,16 @@ describe('trip links', () => {
     expect(dy).toBeLessThan(3100);
   });
 
+  it('starts behind a stop that has a direction, on its carriageway', () => {
+    const toll = destination([101.70, 3.00], 0, 9000);
+    // Without a direction either side of the stop will do; heading north, the start is south of it.
+    const p = pickRoadPoint([nb, sb], null, toll, 3, { next: 0 })!;
+    expect(p.lngLat[1]).toBeLessThan(toll[1]);
+    expect(Math.min(p.bearing, 360 - p.bearing)).toBeLessThan(5);
+    const q = pickRoadPoint([nb, sb], null, toll, 3, { next: 180 })!;
+    expect(q.lngLat[1]).toBeGreaterThan(toll[1]);
+  });
+
   it('resolves a whole trip with geocoded places and road points', async () => {
     const spec = parseTripLink('?from=road:E19~3&via=Toll@0&via=road:E19&to=Tower')!;
     const toll = destination([101.70, 3.00], 0, 4000);

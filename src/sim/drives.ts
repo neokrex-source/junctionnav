@@ -20,7 +20,7 @@ export const KL_DRIVES: TestDrive[] = [
     id: 'suke',
     title: 'Sungai Besi toll to SUKE and KLCC',
     summary: 'Through the Sungai Besi toll plaza, up the ramps onto the elevated SUKE, then into the city.',
-    link: 'from=road:E37|E2~3&via=Plaza Tol Sungai Besi@auto&via=road:E19|SUKE&to=Suria KLCC&sim=2',
+    link: 'from=road:E37|E2~3&via=Plaza Tol Sungai Besi@0&via=road:E19|SUKE&to=Suria KLCC&sim=2',
     shows: ['flyover', 'descend'],
   },
   {
@@ -48,7 +48,7 @@ export const KL_DRIVES: TestDrive[] = [
     id: 'smart',
     title: 'SMART tunnel to Bukit Bintang',
     summary: 'From the Sungai Besi toll down into the SMART tunnel and out near Jalan Tun Razak.',
-    link: 'from=road:E37|E2~3&via=Plaza Tol Sungai Besi@auto&via=road:E38|SMART&to=Pavilion Kuala Lumpur&sim=2',
+    link: 'from=road:E37|E2~3&via=Plaza Tol Sungai Besi@0&via=road:E38|SMART&to=Pavilion Kuala Lumpur&sim=2',
     shows: ['tunnel'],
   },
 ];
