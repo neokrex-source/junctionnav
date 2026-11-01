@@ -1,0 +1,97 @@
+[
+ {
+  "drive": "suke",
+  "title": "Sungai Besi toll onto SUKE",
+  "junctions": [
+   {
+    "file": "jv-suke-0.json",
+    "kind": "exit",
+    "s": 4228
+   },
+   {
+    "file": "jv-suke-1.json",
+    "kind": "fork",
+    "s": 4321
+   },
+   {
+    "file": "jv-suke-2.json",
+    "kind": "merge",
+    "s": 4856
+   }
+  ]
+ },
+ {
+  "drive": "dash",
+  "title": "DASH to Penchala Link and its tunnel",
+  "junctions": [
+   {
+    "file": "jv-dash-0.json",
+    "kind": "exit",
+    "s": 2737
+   },
+   {
+    "file": "jv-dash-1.json",
+    "kind": "fork",
+    "s": 3325
+   },
+   {
+    "file": "jv-dash-2.json",
+    "kind": "merge",
+    "s": 3938
+   }
+  ]
+ },
+ {
+  "drive": "mex",
+  "title": "MEX down to Jalan Tun Razak",
+  "junctions": [
+   {
+    "file": "jv-mex-0.json",
+    "kind": "exit",
+    "s": 3000
+   }
+  ]
+ },
+ {
+  "drive": "duke",
+  "title": "DUKE into the Wangsa Maju underpass",
+  "junctions": [
+   {
+    "file": "jv-duke-0.json",
+    "kind": "exit",
+    "s": 1975
+   },
+   {
+    "file": "jv-duke-1.json",
+    "kind": "fork",
+    "s": 2285
+   },
+   {
+    "file": "jv-duke-2.json",
+    "kind": "split",
+    "s": 3190
+   }
+  ]
+ },
+ {
+  "drive": "smart",
+  "title": "SMART tunnel",
+  "junctions": [
+   {
+    "file": "jv-smart-0.json",
+    "kind": "fork",
+    "s": 2197
+   },
+   {
+    "file": "jv-smart-1.json",
+    "kind": "fork",
+    "s": 2570
+   },
+   {
+    "file": "jv-smart-2.json",
+    "kind": "split",
+    "s": 4648
+   }
+  ]
+ }
+]
