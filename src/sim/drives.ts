@@ -24,6 +24,27 @@ export const KL_DRIVES: TestDrive[] = [
     shows: ['flyover', 'descend'],
   },
   {
+    id: 'dash',
+    title: 'DASH and Penchala Link to Mont Kiara',
+    summary: 'The elevated Damansara–Shah Alam Expressway into the multi-level Damansara interchange.',
+    link: 'from=road:E31|DASH~7&to=Mont Kiara&sim=2',
+    shows: ['flyover', 'descend'],
+  },
+  {
+    id: 'mex',
+    title: 'MEX into Jalan Tun Razak',
+    summary: 'North on MEX into the stacked Kampung Pandan interchange and on to KLCC.',
+    link: 'from=road:E20|MEX~7&to=Suria KLCC&sim=2',
+    shows: ['flyover', 'descend', 'underpass'],
+  },
+  {
+    id: 'duke',
+    title: 'DUKE from Sentul to Ulu Klang',
+    summary: 'The Duta–Ulu Klang Expressway past the Sentul, Setiawangsa and Ulu Klang interchanges.',
+    link: 'from=road:E33|DUKE~9&to=Zoo Negara&sim=2',
+    shows: ['flyover', 'descend'],
+  },
+  {
     id: 'akleh',
     title: 'AKLEH into KLCC',
     summary: 'Along the elevated Ampang highway and down the ramp to street level at Jalan Tun Razak.',
@@ -36,13 +57,6 @@ export const KL_DRIVES: TestDrive[] = [
     summary: 'From the Sungai Besi toll down into the SMART tunnel and out near Jalan Tun Razak.',
     link: 'from=road:E37|E2~3&via=Plaza Tol Sungai Besi@auto&via=road:E38|SMART&to=Pavilion Kuala Lumpur&sim=2',
     shows: ['tunnel'],
-  },
-  {
-    id: 'duke',
-    title: 'DUKE to Sentul and Titiwangsa',
-    summary: 'The Duta–Ulu Klang Expressway with its elevated ramps and interchanges.',
-    link: 'from=road:E33|DUKE~5&to=Taman Tasik Titiwangsa&sim=2',
-    shows: ['flyover', 'descend'],
   },
 ];
 

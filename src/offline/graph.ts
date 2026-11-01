@@ -150,13 +150,14 @@ export class OfflineGraph {
    * Nearest drivable road to p. With a bearing, roads running the other way (or across) are
    * skipped when a matching one is close, which picks the right carriageway.
    */
-  snap(p: LngLat, bearingDeg: number | null = null, maxDist = 2000): Snap | null {
+  snap(p: LngLat, bearingDeg: number | null = null, maxDist = 2000, accept?: (seg: number) => boolean): Snap | null {
     for (const radius of [150, 600, maxDist]) {
       let best: Snap | null = null;
       let bestScore = Infinity;
       const f = new LocalFrame(p);
       for (const seg of this.segmentsNear(p, radius)) {
         if (!this.allowed(seg, 0) && !this.allowed(seg, 1)) continue;
+        if (accept && !accept(seg)) continue;
         const pts = this.points(seg).map((q) => f.toXY(q));
         let acc = 0;
         let total = 0;
@@ -195,6 +196,30 @@ export class OfflineGraph {
       if (best) return best;
     }
     return null;
+  }
+
+  /**
+   * Is the road piece around a vertex cut off from the network (a car park loop, a gated estate
+   * road kept by mistake)? Looks at most `limit` vertices away, forward or (reverse) backward.
+   */
+  isolated(v0: number, reverse: boolean, limit = 1500): boolean {
+    const seen = new Set<number>([v0]);
+    const queue = [v0];
+    while (queue.length) {
+      const v = queue.pop()!;
+      for (let k = this.adjStart[v]; k < this.adjStart[v + 1]; k++) {
+        const e = this.adj[k];
+        const s = e >>> 1;
+        const d = e & 1;
+        if (!this.allowed(s, reverse ? 1 - d : d)) continue;
+        const w = this.to(s, d);
+        if (seen.has(w)) continue;
+        seen.add(w);
+        if (seen.size > limit) return false;
+        queue.push(w);
+      }
+    }
+    return true;
   }
 
   /** Restrictions with this vertex as via: [fromWay, toWay, type][]. */

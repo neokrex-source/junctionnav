@@ -19,6 +19,7 @@ const MOTORWAY = CLASSES.indexOf('motorway');
 const TRUNK = CLASSES.indexOf('trunk');
 const TERTIARY = CLASSES.indexOf('tertiary');
 const UNCLASSIFIED = CLASSES.indexOf('unclassified');
+const RESIDENTIAL = CLASSES.indexOf('residential');
 /**
  * Long routes leave small roads alone once they are this far (metres) from both the start and
  * the destination, the way a driver would. It keeps searches across the peninsula quick.
@@ -326,8 +327,8 @@ export class OfflineRouter {
   }
 
   route(req: OfflineRouteRequest): OsrmResponse {
-    const G = this.G;
-    const snaps = req.coords.map((c, i) => G.snap(c, req.bearings?.[i] ?? null));
+    const last = req.coords.length - 1;
+    const snaps = req.coords.map((c, i) => this.snapConnected(c, req.bearings?.[i] ?? null, i < last, i > 0));
     const bad = snaps.findIndex((s) => !s);
     if (bad >= 0) return { code: 'NoSegment', message: bad === 0 ? 'The start is not near a road in the offline area.' : 'The destination is not near a road in the offline area.' };
     const legs: OsrmRoute['legs'] = [];
@@ -351,6 +352,28 @@ export class OfflineRouter {
       legs.push({ steps, summary: this.summary(trav), distance: dist, duration: time });
     }
     return { code: 'Ok', routes: [{ distance: total, duration: totalTime, geometry: { type: 'LineString', coordinates: coords }, legs }] };
+  }
+
+  /**
+   * Nearest road that actually connects to the network: a point next to a car park loop or a
+   * cut-off private road moves to the nearest street that can be driven from (and to).
+   */
+  private snapConnected(p: LngLat, heading: number | null, out: boolean, inn: boolean): Snap | null {
+    const G = this.G;
+    const levels: (((seg: number) => boolean) | undefined)[] = [
+      undefined,
+      (seg) => G.wayClass[G.segWay[seg]] <= RESIDENTIAL,
+      (seg) => G.wayClass[G.segWay[seg]] <= TERTIARY,
+    ];
+    let first: Snap | null = null;
+    for (const accept of levels) {
+      const s = G.snap(p, heading, 2000, accept);
+      if (!s) continue;
+      first ??= s;
+      const cut = (out && G.isolated(G.segB[s.seg], false) && G.isolated(G.segA[s.seg], false)) || (inn && G.isolated(G.segA[s.seg], true) && G.isolated(G.segB[s.seg], true));
+      if (!cut) return s;
+    }
+    return first;
   }
 
   /* ------------------------------------------------------------------ maneuvers */
