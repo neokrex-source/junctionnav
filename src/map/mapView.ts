@@ -152,10 +152,14 @@ export class MapView {
     this.map.setStyle(style, { diff: false });
   }
 
-  /** A style that loads from the network (as opposed to the offline demo style). */
+  /** A style that loads from the network (as opposed to the demo style or the offline maps). */
   private isRemote(): boolean {
     const s = this.currentStyle;
-    return typeof s === 'string' || Object.values(s.sources ?? {}).some((src) => 'tiles' in src || ('url' in src && !!src.url));
+    const local = (u: string) => /^(pmtiles|offline):\/\//.test(u);
+    return (
+      typeof s === 'string' ||
+      Object.values(s.sources ?? {}).some((src) => ('tiles' in src && !!src.tiles?.some((u) => !local(u))) || ('url' in src && !!src.url && !local(src.url)))
+    );
   }
 
   /**

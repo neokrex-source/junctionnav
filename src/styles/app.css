@@ -1051,6 +1051,20 @@ button { cursor: pointer; }
 .acct-actions .btn { flex: 1; padding: 10px 12px; font-size: 15px; }
 .acct-remove { color: var(--danger); }
 
+/* offline maps in settings */
+.off { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.settings .off-status { font-size: 14px; line-height: 1.4; color: var(--ink); }
+.off-bar { width: 100%; height: 10px; appearance: none; -webkit-appearance: none; border: 0; border-radius: 99px; overflow: hidden; background: var(--line); }
+.off-bar::-webkit-progress-bar { background: var(--line); border-radius: 99px; }
+.off-bar::-webkit-progress-value { background: var(--sign); border-radius: 99px; transition: width 0.25s; }
+.off-bar::-moz-progress-bar { background: var(--sign); border-radius: 99px; }
+.off-bar[hidden] { display: none; }
+.off-actions { display: flex; gap: 8px; }
+.off-actions:empty { display: none; }
+.off-actions .btn { flex: 1; padding: 10px 12px; font-size: 15px; }
+.off-delete { color: var(--danger); }
+.settings select:disabled { opacity: 0.55; }
+
 /* map loading problems */
 .map-notice {
   position: absolute;

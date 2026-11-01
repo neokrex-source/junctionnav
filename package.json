@@ -15,7 +15,9 @@
     "build:artifact": "vite build --config vite.artifact.config.ts && node scripts/artifact-page.mjs dist-artifact/index.html dist-artifact/junctionnav-preview.html"
   },
   "dependencies": {
+    "@protomaps/basemaps": "5.7.2",
     "maplibre-gl": "5.24.0",
+    "pmtiles": "4.5.0",
     "three": "0.181.2"
   },
   "devDependencies": {

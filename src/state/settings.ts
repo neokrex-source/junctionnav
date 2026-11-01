@@ -24,6 +24,8 @@ export interface Settings {
   laneAlerts: 'gps' | 'advice' | 'off';
   /** Tunnel sign card and voice warning before tunnels. */
   tunnelAlerts: boolean;
+  /** With offline maps downloaded: use them only without internet ('auto') or all the time. */
+  offlineUse: 'auto' | 'always';
 }
 
 const env = import.meta.env;
@@ -51,6 +53,7 @@ export const DEFAULTS: Settings = {
   jvSurround: true,
   laneAlerts: 'gps',
   tunnelAlerts: true,
+  offlineUse: 'auto',
 };
 
 const KEY = 'junctionnav.settings.v1';

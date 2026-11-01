@@ -119,6 +119,20 @@ Before a tunnel the app shows an advance sign under the banner, says it out loud
 
 The demo route starts with a 500 m tunnel through a hill, Terowong Bukit Demo, just before the first junction. The simulator stops sending GPS inside it, so you can watch the estimate carry the position through.
 
+### Offline maps (Peninsular Malaysia)
+
+Download the whole of Peninsular Malaysia (with Singapore) once, and the app keeps working with no signal: the map, directions with lane advice and junction views, place search, the category buttons and tunnel signs.
+
+- **Download.** Settings → *Offline maps* → **Download**. It shows the size first (roughly 600 to 900 MB), then a progress bar. **Pause** and **Resume** work, also after closing the app: finished parts are kept. Wi‑Fi is best, and the page has to stay open while it downloads.
+- **Using it.** *Use them when there is no internet* (default) keeps the online services and switches to the offline maps the moment the connection drops or a server does not answer. *Always use them* saves mobile data. The switch back to the online map waits until the connection has held for 30 seconds and you are not driving, so patchy coverage does not flip the map.
+- **Updates.** The maps are rebuilt every month with fresh OpenStreetMap data. *Check for update* shows when newer maps are out; the old ones keep working until the new download finishes. **Delete** frees the space.
+- **Opening with no internet.** A service worker keeps the app itself on the phone, so it opens without a connection once it has been opened online.
+- **What is different offline.** Routes come from the app's own router (A* over a compact road graph with one-way streets, turn restrictions, toll and highway avoidance, exits, `destination` signs and `turn:lanes`). It is simpler than OSRM: no traffic, plainer timing at junctions, and long trips stick to main roads once they are well away from both ends. Buildings around junction views need internet. Browsers: Chrome, Edge or Samsung Internet on Android, Chrome or Edge on a computer (iPhone Safari cannot write the files yet).
+
+**How it is built and hosted.** `.github/workflows/pages.yml` runs `scripts/offline/build-pack.sh` on GitHub's servers: OSM data from Geofabrik clipped to `scripts/offline/peninsular-my.geojson` with osmium; `build-graph.mjs` turns the roads into `graph.bin` (vertices, segments, shapes, way classes and speeds, flags, restrictions, exit numbers and a spatial grid, all typed arrays); `build-places.mjs` makes `places.bin` from named places, businesses and streets; `pmtiles extract` cuts vector tiles (zoom 15, or 14 if they would not fit) from the latest Protomaps build; `finish-pack.mjs` adds fonts and map symbols, compresses, splits everything into 45 MB parts and writes `manifest.json`. The pack is published with the site under `offline/` (GitHub Pages allows 1 GB per site), cached between runs, and refreshed on the 2nd of each month. The first build takes 10 to 20 minutes. If it fails, the site still deploys (with last month's pack when there is one). Set the repository variable `OFFLINE_MAPS` to `off` to skip it.
+
+In the browser the pack lives in the origin private file system: compressed files are unpacked while they download, tiles stay in their parts and are joined as one Blob that MapLibre reads through the PMTiles protocol, and a web worker loads the road graph and place index to answer routing, search, junction and tunnel queries.
+
 ### Route options and the routing server
 
 Avoid options use OSRM's `exclude` parameter. Public servers may not support it, or only support one exclusion at a time. The app detects this, applies what the server accepts, shows a note ("This routing server can't avoid toll roads…"), and lists routes that honour your choice first. Your own OSRM built with `server/osrm/setup.sh` supports tolls, highways and ferries in any combination (the script patches the car profile before processing).
@@ -143,6 +157,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 | Routing | `routing.openstreetmap.de` (FOSSGIS OSRM) | Public demo server for light use. Self-host for real driving (below). |
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
 | Search | `photon.komoot.io` | OSM-based, allows search-as-you-type. Fair use only. |
+| Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 100 full downloads). |
 
 Map data © OpenStreetMap contributors. Attribution is shown on the map.
 
@@ -193,6 +208,8 @@ src/
   nav/lanes.ts            lane advisor: target lanes, advice distance, GPS lane estimate
   nav/tunnels.ts          tunnel stretches (router classes + OSM ways), loading ahead, state
   nav/sources.ts          GPS, simulator, speech, screen wake lock
+  offline/                offline maps: pack storage and download, road graph, router, place index,
+                          worker, offline map style, online/offline provider switch
   map/                    MapLibre main map, style registry, offline demo style
   junction/detect.ts      which maneuvers get a junction view
   junction/osmdata.ts     Overpass fetch, batching and cache
@@ -203,6 +220,8 @@ src/
   ui/                     banner, junction panel and preview, tunnel card, steps list, icons, settings
   demo/                   synthetic OSM + OSRM data and offline providers for the demo and tests
   lab/lab.ts              Junction View Lab page
+scripts/offline/          offline pack builder (run by the Pages workflow)
+scripts/sw-plugin.ts      writes the service worker that keeps the app shell for offline use
 server/osrm/              Docker setup for your own OSRM
 tests/                    vitest suites
 ```
@@ -214,7 +233,8 @@ tests/                    vitest suites
 ## Tests
 
 ```bash
-npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, scene builder
+npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, scene builder,
+                  # offline pack (builds a pack from the demo network with the real scripts, then routes, searches and reads junctions)
 npm run typecheck
 ```
 

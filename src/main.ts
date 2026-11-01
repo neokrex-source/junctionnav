@@ -12,6 +12,11 @@ import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
 import { ZoomMap } from './junction/zoomMap';
 import { MapView, routeBounds } from './map/mapView';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
+import type { StyleSpecification } from 'maplibre-gl';
+import { OfflineClient } from './offline/client';
+import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
+import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTunnels, type OfflineSwitch } from './offline/providers';
+import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
@@ -77,12 +82,23 @@ class App {
   navOverlay: NavOverlay = null;
   demo = false;
   map!: MapView;
-  router: Router = new OsrmRouter(this.settings.routerUrl);
-  jdata = new JunctionDataCache(new OverpassProvider(overpassList(this.settings)));
+  /** Offline maps: the pack in browser storage and the worker that routes and searches in it. */
+  offline = new OfflineStore();
+  offlineClient = new OfflineClient();
+  private offlineSw: OfflineSwitch = {
+    available: () => this.offline.ready && this.offlineClient.loaded,
+    mode: () => this.settings.offlineUse,
+    client: this.offlineClient,
+  };
+  /** The offline map style can be drawn (pack installed and its tiles opened). */
+  private offlineMapReady = false;
+  private osrm: Router = new OsrmRouter(this.settings.routerUrl);
+  router!: Router;
+  jdata!: JunctionDataCache;
   osmReady = new Map<string, OsmData | null>();
-  surr = new SurroundCache(new OverpassSurroundProvider(() => overpassList(this.settings)));
+  surr!: SurroundCache;
   surroundReady = new Map<string, SurroundData>();
-  search: PlaceSearchEngine = new PhotonSearch(() => this.settings.photonUrl);
+  search!: PlaceSearchEngine;
   /** Stable engine handed to search boxes; forwards to whichever search is active (real or demo). */
   private searchProxy: PlaceSearchEngine = {
     search: (q, near, lang, signal) => this.search.search(q, near, lang, signal),
@@ -90,7 +106,7 @@ class App {
   };
   private simNoticeShown = false;
   private themeSetByApp = false;
-  cats = new CategorySearch(new OverpassPoiProvider(() => overpassList(this.settings)));
+  cats!: CategorySearch;
   engine = new NavEngine();
   auth: AuthProvider = createAuthProvider();
   user: User | null = null;
@@ -169,6 +185,110 @@ class App {
     return t(this.L, key, vars);
   }
 
+  constructor() {
+    this.realProviders();
+  }
+
+  /**
+   * The online services (OSRM, Overpass, Photon), each falling back to the offline maps when
+   * there is no connection, or used after them when the settings say "always offline".
+   */
+  private realProviders() {
+    const sw = this.offlineSw;
+    const overpass = () => overpassList(this.settings);
+    this.osrm = new OsrmRouter(this.settings.routerUrl);
+    this.router = new HybridRouter(() => this.osrm, sw);
+    this.jdata = new JunctionDataCache(new HybridJunctionData(new OverpassProvider(overpass()), sw));
+    this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
+    const tunnels = new OverpassTunnelProvider(overpass);
+    this.tunnels.provider = new HybridTunnels(() => tunnels, sw);
+    this.cats = new CategorySearch(new HybridPois(new OverpassPoiProvider(overpass), sw));
+    const photon = new PhotonSearch(() => this.settings.photonUrl);
+    this.search = new HybridSearch(() => photon, sw);
+    this.surroundReady.clear();
+    this.osmReady.clear();
+    this.sceneCache.clear();
+  }
+
+  /** Map style for the real (non-demo) map: the offline maps when they should be used, else the chosen style. */
+  private baseStyle(settings = this.settings): string | StyleSpecification {
+    if (this.offlineMapReady && (settings.offlineUse === 'always' || !navigator.onLine)) return offlineStyle(isNight(settings), settings.lang);
+    return resolveStyle(settings, isNight(settings));
+  }
+
+  private mapOnOffline = false;
+  /** Switches the map between online and offline styles when the connection or the pack changes. */
+  private refreshMapSource(force = false) {
+    if (ARTIFACT || this.demo || !this.map) return;
+    const style = this.baseStyle();
+    const offline = typeof style !== 'string' && !!style.sources?.protomaps && JSON.stringify(style.sources.protomaps).includes('pmtiles://');
+    if (!force && offline === this.mapOnOffline) return;
+    this.mapOnOffline = offline;
+    this.map.setStyle(style);
+    this.zoom?.setStyle(style);
+  }
+
+  /** Opens an installed pack: worker for routing and search, protocols for the map. */
+  private async activateOffline() {
+    if (ARTIFACT || !this.offline.installed) return;
+    try {
+      await this.offlineClient.load(this.offline.installed.dir);
+      await enableOfflineMap(this.offline);
+      this.offlineMapReady = true;
+      this.refreshMapSource();
+    } catch (err) {
+      console.warn('[offline] could not open the offline maps', err);
+      this.offlineMapReady = false;
+      this.offlineClient.unload();
+      toast('The offline maps could not be opened. Delete them in Settings and download again.', 6000);
+    }
+  }
+
+  private async initOffline() {
+    if (ARTIFACT || !this.offline.supported) return;
+    let last = this.offline.state.status;
+    let had = !!this.offline.installed;
+    this.offline.onChange((st) => {
+      const has = !!this.offline.installed;
+      const version = this.offline.installed?.dir.join('/');
+      if (has && (!had || version !== this.offlineDir)) {
+        // New or updated pack: switch the worker and the map over to it.
+        const justDownloaded = last === 'downloading';
+        this.offlineClient.unload();
+        this.offlineMapReady = false;
+        void this.activateOffline().then(() => {
+          if (justDownloaded && this.offlineMapReady) toast(`Offline maps for ${this.offline.installed?.manifest.name ?? 'your area'} are ready.`, 4500);
+        });
+      } else if (!has && had) {
+        this.offlineClient.unload();
+        this.offlineMapReady = false;
+        this.refreshMapSource();
+      }
+      if (st.status === 'error' && last === 'downloading') toast(st.message, 5000);
+      had = has;
+      this.offlineDir = version;
+      last = st.status;
+    });
+    await this.offline.init();
+    this.offlineDir = this.offline.installed?.dir.join('/');
+    had = !!this.offline.installed;
+    if (had) await this.activateOffline();
+    // Losing the connection switches to the offline map at once. Coming back waits until the
+    // connection has held for a while and no drive is running, so patchy coverage does not flip the map.
+    let back = 0;
+    window.addEventListener('offline', () => {
+      clearTimeout(back);
+      this.refreshMapSource();
+    });
+    window.addEventListener('online', () => {
+      clearTimeout(back);
+      back = window.setTimeout(() => {
+        if (navigator.onLine && this.view !== 'nav') this.refreshMapSource();
+      }, 30_000);
+    });
+  }
+  private offlineDir: string | undefined;
+
   init() {
     const e = this.el;
     document.body.append(e.app);
@@ -177,8 +297,10 @@ class App {
     // The hosted preview can only draw the bundled demo roads, so never ask for remote tiles there.
     const startStyle = ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : resolveStyle(this.settings, isNight(this.settings));
     this.map = new MapView(e.map, startStyle, ARTIFACT ? buildDemo().start : lastPosition() ?? KL, ARTIFACT ? 14 : 12);
-    this.map.fallback = () => fallbackStyle(isNight(this.settings));
-    this.map.onFallback = () => this.zoom?.setStyle(fallbackStyle(isNight(this.settings)));
+    // When the usual map cannot load: the offline maps if they are on this device, else a simpler online map.
+    const fallback = () => (this.offlineMapReady ? offlineStyle(isNight(this.settings), this.settings.lang) : fallbackStyle(isNight(this.settings)));
+    this.map.fallback = fallback;
+    this.map.onFallback = () => this.zoom?.setStyle(fallback());
     this.map.onLongPress((p) => this.pickOnMap(p));
     this.map.onUserPan(() => {
       if (this.view === 'nav') e.recenter.hidden = false;
@@ -215,6 +337,7 @@ class App {
         /* no permission yet; GPS starts with navigation */
       });
 
+    void this.initOffline();
     const tripLink = parseTripLink(location.search);
     // Demo drives and trip links start once someone is signed in.
     this.whenSignedIn(() => {
@@ -973,18 +1096,8 @@ class App {
 
   private leaveDemo() {
     this.demo = false;
-    this.router = new OsrmRouter(this.settings.routerUrl);
-    this.jdata = new JunctionDataCache(new OverpassProvider(overpassList(this.settings)));
-    this.surr = new SurroundCache(new OverpassSurroundProvider(() => overpassList(this.settings)));
-    this.tunnels.provider = new OverpassTunnelProvider(() => overpassList(this.settings));
-    this.surroundReady.clear();
-    this.cats = new CategorySearch(new OverpassPoiProvider(() => overpassList(this.settings)));
-    this.search = new PhotonSearch(() => this.settings.photonUrl);
-    this.osmReady.clear();
-    this.sceneCache.clear();
-    const style = resolveStyle(this.settings, isNight(this.settings));
-    this.map.setStyle(style);
-    this.zoom.setStyle(style);
+    this.realProviders();
+    this.refreshMapSource(true);
     this.trip = { origin: null, stops: [], destination: null };
     this.routes = [];
     this.map.clearRoutes();
@@ -1017,10 +1130,7 @@ class App {
     window.addEventListener('resize', relayout);
     this.banner.el.classList.add('is-tappable');
     this.banner.el.addEventListener('click', () => this.toggleNavOverlay('steps'));
-    this.zoom = new ZoomMap(
-      this.panel.mapSlot,
-      ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : resolveStyle(this.settings, isNight(this.settings)),
-    );
+    this.zoom = new ZoomMap(this.panel.mapSlot, ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : this.baseStyle());
 
     const overview = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Route overview', html: ICON.overview });
     overview.addEventListener('click', () => {
@@ -1390,6 +1500,7 @@ class App {
     if (this.myPos && (!this.demo || ARTIFACT)) this.map.setPuck(this.myPos, 0);
     this.map.setManeuver(null, null);
     this.showSteps = false;
+    if (navigator.onLine) this.refreshMapSource();
     this.setView('directions');
     this.renderDirEditor();
     if (this.routes.length) {
@@ -1659,7 +1770,8 @@ class App {
   private async editSettings() {
     const u = this.user;
     const next = await openSettings(this.settings, {
-      offline: ARTIFACT,
+      preview: ARTIFACT,
+      pack: ARTIFACT ? undefined : this.offline,
       account: u
         ? {
             name: u.name,
@@ -1688,18 +1800,9 @@ class App {
       this.zoom.setStyle(st);
     }
     if (!this.demo) {
-      if (prev.routerUrl !== next.routerUrl) this.router = new OsrmRouter(next.routerUrl);
-      if (prev.overpassUrls !== next.overpassUrls) {
-        this.jdata = new JunctionDataCache(new OverpassProvider(overpassList(next)));
-        this.surr = new SurroundCache(new OverpassSurroundProvider(() => overpassList(this.settings)));
-        this.surroundReady.clear();
-        this.osmReady.clear();
-      }
-      const style = resolveStyle(next, isNight(next));
-      if (style !== resolveStyle(prev, isNight(prev))) {
-        this.map.setStyle(style);
-        this.zoom.setStyle(style);
-      }
+      if (prev.routerUrl !== next.routerUrl || prev.overpassUrls !== next.overpassUrls) this.realProviders();
+      const changed = (a: string | StyleSpecification, b: string | StyleSpecification) => (typeof a === 'string' || typeof b === 'string' ? a !== b : JSON.stringify(a) !== JSON.stringify(b));
+      if (changed(this.baseStyle(next), this.baseStyle(prev))) this.refreshMapSource(true);
     }
     this.sceneCache.clear();
   }
@@ -1708,3 +1811,10 @@ class App {
 const app = new App();
 app.init();
 void app.boot();
+
+// Keep the app itself on the device so it opens without internet (the map pack is stored separately).
+if (import.meta.env.PROD && !ARTIFACT && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(new URL('sw.js', document.baseURI).href).catch((e) => console.warn('[sw]', e));
+  });
+}
