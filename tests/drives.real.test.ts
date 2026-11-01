@@ -80,6 +80,14 @@ describe.skipIf(!dir)('KL test drives on the real pack', () => {
   for (const drive of KL_DRIVES) {
     it(drive.id, async () => {
       const lines: string[] = [`DRIVE ${drive.id}: ${drive.title}`];
+      try {
+        await runDrive(lines);
+      } finally {
+        console.log(lines.join('\n'));
+      }
+    }, 120_000);
+
+    async function runDrive(lines: string[]) {
       const spec = parseTripLink(driveQuery(drive))!;
       const pts = await resolveTrip(spec, {
         geocode: async (q, near) => {
@@ -113,8 +121,54 @@ describe.skipIf(!dir)('KL test drives on the real pack', () => {
         );
       }
       lines.push(`  kinds seen: ${[...kinds].join(', ')}; terrain CORS: ${corsHeader ?? 'none'}`);
-      console.log(lines.join('\n'));
       expect(js.length).toBeGreaterThan(2);
-    }, 120_000);
+    }
   }
+
+  /**
+   * Where in KL do ramps run on bridges or through tunnels? Clusters of raised or sunken ramp
+   * stretches, with the main roads beside them, to aim the test drives at.
+   */
+  it('scan: ramp structures around KL', () => {
+    const box = { w: 101.52, s: 2.98, e: 101.82, n: 3.26 };
+    type Hit = { p: LngLat; level: number; len: number; dest: string; refs: Set<string> };
+    const hits: Hit[] = [];
+    const seenWay = new Set<number>();
+    for (let seg = 0; seg < G.h.nS; seg++) {
+      const w = G.segWay[seg];
+      const a = G.vertex(G.segA[seg]);
+      if (a[0] < box.w || a[0] > box.e || a[1] < box.s || a[1] > box.n) continue;
+      const t = G.tags(w);
+      if (!/_link$/.test(t.highway ?? '')) continue;
+      const level = parseInt(t.layer ?? (t.bridge ? '1' : t.tunnel ? '-1' : '0'), 10) || 0;
+      if (!level || G.segLen[seg] < 25) continue;
+      const refs = new Set<string>();
+      for (const s2 of G.segmentsNear(a, 160)) {
+        const t2 = G.tags(G.segWay[s2]);
+        if (/^(motorway|trunk|primary)$/.test(t2.highway ?? '') && (t2.ref || t2.name)) refs.add(t2.ref || t2.name);
+      }
+      hits.push({ p: a, level, len: G.segLen[seg], dest: seenWay.has(w) ? '' : t.destination ?? t['destination:ref'] ?? '', refs });
+      seenWay.add(w);
+    }
+    const clusters: { p: LngLat; up: number; down: number; refs: Set<string>; dest: Set<string> }[] = [];
+    for (const hit of hits) {
+      let c = clusters.find((k) => Math.hypot((k.p[0] - hit.p[0]) * 111_000, (k.p[1] - hit.p[1]) * 111_000) < 450);
+      if (!c) {
+        c = { p: hit.p, up: 0, down: 0, refs: new Set(), dest: new Set() };
+        clusters.push(c);
+      }
+      if (hit.level > 0) c.up += hit.len;
+      else c.down += hit.len;
+      hit.refs.forEach((r) => c!.refs.add(r));
+      if (hit.dest) c.dest.add(hit.dest);
+    }
+    clusters.sort((a, b) => b.up + b.down - (a.up + a.down));
+    const out = ['SCAN ramp structures (raised/sunken metres of ramp) around KL:'];
+    for (const c of clusters.slice(0, 40))
+      out.push(
+        `  ${c.p[1].toFixed(5)},${c.p[0].toFixed(5)}  up ${Math.round(c.up)} m  down ${Math.round(c.down)} m  roads: ${[...c.refs].slice(0, 6).join(', ')}  to: ${[...c.dest].slice(0, 4).join(' | ')}`,
+      );
+    console.log(out.join('\n'));
+    expect(clusters.length).toBeGreaterThan(0);
+  });
 });

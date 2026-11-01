@@ -318,7 +318,44 @@ export class VerticalModel {
       if (s2[v] < 0) base[v] = this.ground[s1[v]];
       else base[v] = (this.ground[s1[v]] * d2[v] + this.ground[s2[v]] * d1[v]) / (d1[v] + d2[v]);
     }
-    return this.smoothAlongRoads(base);
+    return this.limitGrades(this.smoothAlongRoads(base));
+  }
+
+  /**
+   * No road climbs steeper than its class allows (expressways 7 %, main roads 9 %, ramps 10 %,
+   * minor roads 14 %): the base is set midway between the lowest and highest profiles that keep
+   * those grades, which removes what terrain noise is left on steep-looking stretches.
+   */
+  private limitGrades(base: Float64Array): Float64Array {
+    const n = this.vx.length;
+    const maxGrade = (e: number) => {
+      const hw = this.ways[this.eway[e]].tags.highway ?? '';
+      return hw.endsWith('_link') ? 0.1 : hw === 'motorway' || hw === 'trunk' ? 0.07 : hw === 'primary' || hw === 'secondary' ? 0.09 : 0.14;
+    };
+    const run = (sign: 1 | -1) => {
+      const key = new Float64Array(n);
+      const heap = new Heap();
+      for (let v = 0; v < n; v++) {
+        key[v] = -sign * base[v];
+        if (this.vadj[v].length) heap.push(key[v], v);
+      }
+      while (heap.size) {
+        const [k, v] = heap.pop();
+        if (k > key[v]) continue;
+        for (const e of this.vadj[v]) {
+          const w = this.other(e, v);
+          const nk = k + maxGrade(e) * this.elen[e];
+          if (nk < key[w]) {
+            key[w] = nk;
+            heap.push(nk, w);
+          }
+        }
+      }
+      return key.map((k) => -sign * k);
+    };
+    const lo = run(1);
+    const hi = run(-1);
+    return base.map((b, v) => (this.vadj[v].length ? (lo[v] + hi[v]) / 2 : b));
   }
 
   /**
