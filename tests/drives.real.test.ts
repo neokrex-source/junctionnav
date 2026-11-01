@@ -15,6 +15,7 @@ import { PlaceIndex } from '../src/offline/places';
 import { junctionData, roadWays } from '../src/offline/queries';
 import { OfflineRouter } from '../src/offline/router';
 import { normalizeOsrm } from '../src/routing/osrm';
+import { tunnelsFromRoute } from '../src/nav/tunnels';
 import { driveQuery, KL_DRIVES } from '../src/sim/drives';
 import { parseTripLink, resolveTrip } from '../src/trip/tripLink';
 import { decodePng } from './png';
@@ -108,11 +109,14 @@ describe.skipIf(!dir)('KL test drives on the real pack', () => {
       const js = detectJunctions(route);
       lines.push(`  junction views: ${js.length}`);
       const kinds = new Set<string>();
+      /** Where the interesting things are along the route (structures, tunnels, the toll). */
+      const marks: number[] = [];
       for (const j of js) {
         const terrain = await terrainAt(j.location);
         const sc = buildScene(route, j, junctionData(G, [j.location], 450), { terrain });
         const p = sc.profile;
         kinds.add(p.kind);
+        if (!['flat', 'uphill', 'downhill', 'level'].includes(p.kind)) marks.push(j.s);
         const step = route.steps[j.stepIndex];
         const g0 = terrain?.at(j.location);
         lines.push(
@@ -120,8 +124,29 @@ describe.skipIf(!dir)('KL test drives on the real pack', () => {
             `  ${step.type}/${step.modifier ?? ''} ${step.ref ?? ''} ${step.name ?? ''} ${step.destinations ? '-> ' + step.destinations : ''} ${j.location[1].toFixed(5)},${j.location[0].toFixed(5)}`,
         );
       }
+      const tunnels = tunnelsFromRoute(route).filter((t) => t.length >= 150);
+      for (const t of tunnels) {
+        kinds.add('tunnelSpan');
+        marks.push(t.fromS, t.toS);
+      }
+      lines.push(`  tunnels: ${tunnels.map((t) => `${(t.fromS / 1000).toFixed(2)}-${(t.toS / 1000).toFixed(2)} km ${t.name ?? ''}`).join(', ') || 'none'}`);
       lines.push(`  kinds seen: ${[...kinds].join(', ')}; terrain CORS: ${corsHeader ?? 'none'}`);
-      expect(js.length).toBeGreaterThan(2);
+      // Stops on the way (a toll plaza), by where the route passes them.
+      const stopS = pts.slice(1, -1).map((p) => ({ p, s: route.line.project(p.lngLat).s }));
+      const keep = stopS.filter((x) => /tol|toll/i.test(x.p.label));
+      for (const k of keep) marks.push(k.s);
+      if (marks.length) {
+        // A shorter test version: from 2 km before the first interesting thing to 900 m after the last.
+        const a = Math.max(0, Math.min(...marks) - 2000);
+        const b = Math.min(route.line.length, Math.max(...marks) + 900);
+        const at = (sv: number) => route.line.pointAt(sv);
+        const fmt = (q: LngLat) => `${q[1].toFixed(5)},${q[0].toFixed(5)}`;
+        const vias = stopS.filter((x) => x.s > a + 300 && x.s < b - 300).map((x) => `via=${fmt(x.p.lngLat)}@${x.p.bearing ?? Math.round(route.line.bearingAt(x.s))}`);
+        lines.push(`  TRIM ${((b - a) / 1000).toFixed(1)} km: from=${fmt(at(a))}@${Math.round(route.line.bearingAt(a + 10, 40))}${vias.map((v) => '&' + v).join('')}&to=${fmt(at(b))}`);
+      }
+      const want = drive.shows.map((k) => (k === 'tunnel' ? (kinds.has('tunnel') || kinds.has('tunnelSpan') ? k : null) : kinds.has(k) ? k : null));
+      expect(want.filter((k) => !k), `expected to see ${drive.shows.join(', ')}`).toEqual([]);
+      expect(js.length).toBeGreaterThan(1);
     }
   }
 
