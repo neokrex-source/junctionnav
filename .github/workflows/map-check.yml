@@ -26,7 +26,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npm i --no-save playwright@1 && npx playwright install --with-deps chromium
       - name: Check the style against OpenFreeMap
         run: npx vite-node scripts/dev/map-check.ts map-check
       - name: Day and night pictures
