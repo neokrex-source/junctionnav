@@ -4,6 +4,7 @@ declare module 'node:child_process' {
 }
 declare module 'node:fs' {
   export function mkdtempSync(prefix: string): string;
+  export function mkdirSync(path: string, opts?: { recursive?: boolean }): void;
   export function readFileSync(path: string): Uint8Array;
   export function writeFileSync(path: string, data: string): void;
 }

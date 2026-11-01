@@ -1,0 +1,67 @@
+# Real KL junction data for looking at junction views in a browser without the full pack: the
+# KL test drives' routes, the roads, terrain and candidates of every junction on them, map tiles
+# for central KL, and the map fonts. Pushed to the kl-fixtures branch (replaced each run).
+name: KL junction fixtures
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/klFixtures.dump.test.ts'
+      - '.github/workflows/kl-fixtures.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kl-fixtures
+  cancel-in-progress: true
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        with:
+          path: offline-pack
+          key: offline-pack-v1-newest
+          restore-keys: offline-pack-v1-
+      - name: Unpack the pack
+        run: |
+          mkdir -p pack
+          cat offline-pack/graph.bin.gz.* | gunzip > pack/graph.bin
+          cat offline-pack/places.bin.gz.* | gunzip > pack/places.bin
+          ls -la pack
+      - name: Dump the KL junctions
+        env:
+          PACK_DIR: pack
+          DUMP_DIR: fixtures
+        run: npx vitest run tests/klFixtures.dump.test.ts
+      - name: Map tiles for central KL and the map fonts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R protomaps/go-pmtiles -p 'go-pmtiles_*_Linux_x86_64.tar.gz' -D /tmp --clobber
+          tar -xzf /tmp/go-pmtiles_*_Linux_x86_64.tar.gz -C /tmp pmtiles
+          cat offline-pack/tiles.pmtiles.* > pack/tiles.pmtiles
+          /tmp/pmtiles extract pack/tiles.pmtiles fixtures/kl.pmtiles --bbox=101.56,3.00,101.79,3.22
+          cat offline-pack/assets.bin.gz.* | gunzip > fixtures/assets.bin
+          cat offline-pack/assets.json.* > fixtures/assets.json
+          du -sh fixtures; ls -la fixtures | head -60
+      - name: Push to the kl-fixtures branch
+        run: |
+          cd fixtures
+          git init -q -b kl-fixtures
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "KL junction fixtures from ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" kl-fixtures

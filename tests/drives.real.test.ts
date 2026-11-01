@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import type { LngLat } from '../src/geo/geo';
 import { detectJunctions } from '../src/junction/detect';
 import { buildScene, type JunctionScene } from '../src/junction/scene';
-import { GridPatch, TERRAIN_URL, type TerrainPatch } from '../src/junction/terrain';
 import { OfflineGraph } from '../src/offline/graph';
 import { PlaceIndex } from '../src/offline/places';
 import { junctionData, roadWays, tunnelWays } from '../src/offline/queries';
@@ -22,60 +21,13 @@ import { driveQuery, KL_DRIVES } from '../src/sim/drives';
 import { replayDrive } from '../src/sim/replay';
 import { CHECKS, TestRun, type CheckId } from '../src/sim/testRun';
 import { parseTripLink, resolveTrip } from '../src/trip/tripLink';
-import { decodePng } from './png';
+import { terrainAt } from './realTerrain';
 
 const dir = process.env.PACK_DIR;
 const ab = (f: string) => {
   const b = readFileSync(join(dir!, f));
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
 };
-
-/** Terrain from the public tiles, decoded in Node (the app does this in the browser). */
-const tiles = new Map<string, Promise<Float32Array | null>>();
-let corsHeader: string | null | undefined;
-async function tile(z: number, x: number, y: number): Promise<Float32Array | null> {
-  const key = `${z}/${x}/${y}`;
-  let t = tiles.get(key);
-  if (!t) {
-    t = (async () => {
-      const res = await fetch(TERRAIN_URL.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), {
-        headers: { Origin: 'https://neokrex-source.github.io' },
-      });
-      if (corsHeader === undefined) corsHeader = res.headers.get('access-control-allow-origin');
-      if (!res.ok) return null;
-      const { width, rgba } = decodePng(new Uint8Array(await res.arrayBuffer()));
-      const out = new Float32Array(width * width);
-      for (let i = 0; i < out.length; i++) out[i] = rgba[i * 4] * 256 + rgba[i * 4 + 1] + rgba[i * 4 + 2] / 256 - 32768;
-      return out;
-    })().catch(() => null);
-    tiles.set(key, t);
-  }
-  return t;
-}
-async function terrainAt(center: LngLat): Promise<TerrainPatch | null> {
-  const z = 14;
-  const n = 2 ** z;
-  const txy = (p: LngLat) => {
-    const lat = (p[1] * Math.PI) / 180;
-    return [((p[0] + 180) / 360) * n, ((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * n];
-  };
-  const [cx, cy] = txy(center).map(Math.floor);
-  const loaded = new Map<string, Float32Array>();
-  for (let dx = -1; dx <= 1; dx++)
-    for (let dy = -1; dy <= 1; dy++) {
-      const d = await tile(z, cx + dx, cy + dy);
-      if (d) loaded.set(`${cx + dx}/${cy + dy}`, d);
-    }
-  if (!loaded.size) return null;
-  return GridPatch.sample(center, 950, 15, (p) => {
-    const [fx, fy] = txy(p);
-    const d = loaded.get(`${Math.floor(fx)}/${Math.floor(fy)}`);
-    if (!d) return null;
-    const px = Math.min(255, Math.max(0, Math.floor((fx % 1) * 256)));
-    const py = Math.min(255, Math.max(0, Math.floor((fy % 1) * 256)));
-    return Math.max(0, d[py * 256 + px]);
-  });
-}
 
 describe.skipIf(!dir)('KL test drives on the real pack', () => {
   const G = dir ? new OfflineGraph(ab('graph.bin')) : (null as unknown as OfflineGraph);
