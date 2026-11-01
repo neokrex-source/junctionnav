@@ -123,7 +123,7 @@ The demo route starts with a 500 m tunnel through a hill, Terowong Bukit Demo, j
 
 Download the whole of Peninsular Malaysia (with Singapore) once, and the app keeps working with no signal: the map, directions with lane advice and junction views, place search, the category buttons and tunnel signs.
 
-- **Download.** Settings → *Offline maps* → **Download**. It shows the size first (roughly 600 to 900 MB), then a progress bar. **Pause** and **Resume** work, also after closing the app: finished parts are kept. Wi‑Fi is best, and the page has to stay open while it downloads.
+- **Download.** Settings → *Offline maps* → **Download**. It shows the size first (about 280 MB to download, 320 MB on the phone), then a progress bar. **Pause** and **Resume** work, also after closing the app: finished parts are kept. Wi‑Fi is best, and the page has to stay open while it downloads.
 - **Using it.** *Use them when there is no internet* (default) keeps the online services and switches to the offline maps the moment the connection drops or a server does not answer. *Always use them* saves mobile data. The switch back to the online map waits until the connection has held for 30 seconds and you are not driving, so patchy coverage does not flip the map.
 - **Updates.** The maps are rebuilt every month with fresh OpenStreetMap data. *Check for update* shows when newer maps are out; the old ones keep working until the new download finishes. **Delete** frees the space.
 - **Opening with no internet.** A service worker keeps the app itself on the phone, so it opens without a connection once it has been opened online.
@@ -157,7 +157,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 | Routing | `routing.openstreetmap.de` (FOSSGIS OSRM) | Public demo server for light use. Self-host for real driving (below). |
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
 | Search | `photon.komoot.io` | OSM-based, allows search-as-you-type. Fair use only. |
-| Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 100 full downloads). |
+| Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 350 full downloads). |
 
 Map data © OpenStreetMap contributors. Attribution is shown on the map.
 
