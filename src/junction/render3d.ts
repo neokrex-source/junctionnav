@@ -4,7 +4,8 @@
  * line drawn as a large arrow. Uses unlit materials for an illustration look.
  */
 import * as THREE from 'three';
-import { clamp, distToPolyline, lerp, rightNormals, rng, xyAt, type XY } from '../geo/geo';
+import { clamp, distToPolyline, lerp, LocalFrame, rightNormals, rng, xyAt, type XY } from '../geo/geo';
+import type { GroundMap } from './groundMap';
 import { cameraPose, groundAt, type JunctionScene, type RoadStrip, type SceneGround } from './scene';
 import { signCanvas, type SignTheme } from './signs';
 import { buildSurroundings, SURROUND_DAY, SURROUND_NIGHT } from './surroundRender';
@@ -405,11 +406,15 @@ export class JunctionRenderer {
     const groundGeo = new THREE.PlaneGeometry(6000, 6000);
     groundGeo.rotateX(-Math.PI / 2);
     this.disposables.push(groundGeo);
-    const ground = new THREE.Mesh(groundGeo, this.mat(P.ground, { depthWrite: false }));
+    // With the map on the ground, the plain ground beyond it takes the map's land colour.
+    const gm = jv.groundMap;
+    const groundColor = gm?.land ?? P.ground;
+    const ground = new THREE.Mesh(groundGeo, this.mat(groundColor, { depthWrite: false }));
     ground.position.y = jv.ground.level - 0.05;
     ground.renderOrder = -10;
     this.scene3.add(ground);
-    if (jv.ground.grid) this.addTerrain(jv.ground);
+    if (jv.ground.grid) this.addTerrain(jv.ground, groundColor);
+    if (gm) this.addGroundMap(gm, jv);
     this.addHills();
 
     const asphalt = new Acc();
@@ -452,10 +457,19 @@ export class JunctionRenderer {
     let blocked: ((p: XY) => boolean) | undefined;
     if (jv.surround) {
       const pose = cameraPose(jv, MAX_DIST);
-      const built = buildSurroundings(jv.surround, this.palette === NIGHT ? SURROUND_NIGHT : SURROUND_DAY, jv.seed, { pos: pose.pos, heading: pose.heading }, (x, y) => groundAt(jv.ground, x, y));
+      const built = buildSurroundings(jv.surround, this.palette === NIGHT ? SURROUND_NIGHT : SURROUND_DAY, jv.seed, { pos: pose.pos, heading: pose.heading }, (x, y) => groundAt(jv.ground, x, y), {
+        flat: !gm,
+      });
       for (const o of built.objects) this.scene3.add(o);
       this.disposables.push(...built.disposables);
       blocked = built.blocked;
+    }
+    if (gm) {
+      // Trees only where the map is green (parks, woods, grass), not on streets and buildings.
+      const c = this.mapOffset(gm, jv);
+      const notGreen = (p: XY) => !gm.green([p[0] - c[0], p[1] - c[1]]);
+      const before = blocked;
+      blocked = before ? (p: XY) => before(p) || notGreen(p) : notGreen;
     }
     this.addTrees(strips, blocked);
     this.addGantry();
@@ -656,13 +670,12 @@ export class JunctionRenderer {
   }
 
   /** Terrain around the junction: a grid lit from the north-west so slopes read without lighting. */
-  private addTerrain(g: SceneGround) {
+  private addTerrain(g: SceneGround, color: string) {
     const gr = g.grid!;
-    const P = this.palette;
     const n = gr.n;
     const pos = new Float32Array(n * n * 3);
     const col = new Float32Array(n * n * 3);
-    const base = new THREE.Color(P.ground);
+    const base = new THREE.Color(color);
     const c = new THREE.Color();
     const at = (i: number, j: number) => gr.h[clamp(j, 0, n - 1) * n + clamp(i, 0, n - 1)];
     for (let j = 0; j < n; j++)
@@ -692,6 +705,102 @@ export class JunctionRenderer {
     mesh.renderOrder = -9.5;
     mesh.frustumCulled = false;
     this.scene3.add(mesh);
+  }
+
+  /** Where the map image's centre sits in the scene's local metres. */
+  private mapOffset(gm: GroundMap, jv: JunctionScene): XY {
+    return new LocalFrame(jv.origin).toXY(gm.center);
+  }
+
+  /**
+   * The map snapshot draped over the ground (and the terrain, shaded like it), under the roads:
+   * streets, land use, water and building footprints around the junction, as on the map.
+   */
+  private addGroundMap(gm: GroundMap, jv: JunctionScene) {
+    const c = this.mapOffset(gm, jv);
+    const g = jv.ground;
+    const half = gm.half;
+    const n = g.grid ? Math.min(121, Math.ceil((2 * half) / Math.max(10, g.grid.cell)) + 1) : 2;
+    const pos = new Float32Array(n * n * 3);
+    const uv = new Float32Array(n * n * 2);
+    const col = new Float32Array(n * n * 3);
+    const step = (2 * half) / (n - 1);
+    const hAt = (x: number, y: number) => groundAt(g, x, y);
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const x = c[0] - half + i * step;
+        const y = c[1] - half + j * step;
+        const k = j * n + i;
+        pos.set(W(x, y, hAt(x, y) - 0.06), k * 3);
+        uv.set([i / (n - 1), j / (n - 1)], k * 2);
+        let shade = 1;
+        if (g.grid) {
+          const e = 8;
+          const dhdx = (hAt(x + e, y) - hAt(x - e, y)) / (2 * e);
+          const dhdy = (hAt(x, y + e) - hAt(x, y - e)) / (2 * e);
+          shade = clamp(1 + 2.2 * (dhdx - dhdy), 0.72, 1.18);
+        }
+        col.set([shade, shade, shade], k * 3);
+      }
+    const idx: number[] = [];
+    for (let j = 0; j < n - 1; j++)
+      for (let i = 0; i < n - 1; i++) {
+        const a = j * n + i;
+        idx.push(a, a + 1, a + n + 1, a, a + n + 1, a + n);
+      }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    const tex = new THREE.CanvasTexture(this.mapUnderRoads(gm, jv, c));
+    tex.colorSpace = THREE.SRGBColorSpace;
+    // The camera looks along the ground at a low angle: without anisotropic filtering the map
+    // turns to mush a hundred metres out.
+    tex.anisotropy = this.renderer?.capabilities.getMaxAnisotropy() ?? 1;
+    this.disposables.push(geo, tex);
+    const mesh = new THREE.Mesh(geo, this.mat('#ffffff', { map: tex, vertexColors: true, transparent: true, depthWrite: false }));
+    mesh.renderOrder = -9.45;
+    mesh.frustumCulled = false;
+    this.scene3.add(mesh);
+  }
+
+  /**
+   * The map image with its own drawing of the scene's roads painted over in the land colour: the
+   * 3D roads lie on top, and a map road a little wider or a few metres off would peek out beside
+   * them like a second road.
+   */
+  private mapUnderRoads(gm: GroundMap, jv: JunctionScene, c: XY): HTMLCanvasElement {
+    const out = document.createElement('canvas');
+    out.width = gm.image.width;
+    out.height = gm.image.height;
+    const ctx = out.getContext('2d');
+    if (!ctx) return gm.image;
+    ctx.drawImage(gm.image, 0, 0);
+    const k = out.width / (2 * gm.half);
+    const px = (p: XY): XY => [(p[0] - c[0] + gm.half) * k, (gm.half - (p[1] - c[1])) * k];
+    // Only where the image is drawn, so the faded edges stay faded.
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.strokeStyle = gm.land;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const st of jv.roads) {
+      if (hiddenUnderground(st, jv.ground)) continue;
+      let w = -1;
+      for (let i = 0; i < st.pts.length - 1; i++) {
+        const wi = Math.round(((st.width[i] + st.width[i + 1]) / 2 + 2 * st.shoulder + 7) * k);
+        if (wi !== w) {
+          if (w > 0) ctx.stroke();
+          w = wi;
+          ctx.lineWidth = wi;
+          ctx.beginPath();
+          ctx.moveTo(...px(st.pts[i]));
+        }
+        ctx.lineTo(...px(st.pts[i + 1]));
+      }
+      if (w > 0) ctx.stroke();
+    }
+    return out;
   }
 
   private addHills() {

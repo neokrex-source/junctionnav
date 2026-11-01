@@ -28,9 +28,24 @@ export interface JunctionDataProvider {
 const ROAD_RE =
   '^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$';
 
-export function buildOverpassQuery(points: LngLat[], radius: number): string {
+/**
+ * Main roads (tertiary and up, with their ramps) and every bridge and tunnel are fetched this far
+ * out, beyond the other roads: the flyovers around a junction stand up in its view, and their
+ * heights come out right only when the roads they cross are known too.
+ */
+export const STRUCTURE_RADIUS = 900;
+const MAIN_RE = '^(motorway|trunk|primary|secondary|tertiary)(_link)?$';
+
+export function buildOverpassQuery(points: LngLat[], radius: number, structRadius = Math.max(radius, STRUCTURE_RADIUS)): string {
   const ways = points
-    .map((p) => `way(around:${radius},${p[1].toFixed(6)},${p[0].toFixed(6)})["highway"~"${ROAD_RE}"];`)
+    .map((p) => {
+      const ll = `${p[1].toFixed(6)},${p[0].toFixed(6)}`;
+      const near = `way(around:${radius},${ll})["highway"~"${ROAD_RE}"];`;
+      if (structRadius <= radius) return near;
+      const far = `way(around:${structRadius},${ll})["highway"~"${ROAD_RE}"]`;
+      const main = `way(around:${structRadius},${ll})["highway"~"${MAIN_RE}"];`;
+      return [near, main, `${far}["bridge"]["bridge"!="no"];`, `${far}["tunnel"]["tunnel"!="no"];`, `${far}["layer"~"^-?[1-9]"];`].join('\n');
+    })
     .join('\n');
   const nodes = points
     .map((p) => `node(around:${radius + 100},${p[1].toFixed(6)},${p[0].toFixed(6)})["highway"="motorway_junction"];`)

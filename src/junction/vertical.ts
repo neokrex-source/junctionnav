@@ -17,8 +17,8 @@
  * All heights are in metres. `heightAt` gives ground + structure, `structureAt` the structure
  * part only (what a driver sees as "going up onto a flyover"), `groundAt` the ground.
  */
-import { clamp, LocalFrame, type XY } from '../geo/geo';
-import type { OsmData } from './osmdata';
+import { clamp, LocalFrame, type XY } from "../geo/geo";
+import type { OsmData } from "./osmdata";
 
 type Tags = Record<string, string>;
 export type GroundFn = (p: XY) => number;
@@ -35,10 +35,10 @@ const SEG = 8;
 const STEEP = 1.6;
 
 export function wayLevel(t: Tags | undefined): number {
-  const l = parseInt(t?.layer ?? '', 10);
+  const l = parseInt(t?.layer ?? "", 10);
   if (Number.isFinite(l)) return clamp(l, -3, 4);
-  if (t?.bridge && t.bridge !== 'no') return 1;
-  if ((t?.tunnel && t.tunnel !== 'no') || t?.covered === 'yes') return -1;
+  if (t?.bridge && t.bridge !== "no") return 1;
+  if ((t?.tunnel && t.tunnel !== "no") || t?.covered === "yes") return -1;
   return 0;
 }
 
@@ -56,18 +56,18 @@ export function parseHeight(v: string | undefined): number | null {
 
 /** Order in which roads are settled: expressways first, ramps last. */
 function prioOf(t: Tags): number {
-  const hw = t.highway ?? '';
-  if (hw.endsWith('_link')) return 3;
-  if (hw === 'motorway' || hw === 'trunk') return 0;
-  if (hw === 'primary' || hw === 'secondary') return 1;
+  const hw = t.highway ?? "";
+  if (hw.endsWith("_link")) return 3;
+  if (hw === "motorway" || hw === "trunk") return 0;
+  if (hw === "primary" || hw === "secondary") return 1;
   return 2;
 }
 
 function gradeOf(t: Tags): number {
-  const hw = t.highway ?? '';
-  if (hw.endsWith('_link')) return 0.065;
-  if (hw === 'motorway' || hw === 'trunk') return 0.045;
-  if (hw === 'primary' || hw === 'secondary') return 0.05;
+  const hw = t.highway ?? "";
+  if (hw.endsWith("_link")) return 0.065;
+  if (hw === "motorway" || hw === "trunk") return 0.045;
+  if (hw === "primary" || hw === "secondary") return 0.05;
   return 0.07;
 }
 
@@ -143,6 +143,11 @@ export interface VerticalOptions {
   ground?: GroundFn;
 }
 
+/** Numeric grid cell key (cells are 20 m, so ±650 km fits easily). */
+function cellKey(x: number, y: number): number {
+  return (x + 32768) * 65536 + (y + 32768);
+}
+
 export class VerticalModel {
   readonly hasGround: boolean;
   private vx: number[] = [];
@@ -153,22 +158,32 @@ export class VerticalModel {
   private elen: number[] = [];
   private eway: number[] = [];
   private ways: WayInfo[] = [];
-  private grid = new Map<string, number[]>();
+  /** Edges per grid cell, keyed by cellKey(x, y). */
+  private grid = new Map<number, number[]>();
+  private groundFn: ((p: XY) => number) | undefined;
   private readonly cell = 20;
   private radius: number;
   private ground: Float64Array = new Float64Array(0);
   private base: Float64Array = new Float64Array(0);
   private off: Float64Array = new Float64Array(0);
   /** Crossings between roads on different levels, kept for checks and tests. */
-  readonly crossings: { upper: Tags; lower: Tags; at: XY; clearance: number }[] = [];
+  readonly crossings: {
+    upper: Tags;
+    lower: Tags;
+    at: XY;
+    clearance: number;
+  }[] = [];
 
   constructor(osm: OsmData, frame: LocalFrame, opts: VerticalOptions = {}) {
     this.radius = opts.radius ?? 900;
     this.hasGround = !!opts.ground;
+    this.groundFn = opts.ground;
     this.build(osm, frame);
     const n = this.vx.length;
     this.ground = new Float64Array(n);
-    if (opts.ground) for (let v = 0; v < n; v++) this.ground[v] = opts.ground([this.vx[v], this.vy[v]]);
+    if (opts.ground)
+      for (let v = 0; v < n; v++)
+        this.ground[v] = opts.ground([this.vx[v], this.vy[v]]);
     this.base = this.computeBase();
     this.off = this.solveAll();
   }
@@ -194,11 +209,12 @@ export class VerticalModel {
       this.ways.push({
         tags: t,
         level: wayLevel(t),
-        tunnel: (!!t.tunnel && t.tunnel !== 'no') || t.covered === 'yes',
+        tunnel: (!!t.tunnel && t.tunnel !== "no") || t.covered === "yes",
         prio: prioOf(t),
         grade: gradeOf(t),
-        headroom: parseHeight(t.maxheight) ?? parseHeight(t['maxheight:physical']),
-        major: /^(motorway|trunk|primary)/.test(t.highway ?? ''),
+        headroom:
+          parseHeight(t.maxheight) ?? parseHeight(t["maxheight:physical"]),
+        major: /^(motorway|trunk|primary)/.test(t.highway ?? ""),
       });
       let prevV = -1;
       let prevP: XY | null = null;
@@ -211,11 +227,21 @@ export class VerticalModel {
         }
         if (prevP && prevV >= 0 && prevV !== v) {
           const len = Math.hypot(p[0] - prevP[0], p[1] - prevP[1]);
-          if (len > 0.05 && Math.min(Math.hypot(prevP[0], prevP[1]), Math.hypot(p[0], p[1])) <= R) {
+          if (
+            len > 0.05 &&
+            Math.min(Math.hypot(prevP[0], prevP[1]), Math.hypot(p[0], p[1])) <=
+              R
+          ) {
             const k = Math.max(1, Math.ceil(len / SEG));
             let a = prevV;
             for (let j = 1; j <= k; j++) {
-              const b = j === k ? v : this.vertex([prevP[0] + ((p[0] - prevP[0]) * j) / k, prevP[1] + ((p[1] - prevP[1]) * j) / k]);
+              const b =
+                j === k
+                  ? v
+                  : this.vertex([
+                      prevP[0] + ((p[0] - prevP[0]) * j) / k,
+                      prevP[1] + ((p[1] - prevP[1]) * j) / k,
+                    ]);
               this.addEdge(a, b, len / k, wi);
               a = b;
             }
@@ -242,7 +268,7 @@ export class VerticalModel {
     const y1 = Math.floor(Math.max(this.vy[a], this.vy[b]) / c);
     for (let x = x0; x <= x1; x++)
       for (let y = y0; y <= y1; y++) {
-        const k = `${x},${y}`;
+        const k = cellKey(x, y);
         const list = this.grid.get(k);
         if (list) list.push(e);
         else this.grid.set(k, [e]);
@@ -268,7 +294,8 @@ export class VerticalModel {
     const n = this.vx.length;
     const base = Float64Array.from(this.ground);
     if (!this.hasGround) return base;
-    const interior = (v: number) => this.vadj[v].length > 0 && this.vadj[v].every((e) => this.level(e) !== 0);
+    const interior = (v: number) =>
+      this.vadj[v].length > 0 && this.vadj[v].every((e) => this.level(e) !== 0);
     // Two nearest distinct ends per interior point, along structure edges.
     const d1 = new Float64Array(n).fill(Infinity);
     const d2 = new Float64Array(n).fill(Infinity);
@@ -276,7 +303,8 @@ export class VerticalModel {
     const s2 = new Int32Array(n).fill(-1);
     const heap = new Heap();
     for (let v = 0; v < n; v++) {
-      if (interior(v) || !this.vadj[v].some((e) => this.level(e) !== 0)) continue;
+      if (interior(v) || !this.vadj[v].some((e) => this.level(e) !== 0))
+        continue;
       d1[v] = 0;
       s1[v] = v;
       heap.push(0, v * 2);
@@ -314,7 +342,10 @@ export class VerticalModel {
     for (let v = 0; v < n; v++) {
       if (!interior(v) || s1[v] < 0) continue;
       if (s2[v] < 0) base[v] = this.ground[s1[v]];
-      else base[v] = (this.ground[s1[v]] * d2[v] + this.ground[s2[v]] * d1[v]) / (d1[v] + d2[v]);
+      else
+        base[v] =
+          (this.ground[s1[v]] * d2[v] + this.ground[s2[v]] * d1[v]) /
+          (d1[v] + d2[v]);
     }
     return this.limitGrades(this.smoothAlongRoads(base));
   }
@@ -327,8 +358,14 @@ export class VerticalModel {
   private limitGrades(base: Float64Array): Float64Array {
     const n = this.vx.length;
     const maxGrade = (e: number) => {
-      const hw = this.ways[this.eway[e]].tags.highway ?? '';
-      return hw.endsWith('_link') ? 0.1 : hw === 'motorway' || hw === 'trunk' ? 0.07 : hw === 'primary' || hw === 'secondary' ? 0.09 : 0.14;
+      const hw = this.ways[this.eway[e]].tags.highway ?? "";
+      return hw.endsWith("_link")
+        ? 0.1
+        : hw === "motorway" || hw === "trunk"
+          ? 0.07
+          : hw === "primary" || hw === "secondary"
+            ? 0.09
+            : 0.14;
     };
     const run = (sign: 1 | -1) => {
       const key = new Float64Array(n);
@@ -402,7 +439,16 @@ export class VerticalModel {
           const a2 = this.ea[e2];
           const b2 = this.eb[e2];
           if (a1 === a2 || a1 === b2 || b1 === a2 || b1 === b2) continue;
-          const hit = segHit(this.vx[a1], this.vy[a1], this.vx[b1], this.vy[b1], this.vx[a2], this.vy[a2], this.vx[b2], this.vy[b2]);
+          const hit = segHit(
+            this.vx[a1],
+            this.vy[a1],
+            this.vx[b1],
+            this.vy[b1],
+            this.vx[a2],
+            this.vy[a2],
+            this.vx[b2],
+            this.vy[b2],
+          );
           if (!hit) continue;
           const key = `${Math.min(w1, w2)}:${Math.max(w1, w2)}:${Math.round(hit.x / 6)}:${Math.round(hit.y / 6)}`;
           if (seen.has(key)) continue;
@@ -413,7 +459,12 @@ export class VerticalModel {
             [e1, e2] = [e2, e1];
             [t1, t2] = [t2, t1];
           }
-          out.push({ eu: e1, el: e2, vu: t1 < 0.5 ? this.ea[e1] : this.eb[e1], vl: t2 < 0.5 ? this.ea[e2] : this.eb[e2] });
+          out.push({
+            eu: e1,
+            el: e2,
+            vu: t1 < 0.5 ? this.ea[e1] : this.eb[e1],
+            vl: t2 < 0.5 ? this.ea[e2] : this.eb[e2],
+          });
         }
       }
     }
@@ -463,10 +514,15 @@ export class VerticalModel {
     return off;
   }
 
-  private crossingTargets(crossings: Crossing[], est: Float64Array): Map<number, number> {
+  private crossingTargets(
+    crossings: Crossing[],
+    est: Float64Array,
+  ): Map<number, number> {
     const t = new Map<number, number>();
-    const setMax = (v: number, h: number) => t.set(v, Math.max(t.get(v) ?? -Infinity, h));
-    const setMin = (v: number, h: number) => t.set(v, Math.min(t.get(v) ?? Infinity, h));
+    const setMax = (v: number, h: number) =>
+      t.set(v, Math.max(t.get(v) ?? -Infinity, h));
+    const setMin = (v: number, h: number) =>
+      t.set(v, Math.min(t.get(v) ?? Infinity, h));
     for (const c of crossings) {
       const Lu = this.level(c.eu);
       const Ll = this.level(c.el);
@@ -488,17 +544,30 @@ export class VerticalModel {
   }
 
   /** Connected stretches of raised (bridge) and sunken (tunnel, underpass) road. */
-  private components(): { raised: Int32Array; sunken: Int32Array; info: { len: number; level: number; tunnel: boolean; major: boolean }[] } {
+  private components(): {
+    raised: Int32Array;
+    sunken: Int32Array;
+    info: { len: number; level: number; tunnel: boolean; major: boolean }[];
+  } {
     const n = this.vx.length;
     const raised = new Int32Array(n).fill(-1);
     const sunken = new Int32Array(n).fill(-1);
-    const info: { len: number; level: number; tunnel: boolean; major: boolean }[] = [];
+    const info: {
+      len: number;
+      level: number;
+      tunnel: boolean;
+      major: boolean;
+    }[] = [];
     for (const [arr, sign] of [
       [raised, 1],
       [sunken, -1],
     ] as const) {
       for (let s = 0; s < n; s++) {
-        if (arr[s] >= 0 || !this.vadj[s].some((e) => Math.sign(this.level(e)) === sign)) continue;
+        if (
+          arr[s] >= 0 ||
+          !this.vadj[s].some((e) => Math.sign(this.level(e)) === sign)
+        )
+          continue;
         const id = info.length;
         const c = { len: 0, level: 0, tunnel: false, major: false };
         info.push(c);
@@ -534,7 +603,10 @@ export class VerticalModel {
    * Floors under bridges and ceilings over tunnels: a structure stays at its deck (or tunnel)
    * level away from its ends and meets the ground at its ends at the road's grade.
    */
-  private limits(comps: ReturnType<VerticalModel['components']>, targets: Map<number, number>) {
+  private limits(
+    comps: ReturnType<VerticalModel["components"]>,
+    targets: Map<number, number>,
+  ) {
     const n = this.vx.length;
     const floor = new Float64Array(n).fill(NaN);
     const ceil = new Float64Array(n).fill(NaN);
@@ -546,7 +618,12 @@ export class VerticalModel {
       for (const [v, h] of targets) {
         const c = arr[v];
         if (c < 0 || Math.sign(h) !== sign) continue;
-        deck.set(c, sign > 0 ? Math.max(deck.get(c) ?? 0, h) : Math.min(deck.get(c) ?? 0, h));
+        deck.set(
+          c,
+          sign > 0
+            ? Math.max(deck.get(c) ?? 0, h)
+            : Math.min(deck.get(c) ?? 0, h),
+        );
       }
       // Distance from each structure point to the nearest real end of the structure.
       const dist = new Float64Array(n).fill(Infinity);
@@ -554,8 +631,12 @@ export class VerticalModel {
       for (let v = 0; v < n; v++) {
         if (arr[v] < 0) continue;
         const adj = this.vadj[v];
-        const onStruct = adj.filter((e) => Math.sign(this.level(e)) === sign).length;
-        const atEnd = onStruct < adj.length || (adj.length === 1 && Math.hypot(this.vx[v], this.vy[v]) < R - 40);
+        const onStruct = adj.filter(
+          (e) => Math.sign(this.level(e)) === sign,
+        ).length;
+        const atEnd =
+          onStruct < adj.length ||
+          (adj.length === 1 && Math.hypot(this.vx[v], this.vy[v]) < R - 40);
         if (atEnd) {
           dist[v] = 0;
           heap.push(0, v);
@@ -585,7 +666,9 @@ export class VerticalModel {
           level = long ? ci.level * LEVEL : sign * SMALL;
         }
         let g = 0.045;
-        for (const e of this.vadj[v]) if (Math.sign(this.level(e)) === sign) g = Math.max(g, this.ways[this.eway[e]].grade);
+        for (const e of this.vadj[v])
+          if (Math.sign(this.level(e)) === sign)
+            g = Math.max(g, this.ways[this.eway[e]].grade);
         const ramp = SMALL + g * dist[v];
         if (sign > 0) floor[v] = Math.min(level, ramp);
         else ceil[v] = Math.max(level, -ramp);
@@ -595,7 +678,11 @@ export class VerticalModel {
   }
 
   /** Settles road priorities in order; each priority's roads start from the points already fixed. */
-  private solve(targets: Map<number, number>, floor: Float64Array, ceil: Float64Array): Float64Array {
+  private solve(
+    targets: Map<number, number>,
+    floor: Float64Array,
+    ceil: Float64Array,
+  ): Float64Array {
     const n = this.vx.length;
     const off = new Float64Array(n);
     const fixed = new Uint8Array(n);
@@ -655,7 +742,13 @@ export class VerticalModel {
    * Best value reachable from the sources at the road's grade: sign 1 gives
    * max(value - grade·distance), sign -1 gives min(value + grade·distance).
    */
-  private spread(src: [number, number][], sign: 1 | -1, factor: number, edgeOk: (e: number) => boolean, isFree: Uint8Array): Float64Array {
+  private spread(
+    src: [number, number][],
+    sign: 1 | -1,
+    factor: number,
+    edgeOk: (e: number) => boolean,
+    isFree: Uint8Array,
+  ): Float64Array {
     const n = this.vx.length;
     const best = new Float64Array(n).fill(sign > 0 ? -Infinity : Infinity);
     const key = new Float64Array(n).fill(Infinity);
@@ -689,7 +782,11 @@ export class VerticalModel {
   /* -------------------------------------------------------------- queries */
 
   /** Nearest modelled road edge to p: of the given way when known, else on the same level. */
-  private nearest(p: XY, tags?: Tags, maxD = 30): { e: number; t: number } | null {
+  private nearest(
+    p: XY,
+    tags?: Tags,
+    maxD = 30,
+  ): { e: number; t: number } | null {
     // Several modelled ways can share one tags object (offline data splits roads into pieces),
     // so "the road asked for" is matched by its tags.
     const level = tags ? wayLevel(tags) : null;
@@ -698,24 +795,38 @@ export class VerticalModel {
     const cx = Math.floor(p[0] / c);
     const cy = Math.floor(p[1] / c);
     let best: { e: number; t: number; score: number } | null = null;
-    for (let x = cx - r; x <= cx + r; x++)
-      for (let y = cy - r; y <= cy + r; y++)
-        for (const e of this.grid.get(`${x},${y}`) ?? []) {
-          const a = this.ea[e];
-          const b = this.eb[e];
-          const ax = this.vx[a];
-          const ay = this.vy[a];
-          const dx = this.vx[b] - ax;
-          const dy = this.vy[b] - ay;
-          const l2 = dx * dx + dy * dy;
-          const t = l2 > 0 ? clamp(((p[0] - ax) * dx + (p[1] - ay) * dy) / l2, 0, 1) : 0;
-          const d = Math.hypot(ax + dx * t - p[0], ay + dy * t - p[1]);
-          if (d > maxD) continue;
-          const w = this.eway[e];
-          // The road asked for wins over another one up to 12 m nearer (lane offsets, parallel roads).
-          const score = d + (tags && this.ways[w].tags !== tags ? 12 : 0) + (level !== null && this.ways[w].level !== level ? 8 : 0);
-          if (!best || score < best.score) best = { e, t, score };
+    // The 3×3 cells around p first: anything outside them is at least one cell away, so a hit
+    // scoring under that cannot be beaten (most lookups are points on the road itself).
+    for (const ring of r > 1 ? [1, r] : [r]) {
+      if (ring > 1 && best && best.score <= c) break;
+      for (let x = cx - ring; x <= cx + ring; x++)
+        for (let y = cy - ring; y <= cy + ring; y++) {
+          if (ring > 1 && Math.abs(x - cx) <= 1 && Math.abs(y - cy) <= 1)
+            continue;
+          for (const e of this.grid.get(cellKey(x, y)) ?? []) {
+            const a = this.ea[e];
+            const b = this.eb[e];
+            const ax = this.vx[a];
+            const ay = this.vy[a];
+            const dx = this.vx[b] - ax;
+            const dy = this.vy[b] - ay;
+            const l2 = dx * dx + dy * dy;
+            const t =
+              l2 > 0
+                ? clamp(((p[0] - ax) * dx + (p[1] - ay) * dy) / l2, 0, 1)
+                : 0;
+            const d = Math.hypot(ax + dx * t - p[0], ay + dy * t - p[1]);
+            if (d > maxD) continue;
+            const w = this.eway[e];
+            // The road asked for wins over another one up to 12 m nearer (lane offsets, parallel roads).
+            const score =
+              d +
+              (tags && this.ways[w].tags !== tags ? 12 : 0) +
+              (level !== null && this.ways[w].level !== level ? 8 : 0);
+            if (!best || score < best.score) best = { e, t, score };
+          }
         }
+    }
     return best;
   }
 
@@ -729,13 +840,21 @@ export class VerticalModel {
 
   /** Ground plus structure at a point on a road (tags pick the road where several overlap). */
   heightAt(p: XY, tags?: Tags): number {
+    return this.at(p, tags).height;
+  }
+
+  /** Height and structure part at once (one lookup). */
+  at(p: XY, tags?: Tags): { height: number; structure: number } {
     const hit = this.nearest(p, tags);
-    if (!hit) return this.groundOnly(p);
+    if (!hit) return { height: this.groundOnly(p), structure: 0 };
     const a = this.ea[hit.e];
     const b = this.eb[hit.e];
     const ha = this.base[a] + this.off[a];
     const hb = this.base[b] + this.off[b];
-    return ha + (hb - ha) * hit.t;
+    return {
+      height: ha + (hb - ha) * hit.t,
+      structure: this.off[a] + (this.off[b] - this.off[a]) * hit.t,
+    };
   }
 
   /** Structure part only: metres above (or below) the road's base. */
@@ -749,9 +868,7 @@ export class VerticalModel {
   }
 
   private groundOnly(p: XY): number {
-    const hit = this.nearest(p, undefined, 400);
-    if (!hit || !this.hasGround) return 0;
-    return this.ground[this.ea[hit.e]];
+    return this.groundFn ? this.groundFn(p) : 0;
   }
 
   /** Number of height samples (for tests and diagnostics). */
@@ -761,7 +878,16 @@ export class VerticalModel {
 }
 
 /** Intersection of two segments (endpoints included), or null. */
-function segHit(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number) {
+function segHit(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
+) {
   const rx = bx - ax;
   const ry = by - ay;
   const sx = dx - cx;
@@ -772,5 +898,10 @@ function segHit(ax: number, ay: number, bx: number, by: number, cx: number, cy: 
   const u = ((cx - ax) * ry - (cy - ay) * rx) / den;
   const eps = 1e-6;
   if (t < -eps || t > 1 + eps || u < -eps || u > 1 + eps) return null;
-  return { t: clamp(t, 0, 1), u: clamp(u, 0, 1), x: ax + rx * t, y: ay + ry * t };
+  return {
+    t: clamp(t, 0, 1),
+    u: clamp(u, 0, 1),
+    x: ax + rx * t,
+    y: ay + ry * t,
+  };
 }

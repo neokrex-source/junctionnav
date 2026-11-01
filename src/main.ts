@@ -3,9 +3,10 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/app.css';
 import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
-import { haversine, type LngLat } from './geo/geo';
+import { hashString, haversine, type LngLat } from './geo/geo';
 import { detectJunctions, type JunctionCandidate } from './junction/detect';
 import { JunctionDataCache, OverpassProvider, type OsmData } from './junction/osmdata';
+import { GroundMapper, type GroundMap, type GroundSource } from './junction/groundMap';
 import { buildScene, type JunctionScene } from './junction/scene';
 import { OverpassSurroundProvider, SurroundCache, type SurroundData } from './junction/surroundings';
 import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
@@ -150,6 +151,9 @@ class App {
   activeJ: string | null = null;
   jvDismissed: string | null = null;
   sceneCache = new Map<string, JunctionScene>();
+  /** Map snapshots for the ground of the 3D junction view, by junction and map style. */
+  private groundMaps = new GroundMapper(() => this.groundSource());
+  private groundReady = new Map<string, GroundMap>();
   lastStepIdx = -1;
   rerouting = false;
   lastReroute = 0;
@@ -1081,14 +1085,16 @@ class App {
     const osm = this.osmReady.get(JunctionDataCache.key(cand.location)) ?? null;
     const surround = this.settings.jvSurround ? this.surroundReady.get(SurroundCache.key(cand.location)) ?? null : null;
     const terrain = this.terrainReady.get(TerrainCache.key(cand.location)) ?? null;
-    const key = `${cand.id}|${osm ? 'osm' : 'schematic'}|${surround ? 'surr' : ''}|${terrain ? 'dem' : ''}|${this.L}`;
+    const gKey = this.groundKey(cand);
+    const groundMap = gKey ? this.groundReady.get(gKey) ?? null : null;
+    const key = `${cand.id}|${osm ? 'osm' : 'schematic'}|${surround ? 'surr' : ''}|${terrain ? 'dem' : ''}|${groundMap ? gKey : ''}|${this.L}`;
     let sc = this.sceneCache.get(key);
     if (!sc) {
       try {
-        sc = buildScene(route, cand, osm, { lang: this.L, surround, terrain });
+        sc = buildScene(route, cand, osm, { lang: this.L, surround, terrain, groundMap });
       } catch (err) {
         console.warn('[junction] OSM scene failed, using schematic', err);
-        sc = buildScene(route, cand, null, { lang: this.L, terrain });
+        sc = buildScene(route, cand, null, { lang: this.L, terrain, groundMap });
       }
       this.sceneCache.set(key, sc);
     }
@@ -1119,6 +1125,38 @@ class App {
     });
   }
 
+  /**
+   * The map style the 3D view's ground is drawn with: the map's own (online or offline), or the
+   * demo roads. Null when the map ground is off or the 3D view is not shown.
+   */
+  private groundSource(): GroundSource | null {
+    const st = this.settings;
+    if (!st.jvMapGround || st.jvMode === 'map') return null;
+    const night = isNight(st);
+    if (ARTIFACT || this.demo) return { style: demoStyle(buildDemo().geojson, night), key: `demo|${night ? 'n' : 'd'}` };
+    const style = this.baseStyle();
+    const id = typeof style === 'string' ? style : String(hashString(JSON.stringify(style.sources ?? {}) + (style.layers?.length ?? 0)));
+    return { style, key: `${id}|${night ? 'n' : 'd'}` };
+  }
+
+  private groundKey(cand: JunctionCandidate): string | null {
+    const k = this.groundMaps.currentKey();
+    return k ? GroundMapper.key(cand.location, k) : null;
+  }
+
+  /** Snapshot the map around a junction for the ground of the 3D view, then call back to redraw. */
+  private loadGroundMap(cand: JunctionCandidate, then: () => void) {
+    const k = this.groundKey(cand);
+    if (!k || this.groundReady.has(k)) return;
+    this.groundMaps.snapshot(cand.location).then((gm) => {
+      if (!gm || this.groundReady.has(k)) return;
+      this.groundReady.set(k, gm);
+      // The snapshots are large images: keep the few around the current stretch of road.
+      while (this.groundReady.size > 6) this.groundReady.delete(this.groundReady.keys().next().value!);
+      then();
+    });
+  }
+
   /** Get buildings, land use and places around a junction, then call back to redraw. */
   private loadSurround(cand: JunctionCandidate, then: () => void) {
     if (!this.settings.jvSurround) return;
@@ -1141,6 +1179,7 @@ class App {
     this.loadDetail(cand, refresh);
     this.loadSurround(cand, refresh);
     this.loadTerrain(cand, refresh);
+    this.loadGroundMap(cand, refresh);
   }
 
   /* ================================================================ demo */
@@ -1209,6 +1248,9 @@ class App {
         this.settings.jvMode = m;
         saveSettings(this.settings);
         this.syncZoomMap();
+        // Back to a mode with the 3D view: lay the map under it.
+        const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
+        if (cand) this.loadGroundMap(cand, () => this.activeJ === cand.id && this.showJunction(cand, true));
       },
     });
     e.guide.prepend(this.banner.el, this.banner.then, e.reroute);
@@ -1713,6 +1755,7 @@ class App {
       };
       this.loadSurround(j, redraw);
       this.loadTerrain(j, redraw);
+      this.loadGroundMap(j, redraw);
     }
     const upcoming = this.engine.junctions.filter((j) => j.s >= s - 50 && j.s <= s + 12000).slice(0, 12);
     const todo = upcoming.filter((j) => !this.osmReady.has(JunctionDataCache.key(j.location)));

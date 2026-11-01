@@ -22,8 +22,9 @@ import { parseDestinations, splitRefs, type Lane, type Route, type Step } from '
 import type { JunctionCandidate, JunctionKind } from './detect';
 import type { OsmData, OsmWay } from './osmdata';
 import { surroundScene, type SurroundData, type SurroundScene } from './surroundings';
+import type { GroundMap } from './groundMap';
 import type { TerrainPatch } from './terrain';
-import { VerticalModel } from './vertical';
+import { VerticalModel, wayLevel } from './vertical';
 
 export type RoadClass = 'motorway' | 'trunk' | 'major' | 'minor' | 'link';
 export type Role = 'approach' | 'taken' | 'branch' | 'incoming' | 'context';
@@ -141,6 +142,8 @@ export interface JunctionScene {
   surround?: SurroundScene;
   ground: SceneGround;
   profile: VerticalProfile;
+  /** The map around the junction, laid on the ground of the 3D view (see groundMap.ts). */
+  groundMap?: GroundMap;
 }
 
 export interface SceneOptions {
@@ -150,8 +153,18 @@ export interface SceneOptions {
   surround?: SurroundData | null;
   /** Ground elevation around the junction (hills and valleys), when known. */
   terrain?: TerrainPatch | null;
+  /** Top-down map snapshot for the ground of the 3D view. */
+  groundMap?: GroundMap | null;
 }
 
+/** Minor roads are drawn this far from the split; main roads, bridges and tunnels further. */
+const CONTEXT_REACH = 620;
+const STRUCTURE_REACH = 900;
+const MAIN_ROAD = /^(motorway|trunk|primary|secondary|tertiary)(_link)?$/;
+
+function reachesFar(t: Tags | undefined): boolean {
+  return MAIN_ROAD.test(t?.highway ?? '') || wayLevel(t) !== 0;
+}
 const BEFORE = 340;
 const AFTER = 320;
 const RESAMPLE = 4;
@@ -594,6 +607,7 @@ export function buildScene(
     if (s) scene = { ...base, ...s, source: 'osm' };
   }
   scene ??= { ...base, ...schematic(route, cand, step, before, after, frame, opts), source: 'schematic' };
+  if (opts.groundMap) scene.groundMap = opts.groundMap;
   if (opts.surround) {
     try {
       scene.surround = surroundScene(opts.surround, frame, scene.roads, opts.lang);
@@ -645,7 +659,7 @@ function fromOsm(
   osm: OsmData,
   opts: SceneOptions,
 ): Built | null {
-  const g = new RoadGraph(osm, frame, 800);
+  const g = new RoadGraph(osm, frame, STRUCTURE_REACH + 50);
   const J = g.nearest([0, 0], 8);
   if (!J || g.degree(J.id) < 3) return null;
 
@@ -772,13 +786,14 @@ function fromOsm(
 
   // Heights: ground plus structures, relative to the approach at the split.
   const groundFn = terrainFn(opts.terrain, frame);
-  const model = new VerticalModel(osm, frame, { radius: 800, ground: groundFn });
+  const model = new VerticalModel(osm, frame, { radius: STRUCTURE_REACH + 50, ground: groundFn });
   const jTagsRoad = approach.segTags[approach.segTags.length - 1];
   const datum = model.heightAt(J.p, jTagsRoad);
   const structJ = model.structureAt(J.p, jTagsRoad);
   for (const st of [approach, taken, ...others, ...context]) {
-    st.h = st.pts.map((p, i) => model.heightAt(p, st.segTags[i]) - datum);
-    st.struct = st.pts.map((p, i) => model.structureAt(p, st.segTags[i]) - structJ);
+    const hs = st.pts.map((p, i) => model.at(p, st.segTags[i]));
+    st.h = hs.map((x) => x.height - datum);
+    st.struct = hs.map((x) => x.structure - structJ);
   }
   // Without terrain the ground is flat at the base of the structures.
   const ground = sceneGround(opts.terrain, frame, datum, -datum);
@@ -1074,7 +1089,10 @@ function contextStrips(g: RoadGraph, used: Set<string>): Strip[] {
     if (used.has(k)) continue;
     const pa = g.nodes.get(sg.a)!.p;
     const pb = g.nodes.get(sg.b)!.p;
-    if (Math.min(Math.hypot(pa[0], pa[1]), Math.hypot(pb[0], pb[1])) > 620) continue;
+    const d = Math.min(Math.hypot(pa[0], pa[1]), Math.hypot(pb[0], pb[1]));
+    // Every road near the junction; main roads, flyovers, bridges and tunnels further out, so the
+    // structures around the junction (and in the distance ahead) stand up in 3D as they do outside.
+    if (d > CONTEXT_REACH && (d > STRUCTURE_REACH || !reachesFar(sg.way.tags))) continue;
     (byWay.get(sg.way.id) ?? byWay.set(sg.way.id, []).get(sg.way.id)!).push(sg);
   }
   for (const segs of byWay.values()) {

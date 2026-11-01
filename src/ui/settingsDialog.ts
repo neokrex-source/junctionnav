@@ -72,6 +72,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     tunnels.checked = current.tunnelAlerts;
     const surround = h('input', { id: 'jvSurround', type: 'checkbox' }) as HTMLInputElement;
     surround.checked = current.jvSurround;
+    const mapGround = h('input', { id: 'jvMapGround', type: 'checkbox' }) as HTMLInputElement;
+    mapGround.checked = current.jvMapGround;
     const offlineUse = select('offlineUse', current.offlineUse, [
       ['auto', 'Use them when there is no internet'],
       ['always', 'Always use them (saves mobile data)'],
@@ -150,7 +152,13 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         { class: 'grp' },
         h('label', { for: 'jvSurround' }, 'Junction surroundings'),
         h('label', { class: 'toggle' }, surround, 'Show buildings, land use and place names around junctions'),
-        opts.preview ? null : h('div', { class: 'hint' }, 'Downloads a few hundred KB from Overpass for each upcoming junction.'),
+        h('label', { class: 'toggle' }, mapGround, 'Lay the map under the 3D view'),
+        h(
+          'div',
+          { class: 'hint' },
+          'The 3D view shows the streets, parks and water around each junction as on the map, and every flyover, bridge and tunnel within 900 m at its real height.' +
+            (opts.preview ? '' : ' Surroundings download a few hundred KB from Overpass for each upcoming junction.'),
+        ),
       ),
       opts.preview ? null : grp('Routing server (OSRM)', routerUrl, 'Public demo servers are for light use. Run your own for real driving (see README).'),
       opts.preview ? null : grp('Junction detail (Overpass API)', overpassUrls, 'Comma separated. Tried in order.'),
@@ -176,6 +184,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         jvMode: jvMode.value as Settings['jvMode'],
         voice: voice.checked,
         jvSurround: surround.checked,
+        jvMapGround: mapGround.checked,
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
         offlineUse: offlineUse.value as Settings['offlineUse'],

@@ -134,6 +134,8 @@ export function buildSurroundings(
   seed: number,
   focus: { pos: XY; heading: number },
   ground: (x: number, y: number) => number = () => 0,
+  /** Land use, rivers and railways are drawn unless the map already lies on the ground. */
+  opts: { flat?: boolean } = {},
 ): Built {
   const objects: THREE.Object3D[] = [];
   const disposables: { dispose(): void }[] = [];
@@ -146,7 +148,7 @@ export function buildSurroundings(
   /* ---------- land use areas: on the ground, never occlude roads */
   const areaPos = new Map<AreaKind, number[]>();
   const hilly = [focus.pos, [0, 0] as XY, [300, 300] as XY, [-300, 300] as XY].some((p) => Math.abs(ground(p[0], p[1]) - ground(0, 0)) > 0.5);
-  for (const a of sc.areas) {
+  for (const a of opts.flat === false ? [] : sc.areas) {
     const tris = triangulate(a.ring);
     if (!tris.length) continue;
     const arr = areaPos.get(a.kind) ?? areaPos.set(a.kind, []).get(a.kind)!;
@@ -195,8 +197,10 @@ export function buildSurroundings(
     objects.push(mesh);
     disposables.push(g, m);
   };
-  lineMesh('water', P.river, -7.5);
-  lineMesh('rail', P.rail, -7.4);
+  if (opts.flat !== false) {
+    lineMesh('water', P.river, -7.5);
+    lineMesh('rail', P.rail, -7.4);
+  }
 
   /* ---------- buildings: lit, flat-shaded extrusions */
   const bPos: number[] = [];

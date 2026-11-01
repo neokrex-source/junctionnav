@@ -125,6 +125,21 @@ describe('offline junction and tunnel data', () => {
     expect([...ends.values()].some((n) => n >= 3)).toBe(true);
   });
 
+  it('reaches further for main roads and bridges than for side streets', () => {
+    const G = new OfflineGraph(gridPack());
+    const p: [number, number] = [100 + 110 * 0.0016, 2 + 110 * 0.0016];
+    const dist = (w: { geometry: { lat: number; lon: number }[] }) => Math.min(...w.geometry.map((g) => haversine(p, [g.lon, g.lat])));
+    const near = junctionData(G, [p], 300, 300);
+    expect(Math.max(...near.ways.map(dist))).toBeLessThan(361);
+    const far = junctionData(G, [p], 300, 900);
+    const beyond = far.ways.filter((w) => dist(w) > 361);
+    expect(beyond.length).toBeGreaterThan(0);
+    expect(beyond.every((w) => /^(motorway|trunk|primary|secondary|tertiary)/.test(w.tags.highway))).toBe(true);
+    expect(Math.max(...beyond.map(dist))).toBeLessThan(961);
+    // The default reaches 900 m for those.
+    expect(junctionData(G, [p], 300).ways.length).toBe(far.ways.length);
+  });
+
   it('finds the tunnel along a route path', () => {
     const r = routeOf(new OfflineRouter(graph()).route({ coords: [demo.start, demo.end], bearings: [0, null] }));
     const ways = tunnelWays(graph(), r.geometry.slice(0, 200));

@@ -20,6 +20,8 @@ export interface Settings {
   simSpeed: number;
   /** Draw buildings, land use and place names around junctions (extra download per junction). */
   jvSurround: boolean;
+  /** Lay the map (streets, land use, water) on the ground of the 3D junction view. */
+  jvMapGround: boolean;
   /** Lane advice before exits, entrances, junctions and turns; 'gps' also checks the current lane. */
   laneAlerts: 'gps' | 'advice' | 'off';
   /** Tunnel sign card and voice warning before tunnels. */
@@ -51,6 +53,7 @@ export const DEFAULTS: Settings = {
   avoid: { tolls: false, motorways: false, ferries: false },
   simSpeed: 1,
   jvSurround: true,
+  jvMapGround: true,
   laneAlerts: 'gps',
   tunnelAlerts: true,
   offlineUse: 'auto',

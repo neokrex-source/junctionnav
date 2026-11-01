@@ -2,7 +2,8 @@
 import { haversine, type LngLat } from '../geo/geo';
 import type { OsmData, OsmNode, OsmWay } from '../junction/osmdata';
 import type { OfflineGraph } from './graph';
-import { CLASSES, F_LINK, F_TUNNEL } from './graphLayout';
+import { wayLevel } from '../junction/vertical';
+import { CLASSES, F_BRIDGE, F_LINK, F_TUNNEL } from './graphLayout';
 
 function wayOf(G: OfflineGraph, seg: number): OsmWay {
   const pts = G.points(seg);
@@ -19,10 +20,28 @@ function near(G: OfflineGraph, seg: number, p: LngLat, radius: number): boolean 
   return G.points(seg).some((q) => haversine(p, q) <= radius);
 }
 
-/** Roads within `radius` of each point (as Overpass would return them) plus exit-number nodes. */
-export function junctionData(G: OfflineGraph, points: LngLat[], radius = 450): OsmData {
+/**
+ * Main roads (tertiary and up, with their ramps) and every bridge and tunnel reach this far from
+ * the junction, beyond the other roads: the flyovers around a junction stand up in its view, and
+ * their heights come out right only when the roads they cross are known too.
+ */
+export const STRUCTURE_RADIUS = 900;
+
+function reachesFar(G: OfflineGraph, seg: number): boolean {
+  const w = G.segWay[seg];
+  if (G.wayClass[w] <= TERTIARY || (G.wayFlags[w] & (F_BRIDGE | F_TUNNEL)) !== 0) return true;
+  return wayLevel(G.tags(w)) !== 0;
+}
+
+/**
+ * Roads within `radius` of each point (as Overpass would return them), main roads, bridges and
+ * tunnels out to `structRadius`, plus exit-number nodes.
+ */
+export function junctionData(G: OfflineGraph, points: LngLat[], radius = 450, structRadius = Math.max(radius, STRUCTURE_RADIUS)): OsmData {
   const segs = new Set<number>();
   for (const p of points) for (const s of G.segmentsNear(p, radius)) if (!segs.has(s) && near(G, s, p, radius + 60)) segs.add(s);
+  if (structRadius > radius)
+    for (const p of points) for (const s of G.segmentsNear(p, structRadius)) if (!segs.has(s) && reachesFar(G, s) && near(G, s, p, structRadius + 60)) segs.add(s);
   const ways = [...segs].map((s) => wayOf(G, s));
   const nodes: OsmNode[] = [];
   for (let i = 0; i < G.jV.length; i++) {
@@ -47,6 +66,7 @@ export function tunnelWays(G: OfflineGraph, path: LngLat[]): OsmWay[] {
 }
 
 const SECONDARY = CLASSES.indexOf('secondary');
+const TERTIARY = CLASSES.indexOf('tertiary');
 const norm = (s: string) => s.toUpperCase().replace(/\s+/g, '');
 
 /**
