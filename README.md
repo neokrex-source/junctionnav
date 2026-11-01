@@ -158,7 +158,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 6. **Render** (`src/junction/render3d.ts`). A three.js camera sits on the approach and glides toward the split as you get closer. It draws asphalt, lane markings, guardrails, embankment walls and viaducts with pillars, trenches and tunnel portals, the opposite carriageway, trees, an overhead gantry, and a large arrow along your lane group.
 7. **Signs** (`src/junction/signs.ts`). Canvas-drawn signboards with route shields and exit tabs, themed for Malaysia, Japan, the US, continental Europe, the UK, or generic. The theme is picked from the route location unless you choose one.
 8. **Surroundings** (`src/junction/surroundings.ts`, `surroundRender.ts`). For the next few junctions the app also fetches what is around them from OSM: buildings (extruded using `height` or `building:levels`), land use and water, rivers and railways, oil palm estates (drawn as palm rows), forests and parks (trees), and labels for nearby roads, petrol stations, rest areas, landmarks and town names. Turn it off in Settings to save data; the view then shows roads only.
-9. **Modes.** "3D" illustration, "Map" (a tilted MapLibre close-up of the real junction), or "Both" side by side. Tap the mode button on the view to switch.
+9. **Modes.** "3D" illustration, "Map" (a tilted MapLibre close-up of the real junction), or "Both" side by side. Tap the mode button on the view to switch. In Map mode the junction stands up in 3D on the real map (`src/junction/zoom3d.ts`, a three.js custom layer in MapLibre's own GL context): elevated expressways and flyovers on pillars or walled embankments with their shadow on the map, ramps sloping up and down, underpasses in trenches, and the route as a ribbon that rides up and down with the road, with the car on top at its real height. Heights are drawn 1.8× so a 7 m deck reads on a phone, and the camera looks at the climb or drop from slightly to the side.
 10. **Size.** The view and the main map share the screen 1:3. On a phone held upright the view takes a quarter of the space under the banner and the map the other three quarters; with the guidance docked beside the map (landscape, desktop) the view is a third of the map's height. Signs, chips and buttons shrink for the shorter view so the split stays visible.
 
 ## Data sources and limits
@@ -233,6 +233,7 @@ src/
   junction/render3d.ts    three.js junction renderer
   junction/signs.ts       signboard drawing (direction and tunnel signs) and country themes
   junction/zoomMap.ts     tilted map close-up
+  junction/zoom3d.ts      3D decks, ramps, underpasses and route ribbon on the map close-up
   ui/                     banner, junction panel and preview, tunnel card, steps list, icons, settings
   demo/                   synthetic OSM + OSRM data and offline providers for the demo and tests
   lab/lab.ts              Junction View Lab page

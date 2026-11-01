@@ -1693,7 +1693,9 @@ class App {
   private syncZoomMap() {
     const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
     if (!cand || !this.engine.route || this.settings.jvMode === 'illustration' || !this.panel.visible) return;
-    requestAnimationFrame(() => this.zoom.show(this.engine.route!, cand));
+    const route = this.engine.route;
+    const scene = this.sceneFor(route, cand);
+    requestAnimationFrame(() => this.zoom.show(route, cand, scene, isNight(this.settings)));
   }
 
   private handleJunction(p: Progress) {
