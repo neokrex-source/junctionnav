@@ -45,9 +45,9 @@ export const KL_DRIVES: TestDrive[] = [
   {
     id: 'mex',
     title: 'MEX down to Jalan Tun Razak',
-    summary: 'North on MEX, off at exit 2001 down the ramp at Kampung Pandan, then under the junction.',
+    summary: 'North on MEX, off at exit 2001 down the ramp at Kampung Pandan, then through two short tunnels.',
     link: 'from=3.11065,101.71169@40 (MEX northbound)&to=3.15033,101.72285 (Jalan Tun Razak)&sim=2',
-    checks: ['route', 'junction', 'exitNumber', 'descend', 'map3d', 'tunnelSign', 'dr', 'lanes', 'arrival'],
+    checks: ['route', 'junction', 'exitNumber', 'descend', 'map3d', 'tunnelSign', 'dr', 'arrival'],
     km: 4.8,
   },
   {

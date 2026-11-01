@@ -12,6 +12,7 @@ on:
       - 'src/junction/**'
       - 'src/offline/**'
       - 'src/trip/**'
+      - 'src/nav/**'
       - 'tests/drives.real.test.ts'
   workflow_run:
     workflows: ['Offline maps']

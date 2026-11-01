@@ -84,7 +84,7 @@ That one starts on the North–South Expressway (E2) about 3 km before the Sunga
 
 | Parameter | Meaning |
 | --- | --- |
-| `from`, `to` | A place: `lat,lng`, `lat,lng@heading`, free text (searched with the place search), or `here`. `from` defaults to your location. |
+| `from`, `to` | A place: `lat,lng`, `lat,lng@heading`, free text (searched with the place search), or `here`. `from` defaults to your location. Coordinates can carry a name for the trip editor: `3.0393,101.7056@0 (Plaza Tol Sungai Besi)`. |
 | `via` | A stop, repeatable (up to 3 are used). Same formats, plus `road:` points. |
 | `road:REF` | A point on a road by ref (`E19`) or name (`SUKE`), with `|` for alternatives. Between two places it is the point with the least detour on the carriageway leading from one to the other; on `from` it is a point on that road about `~km` before the next place (default 3 km). The router is told the direction of travel there, so it snaps to the correct carriageway rather than the opposite one or a road underneath. |
 | `name@auto` | Pass this stop in the direction you arrive from (useful for toll plazas). `name@350` gives a heading. |
@@ -95,9 +95,23 @@ Road points use Overpass and places use the search service when online. With the
 
 ### KL test drives
 
-The **KL test drives** button (next to Demo drive) lists ready-made simulated drives through Kuala Lumpur interchanges, picked to show the junction views and ramp heights: through the Sungai Besi toll and up onto the elevated SUKE, along AKLEH and down to street level at KLCC, into the SMART tunnel, and along DUKE. Each is a trip link (`src/sim/drives.ts`), so it plans with the normal router or the offline maps and starts the simulator at ×2.
+The **KL test drives** button (next to Demo drive) lists short simulated drives through Kuala Lumpur interchanges, each aimed at a set of functions. They take 2 to 4 minutes at the default ×2.
 
-`.github/workflows/drives.yml` drives all of them on the real Peninsular Malaysia pack after each pack build and whenever the junction code changes, and prints every junction view on the way: what the road does there (flyover, underpass, tunnel, down to street level), the height change and the steepest grade.
+| Drive | Length | What it tests |
+| --- | --- | --- |
+| Sungai Besi toll onto SUKE | 5.3 km | Toll plaza, lane advice, ramp climbing onto the elevated SUKE (+9.6 m), 3D map view |
+| DASH to Penchala Link and its tunnel | 7 km | Exit number (3110A), flyover (+7 m), drop to Penchala Link (−6.8 m), 3D map view, tunnel sign, guidance without GPS through the 726 m Penchala tunnel |
+| MEX down to Jalan Tun Razak | 4.8 km | Exit number (2001), ramp down to street level, 3D map view, tunnel sign, no GPS in the tunnel |
+| DUKE into the Wangsa Maju underpass | 4.4 km | Lane advice, exit number (3306A), underpass (−7.3 m), junction leading into a tunnel, 3D map view, tunnel sign, no GPS |
+| SMART tunnel | 8.1 km | Lane advice at the tunnel fork, tunnel sign, 4.2 km of guidance without GPS |
+
+Every drive also checks that the route is planned, junction views appear and arrival is announced.
+
+**Checklist.** While a test drive runs, a **Checks 2/9** button sits in the simulator bar. Tap it for the list: each function with what to look for, ticked as the app actually does it, with what it saw (the height of a ramp, the exit number, which lanes, the tunnel's name and length). The button shows each tick for a moment ("✓ Ramp climbs onto a flyover"). When a check depends on a setting that is off (lane alerts, tunnel alerts, or the junction view in 3D only, which hides the map), the list has a button to turn it on. At the end of the drive (or when you end it early) a result lists what passed, what was not seen, and every junction view on the way, with **Drive again**.
+
+Each drive is a trip link (`src/sim/drives.ts`) with named coordinates, so it plans with the normal router or the offline maps. The checks live in `src/sim/testRun.ts` and are fed by the same events the screen shows.
+
+`.github/workflows/drives.yml` replays every drive on the real Peninsular Malaysia pack (after each pack build and whenever the navigation, junction or simulator code changes) the way the simulator drives it: same speeds, GPS cut in tunnels with dead reckoning filling in, the navigation engine's prompts, and the junction views built from the offline road data and terrain. It feeds the same checklist and fails if any of a drive's checks would not tick. The report lists every junction view (what the road does, how high, how steep), each check with where it ticked, other functions the drive happens to show, and a suggested shorter version of the drive.
 
 ### Lane alerts
 

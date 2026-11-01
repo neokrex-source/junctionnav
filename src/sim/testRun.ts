@@ -63,11 +63,13 @@ export function heightText(scene: JunctionScene): string {
   return `${h >= 0 ? '+' : '−'}${Math.abs(h).toFixed(1)} m`;
 }
 
+const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+
 function laneText(l: LaneState): string {
   const t = l.target;
   const n = t.to - t.from + 1;
-  const which = n >= t.count ? 'any lane' : t.side === 'middle' ? `middle ${n}` : `${t.side} ${n}`;
-  return `${which} of ${t.count} for the ${t.label}`;
+  const which = n >= t.count ? 'Any lane' : `${t.side === 'middle' ? 'Middle' : t.side === 'left' ? 'Left' : 'Right'} ${n} of ${t.count} lanes`;
+  return `${which} for the ${t.label}`;
 }
 
 export class TestRun {
@@ -134,7 +136,7 @@ export class TestRun {
       this.seenViews.add(key);
       this.views.push(`${(cand.s / 1000).toFixed(1)} km ${cand.kind}: ${scene.profile.kind}${scene.profile.kind !== 'flat' ? ` ${heightText(scene)}` : ''}`);
     }
-    this.mark('junction', `${cand.kind} at ${(cand.s / 1000).toFixed(1)} km`);
+    this.mark('junction', `${cap(cand.kind)} at ${(cand.s / 1000).toFixed(1)} km`);
     const ref = scene.exitRef ?? scene.signs.find((s) => s.taken)?.exitRef;
     if (ref) this.mark('exitNumber', `Exit ${ref}`);
     const id = HEIGHT_CHECKS[scene.profile.kind];
@@ -143,6 +145,6 @@ export class TestRun {
 
   /** The car is riding the 3D route on the map view at a ramp that climbs or drops. */
   map3dShown(scene: JunctionScene) {
-    if (Math.abs(scene.profile.peak.h) >= LIFTED) this.mark('map3d', `${scene.profile.kind} ${heightText(scene)}`);
+    if (Math.abs(scene.profile.peak.h) >= LIFTED) this.mark('map3d', `${cap(scene.profile.kind)}, ${heightText(scene)}`);
   }
 }
