@@ -2,6 +2,7 @@ import type { SignThemeId } from '../junction/signs';
 import type { LangCode, Units } from '../routing/instructions';
 import type { Avoid } from '../routing/types';
 import type { JvMode } from '../ui/junctionPanel';
+import { isDaylight } from './daylight';
 
 export interface Settings {
   mapStyle: string;
@@ -28,6 +29,8 @@ export interface Settings {
   tunnelAlerts: boolean;
   /** With offline maps downloaded: use them only without internet ('auto') or all the time. */
   offlineUse: 'auto' | 'always';
+  /** Version of the app's look the settings were saved with (moves old default map styles on). */
+  look: number;
 }
 
 const env = import.meta.env;
@@ -37,7 +40,7 @@ export const ARTIFACT = env.VITE_ARTIFACT === '1';
 
 /** Deployment defaults; override with VITE_* variables at build time (see README). */
 export const DEFAULTS: Settings = {
-  mapStyle: env.VITE_MAP_STYLE || 'ofm-liberty',
+  mapStyle: env.VITE_MAP_STYLE || 'tech',
   customStyleUrl: env.VITE_CUSTOM_STYLE_URL || '',
   maptilerKey: env.VITE_MAPTILER_KEY || '',
   signTheme: 'auto',
@@ -57,9 +60,12 @@ export const DEFAULTS: Settings = {
   laneAlerts: 'gps',
   tunnelAlerts: true,
   offlineUse: 'auto',
+  look: 2,
 };
 
 const KEY = 'junctionnav.settings.v1';
+/** The current look: 2 is the day and night cockpit theme. */
+const LOOK = 2;
 
 export function loadSettings(): Settings {
   try {
@@ -68,6 +74,9 @@ export function loadSettings(): Settings {
       const saved = JSON.parse(raw) as Partial<Settings> & { avoidTolls?: boolean };
       const merged = { ...DEFAULTS, ...saved, avoid: { ...DEFAULTS.avoid, ...(saved.avoid ?? {}) } };
       if (saved.avoidTolls) merged.avoid.tolls = true; // older versions
+      // The old default map follows the app to its new look; a style picked on purpose stays.
+      if ((saved.look ?? 1) < LOOK && (!saved.mapStyle || saved.mapStyle === 'ofm-liberty')) merged.mapStyle = DEFAULTS.mapStyle;
+      merged.look = LOOK;
       return merged;
     }
   } catch {
@@ -91,6 +100,15 @@ export function overpassList(s: Settings): string[] {
     .filter(Boolean);
 }
 
+/** Where the automatic appearance looks at the sun: the user's position, once known. */
+let sunPlace: [number, number] | null = null;
+export function setSunPlace(p: [number, number]) {
+  sunPlace = p;
+}
+
+/** Kuala Lumpur, when nothing better is known yet. */
+const SUN_DEFAULT: [number, number] = [101.6869, 3.139];
+
 export function isNight(s: Settings, now = new Date()): boolean {
   if (s.appearance === 'day') return false;
   if (s.appearance === 'night') return true;
@@ -100,8 +118,9 @@ export function isNight(s: Settings, now = new Date()): boolean {
     if (t === 'dark' || t === 'light') return t === 'dark';
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
-  const h = now.getHours();
-  return h >= 19 || h < 7;
+  // Automatic: dark from sunset to sunrise where the user is.
+  const [lng, lat] = sunPlace ?? lastPosition() ?? SUN_DEFAULT;
+  return !isDaylight(now, lat, lng);
 }
 
 const POS_KEY = 'junctionnav.lastpos';

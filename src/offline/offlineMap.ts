@@ -1,6 +1,7 @@
 /** Map rendering from the offline pack: Protomaps vector tiles, fonts and sprites from browser storage. */
 import maplibregl, { type StyleSpecification } from 'maplibre-gl';
-import { layers, namedFlavor } from '@protomaps/basemaps';
+import { layers } from '@protomaps/basemaps';
+import { techFlavor } from '../map/techStyle';
 import { PMTiles, Protocol, type RangeResponse, type Source } from 'pmtiles';
 import type { OfflineStore } from './store';
 
@@ -55,6 +56,6 @@ export function offlineStyle(night: boolean, lang: string): StyleSpecification {
         attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, <a href="https://protomaps.com" target="_blank" rel="noopener">Protomaps</a>',
       },
     },
-    layers: layers('protomaps', namedFlavor(flavor), { lang: ['en', 'ms', 'ja'].includes(lang) ? lang : 'en' }),
+    layers: layers('protomaps', techFlavor(night), { lang: ['en', 'ms', 'ja'].includes(lang) ? lang : 'en' }),
   } as StyleSpecification;
 }

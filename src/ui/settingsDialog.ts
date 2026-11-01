@@ -42,9 +42,9 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     const customStyleUrl = h('input', { id: 'customStyleUrl', type: 'url', value: current.customStyleUrl, placeholder: 'https://…/style.json' }) as HTMLInputElement;
     const maptilerKey = h('input', { id: 'maptilerKey', type: 'text', value: current.maptilerKey, placeholder: 'Only for MapTiler styles', autocomplete: 'off' }) as HTMLInputElement;
     const appearance = select('appearance', current.appearance, [
-      ['auto', 'Auto (night after 7 pm)'],
-      ['day', 'Day'],
-      ['night', 'Night'],
+      ['auto', 'Automatic (sunrise and sunset)'],
+      ['day', 'Always bright'],
+      ['night', 'Always dark'],
     ]);
     const signTheme = select('signTheme', current.signTheme, [['auto', 'Auto (by location)'], ...Object.values(SIGN_THEMES).map((t) => [t.id, t.label] as [string, string])]);
     const lang = select('lang', current.lang, [

@@ -1,4 +1,5 @@
 /** Main map: routes, progress, maneuver arrow, position puck and follow camera. */
+import { DAY, type Theme } from '../theme/palette';
 import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type StyleSpecification } from 'maplibre-gl';
 import type { Feature, FeatureCollection, LineString } from 'geojson';
 import type { LngLat } from '../geo/geo';
@@ -6,12 +7,10 @@ import type { Route, Step } from '../routing/types';
 import { fallbackStyle } from './styles';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
 
-const ROUTE_COLOR = '#1f78ff';
-const ROUTE_CASING = '#0b3f99';
-const PASSED_COLOR = '#8a96a3';
+/** Puck and pin take their colours from the CSS theme (--route, --pin). */
 
-const PUCK_SVG = `<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="#fff"/><circle cx="20" cy="20" r="14" fill="${ROUTE_COLOR}"/><path d="M20 8 L28.5 28 L20 23.5 L11.5 28 Z" fill="#fff"/></svg>`;
-const PIN_SVG = `<svg viewBox="0 0 30 40" aria-hidden="true"><path d="M15 39s13-12.3 13-23A13 13 0 0 0 2 16c0 10.7 13 23 13 23z" fill="#d93a3a" stroke="#fff" stroke-width="2"/><circle cx="15" cy="15.5" r="5" fill="#fff"/></svg>`;
+export const PUCK_SVG = '<svg viewBox="0 0 40 40" aria-hidden="true"><circle class="p-ring" cx="20" cy="20" r="17"/><circle class="p-core" cx="20" cy="20" r="14"/><path class="p-arrow" d="M20 8 L28.5 28 L20 23.5 L11.5 28 Z"/></svg>';
+const PIN_SVG = `<svg viewBox="0 0 30 40" aria-hidden="true"><path class="pin-body" d="M15 39s13-12.3 13-23A13 13 0 0 0 2 16c0 10.7 13 23 13 23z" stroke-width="2"/><circle class="pin-dot" cx="15" cy="15.5" r="5"/></svg>`;
 
 export interface FollowOptions {
   speed: number;
@@ -219,6 +218,21 @@ export class MapView {
     return layers.find((l) => l.type === 'symbol')?.id;
   }
 
+  private theme: Theme = DAY;
+
+  /** Day or night colours for the route line (the base map changes with its style). */
+  setTheme(t: Theme) {
+    if (t === this.theme) return;
+    this.theme = t;
+    const m = this.map;
+    if (!m.getLayer('route-line')) return;
+    m.setPaintProperty('route-alt', 'line-color', t.alt);
+    m.setPaintProperty('route-glow', 'line-color', t.routeGlow);
+    m.setPaintProperty('route-casing', 'line-color', t.routeCasing);
+    m.setPaintProperty('route-line', 'line-gradient', this.gradient());
+    m.setPaintProperty('maneuver-casing', 'line-color', t.routeCasing);
+  }
+
   private installLayers() {
     const m = this.map;
     if (m.getSource('routes')) return;
@@ -234,7 +248,18 @@ export class MapView {
         source: 'routes',
         filter: ['!=', ['get', 'selected'], true],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#9aa8b5', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10] },
+        paint: { 'line-color': this.theme.alt, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10] },
+      },
+      before,
+    );
+    // A soft light around the route at night, like a lit lane on a dark dashboard.
+    m.addLayer(
+      {
+        id: 'route-glow',
+        type: 'line',
+        source: 'route-main',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': this.theme.routeGlow, 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 12, 16, 30, 19, 54] },
       },
       before,
     );
@@ -244,7 +269,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': ROUTE_CASING, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 16, 14, 19, 26] },
+        paint: { 'line-color': this.theme.routeCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 16, 14, 19, 26] },
       },
       before,
     );
@@ -282,7 +307,7 @@ export class MapView {
       type: 'line',
       source: 'maneuver',
       layout: { 'line-cap': 'butt', 'line-join': 'round' },
-      paint: { 'line-color': '#0b2f6b', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 18] },
+      paint: { 'line-color': this.theme.routeCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 18] },
     });
     m.addLayer({
       id: 'maneuver-line',
@@ -311,7 +336,7 @@ export class MapView {
 
   private gradient() {
     const f = Math.min(0.9999, Math.max(0.0001, this.progressFrac));
-    return ['step', ['line-progress'], PASSED_COLOR, f, ROUTE_COLOR] as unknown as maplibregl.ExpressionSpecification;
+    return ['step', ['line-progress'], this.theme.passed, f, this.theme.route] as unknown as maplibregl.ExpressionSpecification;
   }
 
   private routesFC(mainOnly: boolean): FeatureCollection {

@@ -1,5 +1,6 @@
 /** JunctionNav app controller: search → place → directions → navigate. */
 import 'maplibre-gl/dist/maplibre-gl.css';
+import './styles/fonts.css';
 import './styles/app.css';
 import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
@@ -28,7 +29,8 @@ import type { Avoid, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
 import { attachSearch, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
 import { PlaceStore } from './state/places';
-import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, type Settings } from './state/settings';
+import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, type Settings } from './state/settings';
+import { themeFor } from './theme/palette';
 import { Banner } from './ui/banner';
 import { h, toast } from './ui/dom';
 import { JunctionPanel } from './ui/junctionPanel';
@@ -314,6 +316,11 @@ class App {
     // The hosted preview can only draw the bundled demo roads, so never ask for remote tiles there.
     const startStyle = ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : resolveStyle(this.settings, isNight(this.settings));
     this.map = new MapView(e.map, startStyle, ARTIFACT ? buildDemo().start : lastPosition() ?? KL, ARTIFACT ? 14 : 12);
+    this.nightNow = isNight(this.settings);
+    this.map.setTheme(themeFor(this.nightNow));
+    // Automatic appearance: check the sun every minute and switch the whole app at sunset and sunrise.
+    window.setInterval(() => this.checkDayNight(), 60_000);
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && this.checkDayNight());
     // When the usual map cannot load: the offline maps if they are on this device, else a simpler online map.
     const fallback = () => (this.offlineMapReady ? offlineStyle(isNight(this.settings), this.settings.lang) : fallbackStyle(isNight(this.settings)));
     this.map.fallback = fallback;
@@ -345,6 +352,9 @@ class App {
       .then((p) => {
         this.myPos = p;
         rememberPosition(p);
+        // Sunrise and sunset where the user actually is.
+        setSunPlace(p);
+        this.checkDayNight();
         if (this.view !== 'nav' && !this.demo) {
           this.map.setPuck(p, 0);
           if (this.view === 'browse') this.map.flyTo(p, 14);
@@ -440,10 +450,7 @@ class App {
   private watchViewerTheme() {
     const refresh = () => {
       if (this.settings.appearance !== 'auto' || !this.demo) return;
-      const st = demoStyle(buildDemo().geojson, isNight(this.settings));
-      this.map.setStyle(st);
-      this.zoom.setStyle(st);
-      this.sceneCache.clear();
+      this.applyDayNight();
     };
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
     new MutationObserver((m) => {
@@ -1534,6 +1541,32 @@ class App {
     this.renderSheet();
   }
 
+  /** Day or night now (from the settings, the sun, or the viewer's theme in the preview). */
+  private nightNow = false;
+
+  private checkDayNight() {
+    const night = isNight(this.settings);
+    if (night !== this.nightNow) this.applyDayNight();
+  }
+
+  /** Switch everything to the current day or night look: page, maps, route line and junction views. */
+  private applyDayNight() {
+    const night = isNight(this.settings);
+    this.nightNow = night;
+    this.applyTheme();
+    if (this.demo || ARTIFACT) {
+      const st = demoStyle(buildDemo().geojson, night);
+      this.map.setStyle(st);
+      this.zoom?.setStyle(st);
+    } else {
+      this.refreshMapSource(true);
+    }
+    this.map.setTheme(themeFor(night));
+    this.sceneCache.clear();
+    const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
+    if (cand && this.panel.visible) this.showJunction(cand, true);
+  }
+
   private applyTheme() {
     const root = document.documentElement;
     this.themeMutating = true;
@@ -1545,6 +1578,8 @@ class App {
       root.dataset.theme = isNight(this.settings) ? 'dark' : 'light';
       this.themeSetByApp = true;
     }
+    // The browser bar matches the instrument panel.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isNight(this.settings) ? '#070c1a' : '#0b1630');
     this.themeMutating = false;
   }
 
@@ -1944,14 +1979,10 @@ class App {
     const prev = this.settings;
     this.settings = next;
     saveSettings(next);
-    this.applyTheme();
     this.applyLang();
     this.paintMute();
-    if (this.demo && prev.appearance !== next.appearance) {
-      const st = demoStyle(buildDemo().geojson, isNight(next));
-      this.map.setStyle(st);
-      this.zoom.setStyle(st);
-    }
+    if (prev.appearance !== next.appearance) this.applyDayNight();
+    else this.applyTheme();
     if (!this.demo) {
       if (prev.routerUrl !== next.routerUrl || prev.overpassUrls !== next.overpassUrls) this.realProviders();
       const changed = (a: string | StyleSpecification, b: string | StyleSpecification) => (typeof a === 'string' || typeof b === 'string' ? a !== b : JSON.stringify(a) !== JSON.stringify(b));

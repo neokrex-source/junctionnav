@@ -15,6 +15,9 @@
     "build:artifact": "vite build --config vite.artifact.config.ts && node scripts/artifact-page.mjs dist-artifact/index.html dist-artifact/junctionnav-preview.html"
   },
   "dependencies": {
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@fontsource/saira": "^5.3.0",
+    "@fontsource/saira-condensed": "^5.3.0",
     "@protomaps/basemaps": "5.7.2",
     "maplibre-gl": "5.24.0",
     "pmtiles": "4.5.0",

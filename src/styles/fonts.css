@@ -1,0 +1,66 @@
+/* Fonts bundled with the app (latin, woff2), so text looks the same offline as online.
+   Saira for the interface, Saira Condensed for numbers and road names, Barlow Condensed for the
+   road signs drawn in the junction view. */
+@font-face {
+  font-family: 'Saira';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/saira/files/saira-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Saira';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/saira/files/saira-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Saira';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/saira/files/saira-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Saira';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/saira/files/saira-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/saira-condensed/files/saira-condensed-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/saira-condensed/files/saira-condensed-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Saira Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/saira-condensed/files/saira-condensed-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-700-normal.woff2') format('woff2');
+}

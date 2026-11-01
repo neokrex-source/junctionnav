@@ -61,6 +61,15 @@ The build uses relative paths, so it works at `https://<user>.github.io/<repo>/`
 
 Trip links work the same on the hosted site, e.g. `https://<user>.github.io/junctionnav/?to=Suria%20KLCC&sim`.
 
+## Look: day and night cockpit
+
+The app looks like a car's instrument cluster. The guidance banner is the instrument panel, carbon navy in both modes, with the maneuver arrow in lumen cyan and a lit lane line along its lower edge. Everything else is quiet glass over the map, so the route line is the brightest thing on screen: electric blue by day, glowing cyan by night. Warnings use amber, like a dashboard telltale.
+
+- **Day and night switch on their own.** With Settings → Appearance on *Automatic*, the app turns dark at sunset and bright at sunrise where you are (worked out from the sun's position, so it is right in Kuala Lumpur in June and in Tokyo in December). It checks every minute and switches everything at once: the page, the map, the route line, the junction views and the map under them. *Always bright* and *Always dark* are there too.
+- **Map.** The default map is drawn in the same palette from OpenFreeMap's free vector tiles online and from the offline pack's Protomaps tiles offline: quiet land, water and parks, roads in three tiers with expressways a step brighter, and labels without icons. The junction views (3D and map) use the same hues.
+- **Type.** Saira for the interface and Saira Condensed for distances, times and road names, bundled with the app so they also work offline. Road signs in the junction view keep their own condensed lettering.
+- **Code.** CSS tokens at the top of `src/styles/app.css`; the same colours for the map and route line in `src/theme/palette.ts`; map styles in `src/map/techStyle.ts`; the sun in `src/state/daylight.ts`.
+
 ## Search and directions
 
 - **Search bar.** Type to search (Photon, OSM-based) or paste coordinates like `3.139, 101.6869`. With an empty search box you get Home, Work, saved places and recent destinations, kept in this browser.
@@ -181,7 +190,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 
 | Purpose | Default | Notes |
 | --- | --- | --- |
-| Base map | OpenFreeMap (Liberty, Bright, Positron, Dark) | No key. MapTiler styles need a key. Any MapLibre style URL works. |
+| Base map | JunctionNav day and night map on OpenFreeMap vector tiles | No key. OpenFreeMap's own styles (Liberty, Bright, Positron, Dark), MapTiler (key) and any MapLibre style URL can be picked in Settings. |
 | Routing | `routing.openstreetmap.de` (FOSSGIS OSRM) | Public demo server for light use. Self-host for real driving (below). |
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
 | Search | `photon.komoot.io` | OSM-based, allows search-as-you-type. Fair use only. |

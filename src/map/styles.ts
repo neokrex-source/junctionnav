@@ -1,6 +1,8 @@
 import type { StyleSpecification } from 'maplibre-gl';
 import type { FeatureCollection } from 'geojson';
 import type { Settings } from '../state/settings';
+import { themeFor } from '../theme/palette';
+import { techStyle } from './techStyle';
 
 export interface StyleDef {
   id: string;
@@ -10,7 +12,7 @@ export interface StyleDef {
   night?: string;
   url: (s: Settings) => string;
   /** Inline style instead of a URL. */
-  spec?: (night: boolean) => StyleSpecification;
+  spec?: (night: boolean, s: Settings) => StyleSpecification;
 }
 
 const CARTO_ATTRIBUTION =
@@ -48,6 +50,7 @@ export function fallbackStyle(night: boolean): StyleSpecification {
 }
 
 export const STYLES: StyleDef[] = [
+  { id: 'tech', label: 'JunctionNav (day and night)', url: () => '', spec: (night, s) => techStyle(night, s.lang) },
   { id: 'ofm-liberty', label: 'OpenFreeMap Liberty', night: 'ofm-dark', url: () => 'https://tiles.openfreemap.org/styles/liberty' },
   { id: 'ofm-bright', label: 'OpenFreeMap Bright', night: 'ofm-dark', url: () => 'https://tiles.openfreemap.org/styles/bright' },
   { id: 'ofm-positron', label: 'OpenFreeMap Positron', night: 'ofm-dark', url: () => 'https://tiles.openfreemap.org/styles/positron' },
@@ -79,16 +82,16 @@ export function resolveStyle(s: Settings, night: boolean): string | StyleSpecifi
   let def = STYLES.find((d) => d.id === s.mapStyle) ?? STYLES[0];
   if (def.needsKey && !s.maptilerKey) def = STYLES[0];
   if (def.id === 'custom' && !s.customStyleUrl) def = STYLES[0];
-  if (def.spec) return def.spec(night);
+  if (def.spec) return def.spec(night, s);
   if (night && def.night) def = STYLES.find((d) => d.id === def.night) ?? def;
   return def.url(s);
 }
 
 /** Plain style for the offline demo network. */
 export function demoStyle(geojson: FeatureCollection, night: boolean): StyleSpecification {
-  const c = night
-    ? { land: '#141b18', minor: '#3a4440', major: '#56605b', motorway: '#6d7a73', casing: '#0b100e', label: '#c9d4ce', wood: '#1d2b22' }
-    : { land: '#e4ebe0', minor: '#ffffff', major: '#fff1b8', motorway: '#ffc65c', casing: '#9aa59e', label: '#33403a', wood: '#cbdcc0' };
+  // The JunctionNav map palette, so the demo looks like the real map.
+  const m = themeFor(night).map;
+  const c = { land: m.land, minor: m.minor, major: m.major, motorway: m.highway, casing: m.highwayCase, label: m.label, wood: m.wood, tunnel: m.tunnel };
   // Zoom must be the input of a top-level interpolate; the stops can be data expressions.
   const zw = (wExpr: unknown) => ['interpolate', ['exponential', 1.6], ['zoom'], 12, ['*', wExpr, 0.6], 16, ['*', wExpr, 3.4], 19, ['*', wExpr, 14]];
   const cls = ['match', ['get', 'highway'], ['motorway', 'motorway_link'], 'motorway', ['trunk', 'trunk_link', 'primary', 'primary_link'], 'major', 'minor'];
@@ -111,7 +114,7 @@ export function demoStyle(geojson: FeatureCollection, night: boolean): StyleSpec
         type: 'line',
         source: 'demo',
         filter: ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'tunnel'], 'yes']],
-        paint: { 'line-color': c.casing, 'line-width': zw(2), 'line-dasharray': [1, 1] },
+        paint: { 'line-color': c.tunnel, 'line-width': zw(2), 'line-dasharray': [1, 1] },
       },
       {
         id: 'roads-casing',

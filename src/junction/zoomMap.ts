@@ -1,4 +1,6 @@
 /** Tilted close-up of the real map at the junction (the "zoomed map" junction view). */
+import { PUCK_SVG } from '../map/mapView';
+import { themeFor } from '../theme/palette';
 import maplibregl, { type GeoJSONSource, type StyleSpecification } from 'maplibre-gl';
 import type { FeatureCollection } from 'geojson';
 import { clamp, type LngLat } from '../geo/geo';
@@ -14,6 +16,7 @@ export class ZoomMap {
   private style: string | StyleSpecification;
   /** Flyovers, ramps and underpasses of the current junction, standing up on the map. */
   private layer3d = new JunctionLayer3D();
+  private night = false;
 
   constructor(
     private slot: HTMLElement,
@@ -42,21 +45,20 @@ export class ZoomMap {
         type: 'line',
         source: 'jv-route',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#0b3f99', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 10, 18, 26] },
+        paint: { 'line-color': themeFor(this.night).routeCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 10, 18, 26] },
       });
       map.addLayer({
         id: 'jv-route',
         type: 'line',
         source: 'jv-route',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#1f78ff', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 6, 18, 18] },
+        paint: { 'line-color': themeFor(this.night).route, 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 6, 18, 18] },
       });
       map.addLayer(this.layer3d);
     });
     const el = document.createElement('div');
     el.className = 'puck';
-    el.innerHTML =
-      '<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="#fff"/><circle cx="20" cy="20" r="14" fill="#1f78ff"/><path d="M20 8 L28.5 28 L20 23.5 L11.5 28 Z" fill="#fff"/></svg>';
+    el.innerHTML = PUCK_SVG;
     this.marker = new maplibregl.Marker({ element: el, rotationAlignment: 'map', pitchAlignment: 'map' });
     this.map = map;
     return map;
@@ -85,6 +87,14 @@ export class ZoomMap {
       features: parts.map((coordinates) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } })),
     };
     (map.getSource('jv-route') as GeoJSONSource | undefined)?.setData(this.data);
+    if (night !== this.night) {
+      this.night = night;
+      const t = themeFor(night);
+      if (map.getLayer('jv-route')) {
+        map.setPaintProperty('jv-route', 'line-color', t.route);
+        map.setPaintProperty('jv-route-casing', 'line-color', t.routeCasing);
+      }
+    }
     this.layer3d.setScene(scene, night);
     const lifted = !!scene && Math.abs(scene.profile.peak.h) >= 2.5;
     map.resize();
