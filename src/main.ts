@@ -22,6 +22,7 @@ import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTerra
 import { OfflineTerrainProvider, TerrainPackReader } from './offline/offlineTerrain';
 import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
+import { distinctAlternatives, matchAlternative } from './nav/alternatives';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
 import { arrivalSpeech, describeStep, formatDistance, formatDuration, lanePhrase, LANGS, spokenInstruction, t, tunnelSpeech, type UiKey } from './routing/instructions';
@@ -174,6 +175,11 @@ class App {
   lastStepIdx = -1;
   rerouting = false;
   lastReroute = 0;
+  /** Alternative routes kept ready during the drive (up to three), and when and where they were fetched. */
+  alts: Route[] = [];
+  private altsAt = 0;
+  private altsFromS = 0;
+  private altsBusy = false;
   lastPrefetch = 0;
   arrivedAnnounced = false;
   private endingNav = false;
@@ -1792,6 +1798,10 @@ class App {
     this.stopsPassed = 0;
     this.navDest = route.geometry[route.geometry.length - 1];
     this.trip.stops = this.trip.stops.filter((p): p is Place => !!p);
+    // The other routes from planning are the first alternatives; they are refreshed on the way.
+    this.alts = distinctAlternatives(route, this.routes.filter((_, i) => i !== this.selected));
+    this.altsAt = Date.now();
+    this.altsFromS = 0;
     this.map.showRoutes([route], 0);
     this.map.setDestination(this.navDest);
     this.source?.stop();
@@ -1958,6 +1968,7 @@ class App {
       if (this.navOverlay === 'steps') this.renderSheet();
     }
     this.map.follow(p.snapped, p.heading, this.followOpts(p));
+    this.keepCarInView(p);
     this.syncForks(p);
     this.paintRecenter();
 
@@ -2015,8 +2026,10 @@ class App {
     }
 
     // Inside the arrival zone (car parks, side streets) leaving the route is expected.
-    if (p.offRoute && !this.sim && !this.demo && !this.arrivedAnnounced) this.reroute(fix);
-    else if (!this.rerouting) this.el.reroute.hidden = true;
+    if (p.offRoute && !this.sim && !this.demo && !this.arrivedAnnounced) {
+      if (!this.rerouting && !this.switchToAlternative(fix)) this.reroute(fix);
+    } else if (!this.rerouting) this.el.reroute.hidden = true;
+    if (!this.sim && !this.demo) this.refreshAlternatives(p, fix);
 
     if (Date.now() - this.lastPrefetch > 15000) this.prefetch(p.s);
   }
@@ -2093,6 +2106,106 @@ class App {
     }
   }
 
+  /** Drives on `r` from `startS` metres along it: guidance, map, junctions, tunnels and the next prompt. */
+  private applyRoute(r: Route, startS: number) {
+    this.trip.stops = this.remainingStops();
+    this.stopsPassed = 0;
+    this.routes = [r];
+    this.selected = 0;
+    this.engine.setRoute(r, detectJunctions(r), startS);
+    this.engine.laneMode = this.settings.laneAlerts;
+    this.engine.tunnelAlerts = this.settings.tunnelAlerts;
+    this.tunnels.setRoute(r);
+    if (this.sim) {
+      this.sim.route = r;
+      this.sim.jumpTo(startS);
+    }
+    this.map.showRoutes([r], 0);
+    this.map.setProgress(startS);
+    if (this.navDest) this.map.setDestination(this.navDest);
+    this.activeJ = null;
+    this.lastStepIdx = -1;
+    this.prefetch(startS);
+    const next = r.steps.find((st) => st.s > startS + 5 && st.type !== 'depart');
+    if (next) this.say(spokenInstruction(next, next.s - startS > 200 ? next.s - startS : null, this.L, this.settings.units));
+  }
+
+  /**
+   * Off the route, onto one of the alternatives kept ready: switch to it at once, with no wait
+   * for the router (and no connection needed). The old route becomes an alternative in turn.
+   */
+  private switchToAlternative(fix: Fix): boolean {
+    if (!this.alts.length || this.remainingStops().length) return false;
+    const m = matchAlternative(this.alts, fix.lngLat, fix.heading ?? null, Math.max(35, Math.min(80, fix.accuracy * 1.5)));
+    if (!m) return false;
+    const old = this.engine.route;
+    this.alts = [...this.alts.filter((r) => r !== m.route), ...(old ? [old] : [])].slice(0, 3);
+    this.lastReroute = Date.now();
+    this.applyRoute(m.route, m.s);
+    const p = this.engine.update(fix);
+    const eta = p?.eta.toLocaleTimeString(this.L === 'ja' ? 'ja-JP' : this.L === 'ms' ? 'ms-MY' : 'en-GB', { hour: '2-digit', minute: '2-digit' });
+    toast(`On an alternative route${eta ? `, arriving ${eta}` : ''}.`, 4000);
+    // Fresh alternatives from here soon.
+    this.altsAt = Date.now() - 100_000;
+    return true;
+  }
+
+  /**
+   * Keeps up to three alternatives ready from where the car is: every two minutes or 3 km while
+   * on the route (single-destination trips; the router only gives alternatives between two points).
+   */
+  private refreshAlternatives(p: Progress, fix: Fix) {
+    const route = this.engine.route;
+    if (this.altsBusy || !route || !this.navDest || this.remainingStops().length || !p.onRoute || p.remaining < 1500) return;
+    if (Date.now() - this.altsAt < 120_000 && Math.abs(p.s - this.altsFromS) < 3000) return;
+    this.altsBusy = true;
+    this.altsAt = Date.now();
+    this.altsFromS = p.s;
+    this.router
+      .route({ origin: fix.lngLat, destination: this.navDest, bearing: fix.heading, alternatives: true, avoid: this.settings.avoid })
+      .then((res) => {
+        if (this.engine.route === route) this.alts = distinctAlternatives(route, res.routes);
+      })
+      .catch(() => {
+        /* no connection: keep the ones we have */
+      })
+      .finally(() => (this.altsBusy = false));
+  }
+
+  /** The part of the map not covered by the guidance panels and the bottom cards (insets in CSS px). */
+  private visibleMapArea() {
+    const H = window.innerHeight;
+    const g = this.el.guide.getBoundingClientRect();
+    let bottom = H - 70;
+    for (const el of [this.el.foot.querySelector('.eta'), this.el.sim]) {
+      if (!el || (el as HTMLElement).hidden) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height > 0) bottom = Math.min(bottom, r.top);
+    }
+    if (this.landscape()) return { top: 0, bottom: H - bottom, left: g.width, right: 0 };
+    return { top: this.el.guide.hidden ? 0 : g.bottom, bottom: H - bottom, left: 0, right: 0 };
+  }
+
+  /**
+   * While the map is moved away from the car: when the car icon comes close to the edge of the
+   * visible map (or leaves it), or after 25 s of driving without touching the map, go back to
+   * following it, centred and turned to the direction of travel. A finger on the map within the
+   * last 4 s means the user is looking around, so it waits.
+   */
+  private keepCarInView(p: Progress) {
+    if (this.map.isFollowing || this.map.sinceGesture < 4000) return;
+    const area = this.visibleMapArea();
+    const w = window.innerWidth - area.left - area.right;
+    const h = window.innerHeight - area.top - area.bottom;
+    const margin = Math.max(36, Math.min(80, Math.min(w, h) * 0.12));
+    const where = this.map.puckPlacement(area, margin);
+    if (where === 'edge' || where === 'out' || (p.speed > 3 && this.map.sinceGesture > 25_000)) {
+      this.map.startFollowing();
+      this.map.followNow(p.snapped, p.heading, this.followOpts(p));
+      this.paintRecenter();
+    }
+  }
+
   private async reroute(fix: Fix, force = false) {
     if (this.rerouting || (!force && Date.now() - this.lastReroute < 8000) || !this.navDest) return;
     this.rerouting = true;
@@ -2108,25 +2221,11 @@ class App {
       });
       const r = res.routes[0];
       if (res.warnings.length) toast(res.warnings[0], 5000);
-      this.trip.stops = this.remainingStops();
-      this.stopsPassed = 0;
-      this.routes = [r];
-      this.selected = 0;
-      this.engine.setRoute(r, detectJunctions(r));
-      this.engine.laneMode = this.settings.laneAlerts;
-      this.engine.tunnelAlerts = this.settings.tunnelAlerts;
-      this.tunnels.setRoute(r);
-      if (this.sim) {
-        this.sim.route = r;
-        this.sim.jumpTo(0);
-      }
-      this.map.showRoutes([r], 0);
-      this.map.setDestination(this.navDest);
-      this.activeJ = null;
-      this.lastStepIdx = -1;
-      this.prefetch(0);
-      const first = r.steps[1];
-      if (first) this.say(spokenInstruction(first, first.s > 200 ? first.s : null, this.L, this.settings.units));
+      this.applyRoute(r, 0);
+      // The other routes from here are the new alternatives.
+      this.alts = distinctAlternatives(r, res.routes.slice(1));
+      this.altsAt = Date.now();
+      this.altsFromS = 0;
     } catch (err) {
       toast(`Reroute failed: ${(err as Error).message}`);
     } finally {

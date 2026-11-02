@@ -42,7 +42,7 @@ describe('routing', () => {
     expect(url).toContain('/route/v1/driving/101.100000,3.100000;101.200000,3.200000?');
     expect(url).toContain('bearings=92%2C60%3B');
     expect(url).toContain('exclude=toll%2Cferry');
-    expect(url).toContain('alternatives=2');
+    expect(url).toContain('alternatives=3');
     const via = r.buildUrl({ origin: [101.1, 3.1], via: [[101.15, 3.15]], destination: [101.2, 3.2], bearing: 10, alternatives: true }, []);
     expect(via).toContain('101.150000,3.150000;101.200000');
     expect(via).toContain('alternatives=false');

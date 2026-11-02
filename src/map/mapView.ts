@@ -2,7 +2,7 @@
 import { DAY, type Theme } from '../theme/palette';
 import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type StyleSpecification } from 'maplibre-gl';
 import type { Feature, FeatureCollection, LineString } from 'geojson';
-import type { LngLat } from '../geo/geo';
+import { angleDiff, haversine, type LngLat } from '../geo/geo';
 import type { Route, Step } from '../routing/types';
 import { fallbackStyle } from './styles';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
@@ -246,6 +246,7 @@ export class MapView {
     });
     // Only gestures carry an originalEvent; the follow camera's own moves do not.
     const userMove = (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) this.gestureAt = performance.now();
       if (e.originalEvent && this.following) {
         this.following = false;
         this.userZooming = false;
@@ -257,6 +258,7 @@ export class MapView {
     this.map.on('pitchstart', userMove);
     // Zooming while following keeps following: the new zoom becomes the scale (100 m to 1 km).
     this.map.on('zoomstart', (e) => {
+      if (e.originalEvent) this.gestureAt = performance.now();
       if (e.originalEvent && this.following) this.userZooming = true;
     });
     this.map.on('zoomend', () => {
@@ -265,9 +267,13 @@ export class MapView {
     // The follow camera moves several times a second, and each move would cut a gesture short:
     // while a finger or the mouse button is down, or the wheel is turning, it holds still.
     const canvas = this.map.getCanvasContainer();
-    const pointers = new Set<number>();
+    const pointers = this.pointers;
+    canvas.addEventListener('pointermove', () => {
+      if (pointers.size) this.gestureAt = performance.now();
+    });
     canvas.addEventListener('pointerdown', (e) => {
       pointers.add(e.pointerId);
+      this.gestureAt = performance.now();
       this.holding = true;
       // End the follow camera's move in flight so the gesture starts from a still map.
       if (this.following) this.map.stop();
@@ -918,14 +924,82 @@ export class MapView {
     (this.map.getSource('maneuver') as GeoJSONSource | undefined)?.setData(this.arrow);
   }
 
+  /**
+   * Moves the car icon. Between GPS fixes it glides to the new position over about the time
+   * since the last one, as the follow camera eases there too, so the icon stays put on screen
+   * instead of jumping ahead every second (very visible in a 20 m close-up). Big jumps (a GPS
+   * jump, a reroute, the simulator skipping ahead) and reduced motion place it at once.
+   */
   setPuck(p: LngLat | null, heading = 0) {
     this.puckAt = p;
+    cancelAnimationFrame(this.puckRaf);
     if (!p) {
       this.puck.remove();
+      this.puckShown = null;
       return;
     }
+    // A marker needs a position before it joins the map.
+    if (!this.puck.getElement().isConnected) this.placePuck(p, heading).addTo(this.map);
+    const now = performance.now();
+    const since = now - this.puckTime;
+    this.puckTime = now;
+    const from = this.puckShown;
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (!from || still || since > 3000 || haversine(from, p) > 250) {
+      this.placePuck(p, heading);
+      return;
+    }
+    const dur = Math.min(1100, since * 1.05);
+    const fromBrg = this.puckBrg;
+    const turn = angleDiff(fromBrg, heading);
+    const step = () => {
+      const t = Math.min(1, (performance.now() - now) / dur);
+      this.placePuck([from[0] + (p[0] - from[0]) * t, from[1] + (p[1] - from[1]) * t], fromBrg + turn * t);
+      if (t < 1) this.puckRaf = requestAnimationFrame(step);
+    };
+    step();
+  }
+
+  private placePuck(p: LngLat, heading: number): maplibregl.Marker {
     this.puck.setLngLat(p).setRotation(heading);
-    if (!this.puck.getElement().isConnected) this.puck.addTo(this.map);
+    this.puckShown = p;
+    this.puckBrg = heading;
+    return this.puck;
+  }
+
+  private puckRaf = 0;
+  private puckTime = 0;
+  private puckShown: LngLat | null = null;
+  private puckBrg = 0;
+  /** Pointers down on the map, and when the user last touched, dragged or zoomed it. */
+  private pointers = new Set<number>();
+  private gestureAt = 0;
+
+  /** Milliseconds since the user last touched, dragged or zoomed the map. */
+  get sinceGesture(): number {
+    return performance.now() - this.gestureAt;
+  }
+
+  /**
+   * Where the car icon is on screen, against the part of the map that is not covered by panels
+   * (`area`: insets from the map's edges in CSS pixels): well inside it, within `margin` of its
+   * border, or outside it.
+   */
+  puckPlacement(area: { top: number; bottom: number; left: number; right: number }, margin: number): 'inside' | 'edge' | 'out' | null {
+    const p = this.puckAt;
+    if (!p) return null;
+    const el = this.map.getContainer();
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (!w || !h) return null;
+    const pt = this.map.project(p);
+    const x0 = area.left;
+    const x1 = w - area.right;
+    const y0 = area.top;
+    const y1 = h - area.bottom;
+    if (!Number.isFinite(pt.x) || pt.x < x0 || pt.x > x1 || pt.y < y0 || pt.y > y1) return 'out';
+    if (pt.x < x0 + margin || pt.x > x1 - margin || pt.y < y0 + margin || pt.y > y1 - margin) return 'edge';
+    return 'inside';
   }
 
   setDestination(p: LngLat | null) {
@@ -1043,10 +1117,17 @@ export class MapView {
 
   follow(p: LngLat, heading: number, o: FollowOptions) {
     if (!this.following) return;
-    // Let a gesture finish before the camera moves again (the latest position waits).
+    // Let a gesture finish before the camera moves again (the latest position waits). A finger
+    // that lifted without the browser saying so (a system gesture, a lost pointerup) must not
+    // freeze the camera: after 6 s without any touch the hold ends by itself.
     if (this.userZooming || this.holding) {
-      this.pendingFollow = [p, heading, o];
-      return;
+      if (performance.now() - this.gestureAt < 6000) {
+        this.pendingFollow = [p, heading, o];
+        return;
+      }
+      this.holding = false;
+      this.userZooming = false;
+      this.pointers.clear();
     }
     const now = performance.now();
     const since = now - this.lastFollow;

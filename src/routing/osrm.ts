@@ -77,8 +77,8 @@ export class OsrmRouter implements Router {
       overview: 'full',
       geometries: 'geojson',
       steps: 'true',
-      // OSRM only returns alternatives for two-point requests.
-      alternatives: alternatives && pts.length === 2 ? '2' : 'false',
+      // Up to three alternatives (OSRM only returns them for two-point requests).
+      alternatives: alternatives && pts.length === 2 ? '3' : 'false',
       continue_straight: 'default',
     });
     const ok = (b: number | null | undefined): b is number => b != null && Number.isFinite(b);
