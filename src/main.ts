@@ -1707,7 +1707,10 @@ class App {
    */
   private syncSystemBars() {
     if (!NATIVE) return;
-    const night = isNight(this.settings);
+    // WebView 140 and newer draws the app under the bars (edge to edge); older ones leave the
+    // bars on the app's dark plum window, which always wants light icons.
+    const edgeToEdge = Number(navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] ?? 0) >= 140;
+    const night = isNight(this.settings) || !edgeToEdge;
     const lightTop = night || this.view === 'nav';
     void import('@capacitor/core')
       .then(async ({ SystemBars, SystemBarsStyle, SystemBarType }) => {

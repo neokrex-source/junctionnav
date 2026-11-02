@@ -301,9 +301,15 @@ export class MapView {
     this.tilesOk = 0;
     this.tileErrors = 0;
     if (!this.isRemote()) return;
-    const check = (needErrors: boolean) => {
+    const check = (needErrors: boolean, last = false) => {
       if (this.tilesOk > 0) return;
       if (needErrors && this.tileErrors === 0) return;
+      // Tiles still on their way and nothing failed (a slow phone, a first start, a slow network):
+      // give them another 25 seconds before switching maps.
+      if (!needErrors && !last && this.tileErrors === 0 && !this.map.areTilesLoaded()) {
+        this.watchdog.push(window.setTimeout(() => check(false, true), 25000));
+        return;
+      }
       this.fail(this.lastError || 'no map tiles arrived');
     };
     this.watchdog = [window.setTimeout(() => check(true), 9000), window.setTimeout(() => check(false), 25000)];
