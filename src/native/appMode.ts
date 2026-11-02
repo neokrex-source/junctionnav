@@ -118,16 +118,19 @@ async function tidy(keep: WebCopy) {
   try {
     const { Filesystem, Directory } = await files();
     const { WebView } = await core();
-    const running = (await WebView.getServerBasePath()).path;
+    const running = trim((await WebView.getServerBasePath()).path);
     const list = await Filesystem.readdir({ path: ROOT, directory: Directory.Data });
     for (const e of list.files) {
-      if (e.name === keep.version || (running && running.endsWith(`/${ROOT}/${e.name}`))) continue;
+      if (e.name === keep.version || running.endsWith(`/${ROOT}/${e.name}`)) continue;
       await Filesystem.rmdir({ path: `${ROOT}/${e.name}`, directory: Directory.Data, recursive: true });
     }
   } catch {
     /* nothing to tidy */
   }
 }
+
+/** Android reports folders with a trailing slash; compare paths without it. */
+const trim = (p: string | undefined | null) => (p ?? '').replace(/\/+$/, '');
 
 /** Runs a downloaded build (the WebView reloads into it). */
 async function runCopy(c: WebCopy) {
@@ -184,7 +187,7 @@ export async function startAppMode(mode: AppMode, hooks: ModeHooks): Promise<voi
     const have = read();
     if (BUILT_IN && have && (await has(have))) latest = have;
   }
-  if (!latest || running === latest.path) return;
+  if (!latest || trim(running) === trim(latest.path)) return;
   pending = latest;
   if (hooks.idle()) applyPending(hooks);
   else hooks.notify('The latest version of JunctionNav is ready; it opens when this drive ends.');
@@ -208,7 +211,7 @@ export async function switchAppMode(mode: AppMode, hooks: ModeHooks): Promise<vo
     }
   });
   const { WebView } = await core();
-  if ((await WebView.getServerBasePath()).path === copy.path) {
+  if (trim((await WebView.getServerBasePath()).path) === trim(copy.path)) {
     hooks.notify('You already have the latest version.');
     return;
   }
