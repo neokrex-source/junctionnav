@@ -15,34 +15,42 @@ export interface StyleDef {
   spec?: (night: boolean, s: Settings) => StyleSpecification;
 }
 
-const CARTO_ATTRIBUTION =
-  '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
+const OSM_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
 
-function cartoRaster(night: boolean): StyleSpecification {
-  const path = night ? 'dark_all' : 'rastertiles/voyager';
+/**
+ * OpenStreetMap's own raster tiles (labels drawn into the images), dimmed at night. Keyless, and
+ * meant for light use: the app only falls back to them when the vector map cannot load. (CARTO's
+ * free raster tiles, used before, now need an API key.)
+ */
+function osmRaster(night: boolean): StyleSpecification {
   return {
     version: 8,
     sources: {
-      carto: {
+      osm: {
         type: 'raster',
-        tiles: ['a', 'b', 'c', 'd'].map((s) => `https://${s}.basemaps.cartocdn.com/${path}/{z}/{x}/{y}@2x.png`),
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
         tileSize: 256,
-        maxzoom: 20,
-        attribution: CARTO_ATTRIBUTION,
+        maxzoom: 19,
+        attribution: OSM_ATTRIBUTION,
       },
     },
     layers: [
-      { id: 'bg', type: 'background', paint: { 'background-color': night ? '#1b1d21' : '#f2efe9' } },
-      { id: 'carto', type: 'raster', source: 'carto' },
+      { id: 'bg', type: 'background', paint: { 'background-color': night ? '#0d0a14' : '#f2efe9' } },
+      {
+        id: 'osm',
+        type: 'raster',
+        source: 'osm',
+        paint: night ? { 'raster-brightness-max': 0.42, 'raster-saturation': -0.55, 'raster-contrast': 0.12 } : { 'raster-saturation': -0.15 },
+      },
     ],
   };
 }
 
 /** One object per mode, so style comparisons by identity stay stable. */
-const RASTER = { day: cartoRaster(false), night: cartoRaster(true) };
+const RASTER = { day: osmRaster(false), night: osmRaster(true) };
 
 /**
- * A different provider (CARTO raster tiles, labels drawn into the images) for when the
+ * A different provider (OpenStreetMap raster tiles, labels drawn into the images) for when the
  * vector style or its tiles cannot load. Needs no fonts or sprites.
  */
 export function fallbackStyle(night: boolean): StyleSpecification {
@@ -74,7 +82,7 @@ export const STYLES: StyleDef[] = [
     needsKey: true,
     url: (s) => `https://api.maptiler.com/maps/hybrid/style.json?key=${encodeURIComponent(s.maptilerKey)}`,
   },
-  { id: 'carto', label: 'Simple map (CARTO, works on slow connections)', url: () => '', spec: fallbackStyle },
+  { id: 'carto', label: 'Simple map (OpenStreetMap, works on slow connections)', url: () => '', spec: fallbackStyle },
   { id: 'custom', label: 'Custom style URL', url: (s) => s.customStyleUrl },
 ];
 

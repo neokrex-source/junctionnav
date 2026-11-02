@@ -14,9 +14,11 @@ const KL = [101.6869, 3.1478];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();
 
+const report = { version, checks: {}, info: {}, problems: [] };
+const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
+
 (async () => {
   fs.mkdirSync(out, { recursive: true });
-  const report = { version, checks: {}, info: {}, problems: [] };
   const check = (name, ok, detail) => {
     report.checks[name] = { ok: !!ok, ...(detail !== undefined ? { detail } : {}) };
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail !== undefined ? `: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ''}`);
@@ -44,7 +46,8 @@ const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();
   const page = await webview.page();
   page.on('pageerror', (e) => report.problems.push(`page error: ${e.message}`));
   page.on('console', (m) => {
-    if (m.type() === 'error') report.problems.push(`console: ${m.text().slice(0, 300)}`);
+    const t = m.text();
+    if (m.type() === 'error' || /^\[(map|offline|sw|voice|terrain)\]/.test(t)) report.problems.push(`console ${m.type()}: ${t.slice(0, 300)}`);
   });
   await page.waitForSelector('.auth:not([hidden])', { timeout: 60_000 });
   await sleep(800);
@@ -93,8 +96,43 @@ const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();
   await page.click('.auth-submit');
   await page.waitForSelector('.auth', { state: 'hidden', timeout: 30_000 });
   await page.waitForFunction(() => window.__app, null, { timeout: 30_000 });
-  await sleep(5000);
+  await sleep(8000);
   await shot('2-map');
+  // The online map: which style is up, whether its tiles arrive, and a direct look at the tile server.
+  const map = await page.evaluate(async () => {
+    const m = window.__app.map;
+    const st = m.currentStyle;
+    const r = {
+      style: typeof st === 'string' ? st : Object.keys(st?.sources ?? {}).join(','),
+      tilesOk: m.tilesOk,
+      tileErrors: m.tileErrors,
+      lastError: m.lastError ? String(m.lastError).slice(0, 300) : null,
+      fellBack: m.styleFailed,
+      canvas: [m.map.getCanvas().width, m.map.getCanvas().height],
+    };
+    for (const u of ['https://tiles.openfreemap.org/planet', 'https://tiles.openfreemap.org/fonts/Noto%20Sans%20Regular/0-255.pbf']) {
+      try {
+        const res = await fetch(u, { cache: 'no-store' });
+        r[u.split('/').slice(3, 5).join('/')] = `${res.status} ${res.headers.get('content-type')}`;
+      } catch (e) {
+        r[u.split('/').slice(3, 5).join('/')] = String(e);
+      }
+    }
+    return r;
+  });
+  report.info.map = map;
+  check('online map tiles load (no fallback)', map.tilesOk > 0 && !map.fellBack, map);
+
+  // Settings, scrolled to the offline maps, then the Android back button closes it.
+  await page.click('button[aria-label="Settings"]');
+  await page.waitForSelector('dialog.settings .off');
+  await page.$eval('dialog.settings .off', (el) => el.scrollIntoView({ block: 'center' }));
+  await sleep(2500);
+  await shot('3-settings-offline');
+  await device.shell('input keyevent KEYCODE_BACK');
+  await sleep(1200);
+  const closed = await page.evaluate(() => !document.querySelector('dialog[open]'));
+  check('back button closes Settings', closed);
 
   const app = await page.evaluate(async () => {
     const a = window.__app;
@@ -159,33 +197,24 @@ const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();
     return el && !el.hidden ? Math.round(el.getBoundingClientRect().height) : 0;
   });
   check('3D junction view shows on the demo drive', jv > 100, `${jv} px high`);
-  await shot('3-junction-view');
-
-  // Settings, scrolled to the offline maps.
-  await page.evaluate(() => window.__app.endNav?.());
-  await sleep(800);
-  await page.click('button[aria-label="Settings"]');
-  await page.waitForSelector('dialog.settings .off');
-  await page.$eval('dialog.settings .off', (el) => el.scrollIntoView({ block: 'center' }));
-  await sleep(2500);
-  await shot('4-settings-offline');
-  // The Android back button closes Settings instead of leaving the app.
+  await shot('4-junction-view');
+  // Back while navigating sends the app to the background instead of closing it.
   await device.shell('input keyevent KEYCODE_BACK');
-  await sleep(1000);
-  const closed = await page.evaluate(() => !document.querySelector('dialog[open]'));
-  check('back button closes Settings', closed);
-  await shot('5-after-back');
+  await sleep(1500);
+  const top = (await device.shell('dumpsys activity activities | grep -m1 -E "topResumedActivity|mResumedActivity"')).toString();
+  check('back while navigating keeps the app running in the background', !top.includes(PKG), top.trim().slice(0, 160));
 
   const failed = Object.entries(report.checks).filter(([, c]) => !c.ok).map(([n]) => n);
   report.failed = failed;
-  fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
+  save();
   console.log(`::notice title=Android check::${failed.length ? `failed: ${failed.join(', ')}` : 'all checks passed'} (${report.info.userAgent?.match(/Chrome\/[\d.]+/)?.[0] ?? 'WebView'})`);
   await device.close();
   process.exit(failed.length ? 1 : 0);
 })().catch((e) => {
   console.error(e);
   try {
-    fs.writeFileSync(path.join(out, 'error.txt'), String(e?.stack ?? e));
+    report.error = String(e?.stack ?? e);
+    save();
   } catch {
     /* nothing */
   }
