@@ -249,9 +249,17 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && (window.__hidden = true));
   });
   await device.shell('input keyevent KEYCODE_BACK');
-  await sleep(2500);
-  const top = (await device.shell('dumpsys activity activities')).toString().match(/topResumedActivity=.*|mResumedActivity.*/)?.[0] ?? '';
-  const wentHidden = await page.evaluate(() => window.__hidden).catch(() => null);
+  // The emulator draws the map and the 3D view in software, so give the app up to 10 s.
+  let top = '';
+  let wentHidden = null;
+  const t0 = Date.now();
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    top = (await device.shell('dumpsys activity activities')).toString().match(/topResumedActivity=.*|mResumedActivity.*/)?.[0] ?? '';
+    wentHidden = await page.evaluate(() => window.__hidden).catch(() => null);
+    if (wentHidden === true || (top && !top.includes(PKG))) break;
+  }
+  report.info.backToBackgroundMs = Date.now() - t0;
   await shot('5-after-back-in-nav');
   check('back while navigating keeps the app running in the background', wentHidden === true || (top && !top.includes(PKG)), { top: top.slice(0, 140), wentHidden, before: report.info.beforeBack });
   // And it is still running: bring it back.
