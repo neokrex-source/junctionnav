@@ -122,6 +122,45 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   });
   report.info.map = map;
   check('online map tiles load (no fallback)', map.tilesOk > 0 && !map.fellBack, map);
+  if (!(map.tilesOk > 0 && !map.fellBack)) {
+    // Back to the usual map with the fallback switched off, watching every tile's state, to tell
+    // a slow start from tiles that never finish.
+    report.info.mapRetry = await page.evaluate(async () => {
+      const a = window.__app;
+      const m = a.map;
+      const fails = [];
+      m.fail = (r) => fails.push(String(r));
+      const errors = [];
+      m.map.on('error', (e) => errors.push(String(e?.error?.message ?? e).slice(0, 200)));
+      a.refreshMapSource(true);
+      const states = () => {
+        const out = {};
+        for (const [id, tm] of Object.entries(m.map.style?.tileManagers ?? {})) {
+          const tiles = tm._inViewTiles?.getAllTiles?.() ?? [];
+          if (tiles.length) out[id] = tiles.reduce((acc, t) => ((acc[t.state] = (acc[t.state] || 0) + 1), acc), {});
+        }
+        return out;
+      };
+      const t0 = performance.now();
+      const samples = [];
+      let first = null;
+      while (performance.now() - t0 < 90_000) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const t = Math.round((performance.now() - t0) / 1000);
+        samples.push(`${t}s ok=${m.tilesOk} ${JSON.stringify(states())}`);
+        if (m.tilesOk > 0 && first == null) first = t;
+        if (m.tilesOk > 8) break;
+      }
+      const res = performance
+        .getEntriesByType('resource')
+        .filter((e) => /openfreemap/.test(e.name))
+        .slice(-12)
+        .map((e) => `${e.name.split('/').slice(3).join('/').slice(0, 80)} ${Math.round(e.duration)}ms`);
+      return { firstTileAfter: first, samples, fails, errors: errors.slice(0, 8), resources: res, style: typeof m.currentStyle === 'string' ? m.currentStyle : Object.keys(m.currentStyle.sources).join(',') };
+    });
+    console.log('map retry', JSON.stringify(report.info.mapRetry));
+    await shot('2b-map-retry');
+  }
 
   // Settings, scrolled to the offline maps, then the Android back button closes it.
   await page.click('button[aria-label="Settings"]');
@@ -199,10 +238,27 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   check('3D junction view shows on the demo drive', jv > 100, `${jv} px high`);
   await shot('4-junction-view');
   // Back while navigating sends the app to the background instead of closing it.
+  report.info.beforeBack = await page.evaluate(() => ({
+    view: window.__app.view,
+    dialogs: [...document.querySelectorAll('dialog[open]')].map((d) => d.className || d.getAttribute('aria-label')),
+    sheetOpen: !document.querySelector('.sheet')?.hidden,
+    preview: !!window.__app.preview?.isOpen,
+  }));
+  await page.evaluate(() => {
+    window.__hidden = false;
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && (window.__hidden = true));
+  });
   await device.shell('input keyevent KEYCODE_BACK');
+  await sleep(2500);
+  const top = (await device.shell('dumpsys activity activities')).toString().match(/topResumedActivity=.*|mResumedActivity.*/)?.[0] ?? '';
+  const wentHidden = await page.evaluate(() => window.__hidden).catch(() => null);
+  await shot('5-after-back-in-nav');
+  check('back while navigating keeps the app running in the background', wentHidden === true || (top && !top.includes(PKG)), { top: top.slice(0, 140), wentHidden, before: report.info.beforeBack });
+  // And it is still running: bring it back.
+  await device.shell(`am start -n ${PKG}/.MainActivity`);
   await sleep(1500);
-  const top = (await device.shell('dumpsys activity activities | grep -m1 -E "topResumedActivity|mResumedActivity"')).toString();
-  check('back while navigating keeps the app running in the background', !top.includes(PKG), top.trim().slice(0, 160));
+  const still = await page.evaluate(() => window.__app.view).catch((e) => String(e));
+  check('still navigating when brought back', still === 'nav', still);
 
   const failed = Object.entries(report.checks).filter(([, c]) => !c.ok).map(([n]) => n);
   report.failed = failed;
