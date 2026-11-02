@@ -98,6 +98,8 @@ jobs:
 
       # ---- build
       - name: Build the web app into the Android project
+        env:
+          VITE_APP_VERSION: ${{ steps.ver.outputs.name }}
         run: npm run build:android
       - name: Build the APKs
         working-directory: android

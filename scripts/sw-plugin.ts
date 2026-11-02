@@ -4,9 +4,13 @@
  * stored separately by the app and is never touched here.
  */
 import { createHash } from 'node:crypto';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Plugin } from 'vite';
 
 const PUBLIC = ['manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+/** Public files the Android app's website mode also needs (the page Capacitor shows on a load error). */
+const APP_PUBLIC = [...PUBLIC, 'webview.html'];
 
 export function serviceWorker(): Plugin {
   return {
@@ -26,6 +30,23 @@ export function serviceWorker(): Plugin {
       const version = hash.digest('hex').slice(0, 12);
       const shell = ['./', ...files.filter((f) => f !== 'index.html'), ...PUBLIC];
       this.emitFile({ type: 'asset', fileName: 'sw.js', source: source(version, shell) });
+    },
+    // Every file of this build as written, with its size, for the Android app's website mode,
+    // which downloads the latest site into the app (src/native/appMode.ts) and checks each file.
+    writeBundle(opts, bundle) {
+      const dir = opts.dir ?? 'dist';
+      const files = [
+        ...Object.keys(bundle).filter((f) => !f.endsWith('.map') && !/^lab[.-]/.test(f) && !f.includes('/lab-') && f !== 'sw.js'),
+        ...APP_PUBLIC,
+      ].sort();
+      const hash = createHash('sha256');
+      const list = files.map((f) => {
+        const buf = readFileSync(join(dir, f));
+        hash.update(f);
+        hash.update(buf);
+        return { path: f, size: statSync(join(dir, f)).size };
+      });
+      writeFileSync(join(dir, 'app-files.json'), JSON.stringify({ version: hash.digest('hex').slice(0, 12), built: new Date().toISOString(), files: list }));
     },
   };
 }

@@ -260,6 +260,45 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   const still = await page.evaluate(() => window.__app.view).catch((e) => String(e));
   check('still navigating when brought back', still === 'nav', still);
 
+  // Website mode: the app downloads the latest website build, runs it in place of the built-in
+  // copy with the same account and Android features, then goes back to the built-in copy.
+  try {
+    await page.evaluate(() => window.__app.endNav());
+    await sleep(1500);
+    await page.evaluate(() => {
+      void window.__app.setAppMode('web');
+    });
+    await page.waitForFunction(() => window.__appCopy === 'web' && !!window.__app, null, { timeout: 180_000, polling: 1000 });
+    await sleep(5000);
+    const web = await page.evaluate(() => ({
+      copy: window.__appCopy,
+      mode: JSON.parse(localStorage.getItem('junctionnav.settings.v1') || '{}').appMode,
+      downloaded: JSON.parse(localStorage.getItem('junctionnav.webApp') || 'null'),
+      signedIn: !document.querySelector('.auth:not([hidden])'),
+      plugins: ['TextToSpeech', 'KeepAwake', 'App', 'Filesystem'].filter((p) => !window.Capacitor.isPluginAvailable(p)),
+      packUrl: window.__app.offline.manifestUrl,
+    }));
+    report.info.websiteMode = web;
+    check('website mode runs the latest website build in the app', web.copy === 'web' && web.mode === 'web' && !!web.downloaded, web.downloaded);
+    check('website mode keeps the account, the Android features and the offline maps address', web.signedIn && web.plugins.length === 0 && /offline\/manifest\.json$/.test(web.packUrl), web);
+    await page.click('button[aria-label="Settings"]');
+    await page.waitForSelector('dialog.settings #appMode');
+    await page.$eval('dialog.settings #appMode', (el) => el.scrollIntoView({ block: 'center' }));
+    await sleep(1200);
+    await shot('6-settings-website-mode');
+    await device.shell('input keyevent KEYCODE_BACK');
+    await sleep(1000);
+    await page.evaluate(() => {
+      void window.__app.setAppMode('built-in');
+    });
+    await page.waitForFunction(() => window.__appCopy === 'built-in' && !!window.__app, null, { timeout: 60_000, polling: 1000 });
+    await sleep(2000);
+    const back = await page.evaluate(() => ({ copy: window.__appCopy, signedIn: !document.querySelector('.auth:not([hidden])') }));
+    check('switches back to the built-in version', back.copy === 'built-in' && back.signedIn, back);
+  } catch (e) {
+    check('website mode', false, String(e?.message ?? e).slice(0, 400));
+  }
+
   const failed = Object.entries(report.checks).filter(([, c]) => !c.ok).map(([n]) => n);
   report.failed = failed;
   save();

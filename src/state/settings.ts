@@ -37,6 +37,8 @@ export interface Settings {
   jvSize: JvSize;
   /** Zoom the map in to 20 m at dividers, ramps, exits, entrances and junctions, with the other roads in colour. */
   closeUp: boolean;
+  /** Android app only: run the copy built into the app, or the latest website build downloaded into it. */
+  appMode: 'built-in' | 'web';
 }
 
 const env = import.meta.env;
@@ -70,6 +72,7 @@ export const DEFAULTS: Settings = {
   mapScale: 'auto',
   jvSize: '1:3',
   closeUp: true,
+  appMode: 'built-in',
 };
 
 const KEY = 'junctionnav.settings.v1';

@@ -38,6 +38,8 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
           # The Android installer published by the Android app workflow, linked from Settings.
           VITE_APK_URL: https://github.com/${{ github.repository }}/releases/download/android/JunctionNav.apk
+          # This site, for the Android app's website mode (downloaded into the app, see src/native/appMode.ts).
+          VITE_WEB_APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
           VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
 
       # ---- offline maps: the newest pack in the cache

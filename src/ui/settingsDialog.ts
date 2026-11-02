@@ -2,7 +2,8 @@ import { SIGN_THEMES } from '../junction/signs';
 import { STYLES } from '../map/styles';
 import type { OfflineStore } from '../offline/store';
 import { DEFAULTS, type Settings } from '../state/settings';
-import { APK_URL } from '../platform';
+import { runningCopy } from '../native/appMode';
+import { APK_URL, APP_VERSION, NATIVE } from '../platform';
 import { h } from './dom';
 import { offlinePanel } from './offlinePanel';
 
@@ -87,6 +88,30 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['always', 'Always use them (saves mobile data)'],
     ]);
     const pack = opts.pack ? offlinePanel(opts.pack, offlineUse) : null;
+    // In the Android app: the built-in copy, or the latest website build downloaded into the app.
+    const appMode = select('appMode', current.appMode, [
+      ['built-in', 'Built into the app'],
+      ['web', 'Latest from the website'],
+    ]);
+    const run = runningCopy();
+    const runText =
+      run.kind === 'built-in'
+        ? `Now running the built-in version ${APP_VERSION}.`
+        : `Now running the website version${run.built ? ` of ${new Date(run.built).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}.`;
+    const appVersion = NATIVE
+      ? h(
+          'div',
+          { class: 'grp' },
+          h('label', { for: 'appMode' }, 'App version'),
+          appMode,
+          h('div', { class: 'app-running' }, runText),
+          h(
+            'div',
+            { class: 'hint' },
+            'Built into the app: opens with no internet from the very first start and changes only when you install a newer installer. Latest from the website: the app downloads the newest version from the website (about 2 MB) and updates itself when online, keeping a copy so it still opens with no signal. Both use the same account, saved places and offline maps.',
+          ),
+        )
+      : null;
     // On the website: the same app as an Android app, built by .github/workflows/android.yml.
     const androidApp =
       APK_URL && !opts.preview
@@ -155,6 +180,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       { method: 'dialog' },
       h('h2', {}, 'Settings'),
       accountEl,
+      appVersion,
       opts.preview ? null : grp('Map', style),
       opts.preview ? null : grp('Custom style URL', customStyleUrl),
       opts.preview ? null : grp('MapTiler key', maptilerKey),
@@ -216,6 +242,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         jvMode: jvMode.value as Settings['jvMode'],
         jvSize: jvSize.value as Settings['jvSize'],
         closeUp: closeUp.checked,
+        appMode: appMode.value as Settings['appMode'],
         voice: voice.checked,
         jvSurround: surround.checked,
         jvMapGround: mapGround.checked,

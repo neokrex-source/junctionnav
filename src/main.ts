@@ -47,7 +47,8 @@ import { driveQuery, KL_DRIVES, type TestDrive } from './sim/drives';
 import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
-import { NATIVE } from './platform';
+import { BUILT_IN, NATIVE } from './platform';
+import type { AppMode, ModeHooks } from './native/appMode';
 
 /** Maneuvers the map zooms in on as they come up (plus every detected split: divider, ramp, exit, entrance). */
 const CLOSE_UP_AT = new Set<ManeuverType>(['turn', 'fork', 'off ramp', 'on ramp', 'merge', 'end of road', 'roundabout', 'rotary', 'roundabout turn', 'exit roundabout', 'exit rotary']);
@@ -420,6 +421,12 @@ class App {
       else if (tripLink) void this.openTripLink(tripLink);
     });
     (window as unknown as { __app: App }).__app = this;
+    // The Android app: which copy is running (for the emulator check), and website mode's update.
+    (window as unknown as { __appCopy: string }).__appCopy = NATIVE ? (BUILT_IN ? 'built-in' : 'web') : 'browser';
+    if (NATIVE)
+      void import('./native/appMode')
+        .then((m) => m.startAppMode(this.settings.appMode, this.modeHooks()))
+        .catch((err) => console.info('[app] app version check skipped:', (err as Error).message));
   }
 
   /* ================================================================ top bar */
@@ -1414,6 +1421,26 @@ class App {
     e.app.append(e.guide, e.foot, e.recenter, e.sim);
   }
 
+  /* ================================================================ Android app version */
+
+  private modeHooks(): ModeHooks {
+    return { idle: () => this.view !== 'nav', notify: (t) => toast(t, 4500) };
+  }
+
+  /** Switches the Android app between its built-in copy and the latest website build. */
+  async setAppMode(mode: AppMode) {
+    if (this.settings.appMode !== mode) {
+      this.settings = { ...this.settings, appMode: mode };
+      saveSettings(this.settings);
+    }
+    try {
+      const m = await import('./native/appMode');
+      await m.switchAppMode(mode, this.modeHooks());
+    } catch (err) {
+      toast(`${(err as Error).message} The built-in version keeps running for now; the app tries again each time it starts.`, 7000);
+    }
+  }
+
   /**
    * The Android back button: closes what is on top, one thing at a time. With nothing open it
    * sends the app to the background while navigating (guidance keeps going), else it exits.
@@ -1798,6 +1825,8 @@ class App {
 
   private endNav() {
     this.map.setPulsing(false);
+    // Website mode: a newer build that arrived during the drive opens now.
+    if (NATIVE) void import('./native/appMode').then((m) => m.applyPending(this.modeHooks()));
     const run = this.testRun;
     this.stopTest();
     if (run) window.setTimeout(() => showTestResult(run, () => void this.runTestDrive(run.drive)), 400);
@@ -2227,6 +2256,7 @@ class App {
     this.map.setUnits(next.units);
     this.applyLang();
     this.paintMute();
+    if (NATIVE && prev.appMode !== next.appMode) void this.setAppMode(next.appMode);
     if (prev.jvSize !== next.jvSize) {
       this.layoutJv();
       this.refollow();
