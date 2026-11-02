@@ -1,4 +1,5 @@
 /** Location sources: real GPS and a route simulator for testing. Plus voice and wake lock helpers. */
+import { NATIVE } from '../platform';
 import { bearing, destination, haversine, type LngLat } from '../geo/geo';
 import type { Route } from '../routing/types';
 import type { Fix } from './engine';
@@ -165,6 +166,15 @@ export class Simulator implements LocationSource {
   }
 }
 
+/**
+ * Android's own text to speech, in the Android app (its WebView has no speech synthesis).
+ * The module is kept, not the plugin: a Capacitor plugin answers every property, `then` too, so
+ * a promise resolved with one would try to call a native "then" method.
+ */
+type TtsModule = typeof import('@capacitor-community/text-to-speech');
+let nativeTts: Promise<TtsModule> | null = null;
+const ttsModule = () => (nativeTts ??= import('@capacitor-community/text-to-speech'));
+
 export class Voice {
   enabled = true;
   private unlocked = false;
@@ -204,6 +214,10 @@ export class Voice {
     } catch {
       /* no audio */
     }
+    if (NATIVE) {
+      void ttsModule().catch(() => {});
+      return;
+    }
     if (this.unlocked || !('speechSynthesis' in window)) return;
     const u = new SpeechSynthesisUtterance('');
     u.volume = 0;
@@ -213,7 +227,15 @@ export class Voice {
 
   /** Urgent prompts cut off whatever is playing; others wait their turn. */
   speak(text: string, lang: string, urgent = true) {
-    if (!this.enabled || !('speechSynthesis' in window)) return;
+    if (!this.enabled) return;
+    if (NATIVE) {
+      // Flush (0) cuts off what is playing, Add (1) queues.
+      void ttsModule()
+        .then((m) => m.TextToSpeech.speak({ text, lang, rate: 1.0, queueStrategy: urgent ? 0 : 1 }))
+        .catch((e) => console.warn('[voice]', e));
+      return;
+    }
+    if (!('speechSynthesis' in window)) return;
     const synth = window.speechSynthesis;
     if (urgent) synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -223,11 +245,29 @@ export class Voice {
     u.rate = 1.02;
     synth.speak(u);
   }
+
+  /** Stops speaking at once (voice turned off, navigation ended). */
+  stop() {
+    if (NATIVE) {
+      if (nativeTts) void nativeTts.then((m) => m.TextToSpeech.stop()).catch(() => {});
+      return;
+    }
+    window.speechSynthesis?.cancel();
+  }
 }
+
+const keepAwake = () => import('@capacitor-community/keep-awake');
 
 export class ScreenWake {
   private lock: { release(): Promise<void> } | null = null;
   async on() {
+    if (NATIVE) {
+      // The Android WebView has no Screen Wake Lock; the plugin keeps the screen on instead.
+      await keepAwake()
+        .then((m) => m.KeepAwake.keepAwake())
+        .catch(() => {});
+      return;
+    }
     try {
       const wl = (navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
       if (wl) this.lock = await wl.request('screen');
@@ -236,6 +276,12 @@ export class ScreenWake {
     }
   }
   async off() {
+    if (NATIVE) {
+      await keepAwake()
+        .then((m) => m.KeepAwake.allowSleep())
+        .catch(() => {});
+      return;
+    }
     try {
       await this.lock?.release();
     } catch {

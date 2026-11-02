@@ -36,6 +36,8 @@ jobs:
           # Optional: set these as repository variables (Settings → Secrets and variables → Actions → Variables).
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          # The Android installer published by the Android app workflow, linked from Settings.
+          VITE_APK_URL: https://github.com/${{ github.repository }}/releases/download/android/JunctionNav.apk
           VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
 
       # ---- offline maps: the newest pack in the cache

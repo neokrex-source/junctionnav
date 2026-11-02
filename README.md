@@ -30,6 +30,23 @@ GPS needs HTTPS. Two options:
 1. `npm run dev:https` serves on your LAN with a self-signed certificate. Open `https://<your-pc-ip>:5173` on the phone and accept the warning.
 2. `npm run build` and upload `dist/` to any static host (Cloudflare Pages, Netlify, Vercel, GitHub Pages). It installs as a home-screen app (PWA manifest included) and asks for a screen wake lock while navigating.
 
+### Android app
+
+**Install:** on the phone, open [JunctionNav.apk](https://github.com/neokrex-source/junctionnav/releases/download/android/JunctionNav.apk) (also linked from the website's Settings), tap the downloaded file, allow installs from your browser when Android asks, and tap **Install**. It needs Android 7 or newer with an up to date Android System WebView. New versions install over the old one and keep the account, saved places and offline maps.
+
+It is this same web app packed with [Capacitor](https://capacitorjs.com), so every file is inside the installer and it opens with no internet from the very first start. Inside the app:
+
+- **Voice** uses Android's own text to speech (`@capacitor-community/text-to-speech`), since the Android WebView has no speech synthesis. Install a Malay or Japanese voice in Android's settings for those languages.
+- **The screen stays on** while navigating (`@capacitor-community/keep-awake`), as the Wake Lock API does in the browser.
+- **GPS** asks for location permission the first time, like the browser does.
+- **Offline maps** download from the website (`VITE_PACK_URL` in `.env.android`) into the app's own storage, which Android never clears to make room.
+- **The back button** closes Settings, sheets and the junction preview first; while navigating it sends the app to the background instead of closing it.
+- **Status bar** icons follow the theme: light over the purple banner and at night, dark over the day map.
+
+**Build:** `.github/workflows/android.yml` runs on every push that touches the app: `npm run build:android` (the web app in mode `android`, without the service worker, then `cap sync`), Gradle `assembleRelease`, and publishes `JunctionNav.apk` on the `android` release, with the run number as the version. It then installs the debug build on an Android emulator, drives it with Playwright (sign up, offline storage, voice, keeping awake, GPS, the demo drive's 3D junction view, the back button) and pushes screenshots and `report.json` to the `android-check` branch. Locally, with Android Studio or the SDK installed: `npm run build:android`, then `cd android && ./gradlew assembleDebug` (or open `android/` in Android Studio).
+
+**Signing:** set the repository secrets `ANDROID_KEYSTORE_BASE64` (a base64 keystore), `ANDROID_KEYSTORE_PASSWORD` and optionally `ANDROID_KEY_ALIAS` (default `junctionnav`) to sign with your own key. Without them, the first build makes a key and keeps it in the Actions cache (`android-signing-v1`), so later builds sign with the same key and install as updates; the weekly run keeps it from expiring. Switching keys later means uninstalling the app once.
+
 ### Splash screen and accounts
 
 The app opens on a splash screen (drawn by `index.html` itself, so it shows before the code has loaded), checks for a saved session, then shows either the app or the sign-in screen. The map loads behind it in the meantime. Demo drives and trip links start once someone is signed in.
@@ -268,6 +285,9 @@ src/
   demo/                   synthetic OSM + OSRM data and offline providers for the demo and tests
   lab/lab.ts              Junction View Lab page
 scripts/offline/          offline pack builder (run by the Pages workflow)
+scripts/android/          emulator check for the Android app (run by the Android workflow)
+android/                  the Android app's native project (Capacitor; web assets are synced in at build)
+src/platform.ts           browser or Android app, and the addresses that differ between them
 scripts/sw-plugin.ts      writes the service worker that keeps the app shell for offline use
 server/osrm/              Docker setup for your own OSRM
 tests/                    vitest suites

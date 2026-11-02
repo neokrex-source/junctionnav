@@ -1,6 +1,7 @@
 /** The "Offline maps" section of Settings: download with progress, pause, resume, update, keep and delete. */
 import type { PackManifest } from '../offline/graphLayout';
 import type { InstalledPack, OfflineStore, PackState } from '../offline/store';
+import { NATIVE } from '../platform';
 import { h } from './dom';
 
 export function formatBytes(n: number): string {
@@ -69,7 +70,8 @@ export function offlinePanel(store: OfflineStore, use: HTMLSelectElement): { el:
     if (keepEl.hidden) return;
     keepEl.dataset.kept = String(!!kept);
     if (kept) {
-      keepEl.append(h('span', { class: 'off-keep-dot', 'aria-hidden': 'true' }), h('span', {}, "Kept on this device: the browser won't clear these maps to free up space."));
+      const why = NATIVE ? "they're stored in the app, so Android won't clear them to free up space." : "the browser won't clear these maps to free up space.";
+      keepEl.append(h('span', { class: 'off-keep-dot', 'aria-hidden': 'true' }), h('span', {}, `Kept on this device: ${why}`));
       return;
     }
     const text = keepAsked
@@ -142,7 +144,9 @@ export function offlinePanel(store: OfflineStore, use: HTMLSelectElement): { el:
     checkKept();
     paintDelete(s.status === 'unsupported' ? null : inst);
     if (s.status === 'unsupported') {
-      status.textContent = 'This browser cannot keep offline maps. Use a recent Chrome, Edge or Samsung Internet on Android, or Chrome or Edge on a computer.';
+      status.textContent = NATIVE
+        ? "This phone's Android System WebView is too old to keep offline maps. Update it from the Play Store, then open Settings again."
+        : 'This browser cannot keep offline maps. Use a recent Chrome, Edge or Samsung Internet on Android, or Chrome or Edge on a computer.';
       return;
     }
     if (s.status === 'downloading' || s.status === 'paused' || s.status === 'error') {

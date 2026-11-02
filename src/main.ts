@@ -47,6 +47,7 @@ import { driveQuery, KL_DRIVES, type TestDrive } from './sim/drives';
 import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
+import { NATIVE } from './platform';
 
 const KL: LngLat = [101.6869, 3.139];
 const MAX_STOPS = 3;
@@ -552,6 +553,7 @@ class App {
     e.sim.hidden = !(nav && this.sim);
     e.recenter.hidden = !nav;
     e.app.dataset.view = v;
+    this.syncSystemBars();
     if (!nav) {
       this.panel.hide();
       this.navOverlay = null;
@@ -1338,7 +1340,7 @@ class App {
       this.settings.voice = !this.settings.voice;
       saveSettings(this.settings);
       this.paintMute();
-      if (!this.settings.voice) window.speechSynthesis?.cancel();
+      if (!this.settings.voice) this.voice.stop();
     });
     this.paintMute();
     e.foot.append(h('div', { class: 'eta card' }, h('div', { style: 'min-width:0' }, e.etaMain, e.etaSub), h('div', { class: 'eta-btns' }, find, e.mute, overview, end)), e.speed);
@@ -1405,6 +1407,28 @@ class App {
       this.testCard.panel,
     );
     e.app.append(e.guide, e.foot, e.recenter, e.sim);
+  }
+
+  /**
+   * The Android back button: closes what is on top, one thing at a time. With nothing open it
+   * sends the app to the background while navigating (guidance keeps going), else it exits.
+   */
+  handleBack(): 'handled' | 'minimize' | 'exit' {
+    const dlg = document.querySelector<HTMLDialogElement>('dialog[open]');
+    if (dlg) {
+      dlg.close('cancel');
+      return 'handled';
+    }
+    if (this.preview?.isOpen) {
+      this.preview.close();
+      return 'handled';
+    }
+    const close = this.el.sheet.hidden ? null : this.el.sheet.querySelector<HTMLButtonElement>('.sheet-head button');
+    if (close) {
+      close.click();
+      return 'handled';
+    }
+    return this.view === 'nav' ? 'minimize' : 'exit';
   }
 
   private toggleNavOverlay(o: NavOverlay) {
@@ -1674,6 +1698,23 @@ class App {
     // The browser bar matches the instrument panel.
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isNight(this.settings) ? '#1a0d2e' : '#7c3aed');
     this.themeMutating = false;
+    this.syncSystemBars();
+  }
+
+  /**
+   * The Android app's status and navigation bars: light icons over the purple banner and at night,
+   * dark ones over the bright day map and the white bottom cards.
+   */
+  private syncSystemBars() {
+    if (!NATIVE) return;
+    const night = isNight(this.settings);
+    const lightTop = night || this.view === 'nav';
+    void import('@capacitor/core')
+      .then(async ({ SystemBars, SystemBarsStyle, SystemBarType }) => {
+        await SystemBars.setStyle({ style: lightTop ? SystemBarsStyle.Dark : SystemBarsStyle.Light, bar: SystemBarType.StatusBar });
+        await SystemBars.setStyle({ style: night ? SystemBarsStyle.Dark : SystemBarsStyle.Light, bar: SystemBarType.NavigationBar });
+      })
+      .catch(() => {});
   }
 
   /* ================================================================ navigation */
@@ -1759,7 +1800,7 @@ class App {
     this.tunnels.stop();
     this.tunnelCard.hide();
     this.wake.off();
-    window.speechSynthesis?.cancel();
+    this.voice.stop();
     this.engine.route = null;
     this.panel.hide();
     this.activeJ = null;
@@ -2129,8 +2170,18 @@ const app = new App();
 app.init();
 void app.boot();
 
+// The Android app: the back button closes things inside the app before leaving it.
+if (NATIVE)
+  void import('@capacitor/app').then(({ App }) =>
+    App.addListener('backButton', () => {
+      const r = app.handleBack();
+      if (r === 'minimize') void App.minimizeApp();
+      else if (r === 'exit') void App.exitApp();
+    }),
+  );
+
 // Keep the app itself on the device so it opens without internet (the map pack is stored separately).
-if (import.meta.env.PROD && !ARTIFACT && 'serviceWorker' in navigator) {
+if (import.meta.env.PROD && !ARTIFACT && !NATIVE && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register(new URL('sw.js', document.baseURI).href).catch((e) => console.warn('[sw]', e));
   });

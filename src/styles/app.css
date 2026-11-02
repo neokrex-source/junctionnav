@@ -1297,6 +1297,7 @@ button { cursor: pointer; }
 .off-danger .off-delete:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .off-danger-size { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .settings select:disabled { opacity: 0.55; }
+.apk-link { display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; color: var(--ink); font-weight: 700; padding: 11px 14px; }
 
 /* map loading problems */
 .map-notice {

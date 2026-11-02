@@ -1,0 +1,196 @@
+# Builds the Android app (this web app inside a Capacitor shell, see android/ and the README) and
+# publishes the installer as JunctionNav.apk on the "android" release:
+#   https://github.com/<owner>/<repo>/releases/download/android/JunctionNav.apk
+# Then installs it on an Android emulator, drives it with Playwright and pushes screenshots and a
+# report to the android-check branch.
+#
+# Signing: with the repository secrets ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD (and
+# optionally ANDROID_KEY_ALIAS) the APK is signed with that key. Without them, the first build makes
+# a key and keeps it in the Actions cache, so every later build signs with the same key and installs
+# over the previous one. The weekly run keeps the cache entry in use.
+name: Android app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'android/**'
+      - 'capacitor.config.json'
+      - '.env.android'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'scripts/android/**'
+      - '.github/workflows/android.yml'
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.ver.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - id: ver
+        run: |
+          echo "code=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+          echo "name=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+      # ---- signing key
+      - uses: actions/cache/restore@v4
+        with:
+          path: .signing
+          key: android-signing-v1
+      - name: Signing key
+        id: sign
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            mkdir -p .signing-secret
+            echo "$KS_B64" | base64 -d > .signing-secret/release.jks
+            printf '%s' "$KS_PASS" > .signing-secret/password
+            printf '%s' "${KS_ALIAS:-junctionnav}" > .signing-secret/alias
+            echo "dir=.signing-secret" >> "$GITHUB_OUTPUT"
+            echo "Signing with the key from the repository secrets."
+          else
+            if [ ! -f .signing/release.jks ]; then
+              mkdir -p .signing
+              openssl rand -hex 24 > .signing/password
+              printf 'junctionnav' > .signing/alias
+              keytool -genkeypair -keystore .signing/release.jks -storetype PKCS12 -alias junctionnav \
+                -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=JunctionNav" \
+                -storepass "$(cat .signing/password)" -keypass "$(cat .signing/password)" >/dev/null
+              echo "new=1" >> "$GITHUB_OUTPUT"
+              echo "::notice title=Android signing::Made a new signing key; it is kept in the Actions cache (android-signing-v1)."
+            fi
+            echo "dir=.signing" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache/save@v4
+        if: steps.sign.outputs.new == '1'
+        with:
+          path: .signing
+          key: android-signing-v1
+
+      # ---- build
+      - name: Build the web app into the Android project
+        run: npm run build:android
+      - name: Build the APKs
+        working-directory: android
+        run: |
+          KEYDIR="$GITHUB_WORKSPACE/${{ steps.sign.outputs.dir }}"
+          export ANDROID_KEYSTORE_FILE="$KEYDIR/release.jks"
+          export ANDROID_KEYSTORE_PASSWORD="$(cat "$KEYDIR/password")"
+          export ANDROID_KEY_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+          export ANDROID_KEY_ALIAS="$(cat "$KEYDIR/alias")"
+          ./gradlew --no-daemon --stacktrace assembleRelease assembleDebug \
+            -PversionCode=${{ steps.ver.outputs.code }} -PversionName=${{ steps.ver.outputs.name }}
+          mkdir -p ../apk
+          cp app/build/outputs/apk/release/app-release.apk ../apk/JunctionNav.apk
+          cp app/build/outputs/apk/debug/app-debug.apk ../apk/JunctionNav-debug.apk
+          ls -la ../apk
+      - name: Check the installer
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs apk/JunctionNav.apk | grep -E "Signer #1 certificate (DN|SHA-256)"
+          "$BT/aapt2" dump badging apk/JunctionNav.apk | grep -E "^(package|sdkVersion|targetSdkVersion|application-label):"
+          SIZE=$(du -m apk/JunctionNav.apk | cut -f1)
+          echo "::notice title=Android app::JunctionNav ${{ steps.ver.outputs.name }} built, ${SIZE} MB"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: apk/
+          retention-days: 14
+
+      # ---- publish
+      - name: Publish on the android release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.name }}
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/android/JunctionNav.apk"
+          cat > notes.md <<EOF
+          **JunctionNav ${VERSION}** for Android 7 or newer, built from ${GITHUB_SHA::7} on $(date -u +'%d %b %Y').
+
+          **Install:** open [JunctionNav.apk](${URL}) on your phone, then tap the downloaded file. Android asks once to allow installs from your browser or file manager; allow it and tap **Install**. Later versions install over this one and keep your account, places and offline maps.
+
+          The whole app is inside the installer, so it opens without internet from the first start. Offline maps for Peninsular Malaysia download from Settings → Offline maps. Needs an up to date Android System WebView (Play Store).
+          EOF
+          git tag -f android "$GITHUB_SHA"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/tags/android
+          if gh release view android >/dev/null 2>&1; then
+            gh release edit android --title "JunctionNav for Android ${VERSION}" --notes-file notes.md --latest
+          else
+            gh release create android --title "JunctionNav for Android ${VERSION}" --notes-file notes.md --latest --verify-tag
+          fi
+          gh release upload android apk/JunctionNav.apk --clobber
+          echo "::notice title=Android installer::${URL}"
+
+  check:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: apk
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Playwright for driving the app's WebView
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw"
+          cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null && npm i playwright@1.64.1 >/dev/null
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install and drive the app on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: node scripts/android/smoke.cjs apk/JunctionNav-debug.apk android-check "${{ needs.apk.outputs.version }}"
+      - name: Push the screenshots
+        if: always()
+        run: |
+          [ -d android-check ] || exit 0
+          cd android-check
+          git init -q -b android-check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Android check from ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" android-check

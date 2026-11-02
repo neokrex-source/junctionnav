@@ -8,6 +8,7 @@
  * means a resumed or interrupted download never rewrites what is already stored.
  */
 import { safeStorage } from '../auth/types';
+import { NATIVE, PACK_URL } from '../platform';
 import type { PackManifest } from './graphLayout';
 
 export type PackState =
@@ -45,7 +46,7 @@ export class OfflineStore {
   private assetsIndex: Record<string, [number, number]> | null = null;
   private assetsFile: File | null = null;
 
-  constructor(public manifestUrl = new URL('offline/manifest.json', document.baseURI).href) {
+  constructor(public manifestUrl = PACK_URL ?? new URL('offline/manifest.json', document.baseURI).href) {
     const fs = (navigator as Navigator & { storage?: StorageManager }).storage;
     const writable = typeof FileSystemFileHandle !== 'undefined' && 'createWritable' in FileSystemFileHandle.prototype;
     if (!fs?.getDirectory || !writable) this.state = { status: 'unsupported' };
@@ -296,6 +297,8 @@ export class OfflineStore {
 
   /** Whether the browser has promised not to clear the pack when space runs low (null: it cannot say). */
   async kept(): Promise<boolean | null> {
+    // In the Android app the maps sit in the app's own data, which Android never clears to make room.
+    if (NATIVE) return true;
     try {
       const s = navigator.storage;
       return s?.persisted ? await s.persisted() : null;
@@ -310,6 +313,7 @@ export class OfflineStore {
    * Firefox asks the user instead, so `quiet` (the check at start-up) leaves it to a tap there.
    */
   async keep(quiet = false): Promise<boolean | null> {
+    if (NATIVE) return true;
     try {
       const s = navigator.storage;
       if (!s?.persist) return null;

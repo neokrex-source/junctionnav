@@ -1,0 +1,20 @@
+{
+  "appId": "io.github.neokrexsource.junctionnav",
+  "appName": "JunctionNav",
+  "webDir": "dist-android",
+  "android": {
+    "backgroundColor": "#1a0d2e",
+    "minWebViewVersion": 111,
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "errorPath": "webview.html"
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}

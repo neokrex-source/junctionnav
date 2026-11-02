@@ -2,6 +2,7 @@ import { SIGN_THEMES } from '../junction/signs';
 import { STYLES } from '../map/styles';
 import type { OfflineStore } from '../offline/store';
 import { DEFAULTS, type Settings } from '../state/settings';
+import { APK_URL } from '../platform';
 import { h } from './dom';
 import { offlinePanel } from './offlinePanel';
 
@@ -84,6 +85,21 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['always', 'Always use them (saves mobile data)'],
     ]);
     const pack = opts.pack ? offlinePanel(opts.pack, offlineUse) : null;
+    // On the website: the same app as an Android app, built by .github/workflows/android.yml.
+    const androidApp =
+      APK_URL && !opts.preview
+        ? h(
+            'div',
+            { class: 'grp' },
+            h('label', {}, 'Android app'),
+            h('a', { class: 'btn btn-ghost apk-link', href: APK_URL, rel: 'noopener' }, 'Download the Android installer (APK)'),
+            h(
+              'div',
+              { class: 'hint' },
+              'The same app installed on your phone: it opens without internet from the first start, speaks with Android’s own voices and keeps the screen on while you drive. Open the downloaded file and allow your browser to install apps when Android asks.',
+            ),
+          )
+        : null;
     const routerUrl = h('input', { id: 'routerUrl', type: 'url', value: current.routerUrl }) as HTMLInputElement;
     const overpassUrls = h('input', { id: 'overpassUrls', type: 'text', value: current.overpassUrls.replace(/\n/g, ', ') }) as HTMLInputElement;
     const photonUrl = h('input', { id: 'photonUrl', type: 'url', value: current.photonUrl }) as HTMLInputElement;
@@ -153,6 +169,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         h('div', { class: 'hint' }, 'Shows the tunnel name and length before you reach it, then the distance to the exit. Guidance keeps going on an estimated position when GPS drops out inside.'),
       ),
       pack?.el,
+      androidApp,
       h(
         'div',
         { class: 'grp' },

@@ -4,3 +4,4 @@ dist-lab
 .env
 server/osrm/data
 dist-artifact
+dist-android
