@@ -362,6 +362,7 @@ class App {
     const fallback = () => (this.offlineMapReady ? offlineStyle(isNight(this.settings), this.settings.lang) : fallbackStyle(isNight(this.settings)));
     this.map.fallback = fallback;
     this.map.onFallback = () => this.zoom?.setStyle(fallback());
+    this.map.onRecover = () => this.zoom?.setStyle(this.demo || ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : this.baseStyle());
     this.map.onLongPress((p) => this.pickOnMap(p));
     this.map.onUserPan(() => this.paintRecenter());
     this.map.onScaleShown = () => this.paintRecenter();

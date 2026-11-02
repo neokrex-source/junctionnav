@@ -232,11 +232,12 @@ export class MapView {
       }
     });
     this.map.on('error', (e) => {
-      const ev = e as { error?: Error; sourceId?: string; tile?: unknown };
+      const ev = e as { error?: Error & { url?: string }; sourceId?: string; tile?: unknown };
       const msg = String(ev.error?.message ?? '');
       this.lastError = msg;
       console.warn('[map]', msg);
-      if (ev.sourceId || ev.tile) {
+      // Tiles, and a source's tile list (TileJSON) that failed to download.
+      if (ev.sourceId || ev.tile || ev.error?.url) {
         this.tileErrors++;
         return;
       }
@@ -337,14 +338,68 @@ export class MapView {
     if (!keepFailed) {
       this.styleFailed = false;
       this.notice.hidden = true;
+      this.retries = 0;
+      this.stopRecovery();
     }
     this.currentStyle = style;
     this.map.setStyle(style, { diff: false });
   }
 
+  /* ------------------------------------------------------------ getting the usual map back */
+
+  /** Network retries of the usual map before switching to the fallback (no signal at start-up, a dropped request). */
+  private retries = 0;
+  /** The usual map while the fallback is up, to switch back to once its server answers again. */
+  private usualStyle: string | StyleSpecification | null = null;
+  private recoverTimer = 0;
+  private onOnline = () => void this.probeUsual();
+  /** Called when the usual map is back after a fallback (the junction zoom map follows it). */
+  onRecover: (() => void) | null = null;
+
+  private stopRecovery() {
+    clearInterval(this.recoverTimer);
+    this.recoverTimer = 0;
+    window.removeEventListener('online', this.onOnline);
+    this.usualStyle = null;
+  }
+
+  /** While on the fallback: look at the usual map's server every 45 s and when the connection returns. */
+  private watchRecovery(usual: string | StyleSpecification) {
+    this.stopRecovery();
+    this.usualStyle = usual;
+    this.recoverTimer = window.setInterval(() => void this.probeUsual(), 45_000);
+    window.addEventListener('online', this.onOnline);
+  }
+
+  private async probeUsual() {
+    const usual = this.usualStyle;
+    if (!usual || !this.styleFailed || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+    let url = '';
+    if (typeof usual === 'string') url = usual;
+    else
+      for (const src of Object.values(usual.sources ?? {})) {
+        if ('url' in src && src.url) url = src.url;
+        else if ('tiles' in src && src.tiles?.[0]) url = src.tiles[0].replace('{z}', '0').replace('{x}', '0').replace('{y}', '0');
+        if (url) break;
+      }
+    if (!/^https?:/.test(url)) return;
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok || this.usualStyle !== usual) return;
+    } catch {
+      return;
+    }
+    console.info('[map] the usual map answers again; switching back');
+    this.setStyle(usual);
+    this.onRecover?.();
+  }
+
   /** A style that loads from the network (as opposed to the demo style or the offline maps). */
   private isRemote(): boolean {
-    const s = this.currentStyle;
+    return this.isRemoteStyle(this.currentStyle);
+  }
+
+  private isRemoteStyle(s: string | StyleSpecification): boolean {
     const local = (u: string) => /^(pmtiles|offline):\/\//.test(u);
     return (
       typeof s === 'string' ||
@@ -377,12 +432,26 @@ export class MapView {
 
   private fail(reason: string) {
     const onFallback = this.currentStyle === this.fallback();
+    // A network hiccup (no signal yet when the app opens, a dropped request): load the usual map
+    // again, twice, before giving up on it.
+    if (!onFallback && !this.styleFailed && this.retries < 2 && /Failed to fetch|NetworkError|Load failed|AJAXError|no map tiles/i.test(reason)) {
+      this.retries++;
+      const style = this.currentStyle;
+      console.warn(`[map] the map did not load (${reason}); trying again (${this.retries} of 2)`);
+      window.setTimeout(() => {
+        if (this.currentStyle !== style || this.styleFailed) return;
+        this.map.setStyle(style, { diff: false });
+      }, this.retries === 1 ? 3000 : 8000);
+      return;
+    }
     if (!onFallback && !this.styleFailed) {
       this.styleFailed = true;
+      const usual = this.currentStyle;
       console.warn('[map] map style failed, using the fallback map', reason);
-      this.showNotice('info', 'The usual map could not load, so a simpler map is shown. You can pick a map style in Settings.');
+      this.showNotice('info', 'The usual map could not load, so a simpler map is shown until it answers again. You can pick a map style in Settings.');
       this.setStyle(this.fallback(), true);
       this.onFallback?.();
+      if (this.isRemoteStyle(usual)) this.watchRecovery(usual);
       return;
     }
     this.showNotice('error', 'The map cannot load right now. Check your internet connection, then try again.', () => {
