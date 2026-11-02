@@ -55,6 +55,64 @@ export function autoSpan(speed: number, distToNext: number, wide = false): numbe
   return clampSpan(span);
 }
 
+/** The scale while passing a split: divider, ramp, exit, entrance, junction or turn. */
+export const CLOSE_SPAN = 20;
+
+/**
+ * How far the map is zoomed into a split, from 0 (the normal scale) to 1 (CLOSE_SPAN). `d` is the
+ * distance to the split along the route, negative once past it. The map starts closing in about
+ * ten seconds out, is all the way in for the last three seconds and the first 40 m past the split
+ * (where the roads part), and is back to normal 140 m past it.
+ */
+export function closeWeight(d: number, speed: number): number {
+  // All the way in for the last 3 seconds or so: at 20 m the map shows about 70 to 80 m of road
+  // ahead below the junction view, so the split is in sight. Easing in over the 7 seconds before.
+  const hold = Math.min(90, Math.max(50, speed * 2.8));
+  const from = hold + Math.min(220, Math.max(100, speed * 7));
+  const after = 40;
+  const out = 140;
+  const ease = (t: number) => t * t * (3 - 2 * t);
+  if (d > from || d < -out) return 0;
+  if (d > hold) return ease((from - d) / (from - hold));
+  if (d >= -after) return 1;
+  return ease((out + d) / (out - after));
+}
+
+/** The scale between the normal one and CLOSE_SPAN for a close-up weight, eased in steps of zoom. */
+export function closeSpan(base: number, w: number): number {
+  if (w <= 0) return base;
+  const k = Math.min(1, w);
+  return Math.exp(Math.log(base) + (Math.log(Math.min(base, CLOSE_SPAN)) - Math.log(base)) * k);
+}
+
+/** Below this scale the route line and the turn arrow are drawn thin, so the roads show beside them. */
+export const THIN_BELOW = 45;
+
+/** Line widths by zoom ([zoom, px, ...]) of the route layers, and the factor each gets when thin. */
+const ROUTE_WIDTHS: Record<string, { stops: number[]; thin: number }> = {
+  'route-glow': { stops: [10, 12, 16, 30, 19, 54], thin: 0.32 },
+  'route-casing': { stops: [10, 6, 16, 14, 19, 26], thin: 0.42 },
+  'route-line': { stops: [10, 4, 16, 10, 19, 20], thin: 0.38 },
+  'route-tunnel': { stops: [10, 1.5, 16, 4, 19, 8], thin: 0.5 },
+  'route-pulse-glow': { stops: [10, 9, 16, 22, 19, 40], thin: 0.35 },
+  'route-pulse': { stops: [10, 2, 16, 4.5, 19, 9], thin: 0.45 },
+  'maneuver-casing': { stops: [14, 6, 18, 18], thin: 0.55 },
+  'maneuver-line': { stops: [14, 3, 18, 11], thin: 0.5 },
+};
+
+/** A zoom-interpolated line width from [zoom, px, ...] stops, times k. */
+export function widthExpr(stops: number[], k = 1): maplibregl.ExpressionSpecification {
+  const e: unknown[] = ['interpolate', ['linear'], ['zoom']];
+  for (let i = 0; i < stops.length; i += 2) e.push(stops[i], Math.round(stops[i + 1] * k * 100) / 100);
+  return e as maplibregl.ExpressionSpecification;
+}
+
+const routeWidth = (id: string, thin = false) => widthExpr(ROUTE_WIDTHS[id].stops, thin ? ROUTE_WIDTHS[id].thin : 1);
+
+/** Other roads at a split: thin lines like the close-up route line, with an outline. */
+const FORK_WIDTH = [12, 2, 16, 4, 19, 7];
+const FORK_CASING = [12, 3.5, 16, 7, 19, 11];
+
 /** Zoom at which `widthPx` screen pixels cover `span` metres at latitude `lat`. */
 export function zoomForSpan(span: number, lat: number, widthPx: number): number {
   return Math.log2((40075016.686 * Math.cos((lat * Math.PI) / 180) * widthPx) / (512 * span));
@@ -72,8 +130,8 @@ export function spanAtZoom(zoom: number, lat: number, widthPx: number): number {
 export function pulseFeatures(line: { length: number; slice(a: number, b: number): LngLat[] }, s: number, scale: number, t: number): Feature<LineString, { a: number }>[] {
   const left = line.length - s;
   if (left < 30) return [];
-  const range = Math.min(left, Math.max(600, Math.min(4000, scale * 8)));
-  const len = Math.max(30, Math.min(400, scale * 0.45));
+  const range = Math.min(left, Math.max(160, Math.min(4000, scale * 8)));
+  const len = Math.max(12, Math.min(400, scale * 0.45));
   const speed = range / 2.2;
   const out: Feature<LineString, { a: number }>[] = [];
   for (let k = 0; k < 3; k++) {
@@ -95,6 +153,8 @@ export interface FollowOptions {
   padding: { top: number; bottom: number; left: number; right: number };
   /** Zoom out to show the area around a junction (the junction view shows the close-up). */
   wide?: boolean;
+  /** Close-up on a split ahead, 0 to 1 (closeWeight): zooms the automatic scale in to CLOSE_SPAN. */
+  close?: number;
 }
 
 export class MapView {
@@ -413,8 +473,14 @@ export class MapView {
     const line = this.scaleEl.lastElementChild as HTMLElement;
     const text = this.scaleEl.firstElementChild as HTMLElement;
     line.style.width = `${Math.round(len * SCALE_PX)}px`;
-    if (text.textContent !== label) text.textContent = label;
+    if (text.textContent !== label) {
+      text.textContent = label;
+      this.onScaleShown?.();
+    }
   }
+
+  /** Called when the scale bar's round number changes (the recenter button shows it too). */
+  onScaleShown: (() => void) | null = null;
 
   private beforeId(): string | undefined {
     const layers = this.map.getStyle()?.layers ?? [];
@@ -436,6 +502,58 @@ export class MapView {
     m.setPaintProperty('maneuver-casing', 'line-color', t.routeCasing);
     m.setPaintProperty('route-pulse', 'line-color', t.pulse);
     m.setPaintProperty('route-pulse-glow', 'line-color', t.pulseGlow);
+    m.setPaintProperty('fork-casing', 'line-color', t.forkCasing);
+    m.setPaintProperty('fork-line', 'line-color', this.forkColor());
+    m.setPaintProperty('fork-incoming', 'line-color', this.forkColor());
+  }
+
+  /* ------------------------------------------------------------ close-ups at splits */
+
+  private thin = false;
+
+  /** Thin route line and turn arrow (in a close-up), or the usual widths. */
+  private setThin(on: boolean) {
+    if (on === this.thin) return;
+    this.thin = on;
+    const m = this.map;
+    if (!m.getLayer('route-line')) return;
+    for (const id of Object.keys(ROUTE_WIDTHS)) if (m.getLayer(id)) m.setPaintProperty(id, 'line-width', routeWidth(id, on));
+    if (m.getLayer('maneuver-head')) m.setLayoutProperty('maneuver-head', 'icon-size', this.arrowSize());
+  }
+
+  get isThin(): boolean {
+    return this.thin;
+  }
+
+  private arrowSize(): maplibregl.ExpressionSpecification {
+    const k = this.thin ? 0.6 : 1;
+    return ['interpolate', ['linear'], ['zoom'], 14, 0.45 * k, 18, 1.4 * k];
+  }
+
+  private forks: { role: 'branch' | 'incoming'; pts: LngLat[] }[] = [];
+
+  private forkColor(): maplibregl.ExpressionSpecification {
+    const [a, b, c] = this.theme.forks;
+    return ['match', ['get', 'k'], 0, a, 1, b, c];
+  }
+
+  private forksFC(): FeatureCollection {
+    return {
+      type: 'FeatureCollection',
+      features: this.forks
+        .filter((f) => f.pts.length > 1)
+        .map((f, i) => ({ type: 'Feature' as const, properties: { k: i % 3, role: f.role }, geometry: { type: 'LineString' as const, coordinates: f.pts } })),
+    };
+  }
+
+  /**
+   * The other roads at the split coming up (the ones not to take), drawn in orange, cyan and lime
+   * so the purple route stays the only way to go. An empty list clears them.
+   */
+  setForks(lines: { role: 'branch' | 'incoming'; pts: LngLat[] }[]) {
+    if (!lines.length && !this.forks.length) return;
+    this.forks = lines;
+    (this.map.getSource('forks') as GeoJSONSource | undefined)?.setData(this.forksFC());
   }
 
   /* ------------------------------------------------------------ route impulses */
@@ -492,6 +610,41 @@ export class MapView {
       },
       before,
     );
+    // The other roads at the split coming up, in their own colours (under the route line).
+    m.addSource('forks', { type: 'geojson', data: this.forksFC() });
+    m.addLayer(
+      {
+        id: 'fork-casing',
+        type: 'line',
+        source: 'forks',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': this.theme.forkCasing, 'line-width': widthExpr(FORK_CASING), 'line-opacity': 0.9 },
+      },
+      before,
+    );
+    m.addLayer(
+      {
+        id: 'fork-line',
+        type: 'line',
+        source: 'forks',
+        filter: ['==', ['get', 'role'], 'branch'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': this.forkColor(), 'line-width': widthExpr(FORK_WIDTH) },
+      },
+      before,
+    );
+    // Roads joining at a merge: dashed, as traffic coming in rather than a way to go.
+    m.addLayer(
+      {
+        id: 'fork-incoming',
+        type: 'line',
+        source: 'forks',
+        filter: ['==', ['get', 'role'], 'incoming'],
+        layout: { 'line-cap': 'butt', 'line-join': 'round' },
+        paint: { 'line-color': this.forkColor(), 'line-width': widthExpr(FORK_WIDTH), 'line-dasharray': [2, 1.4] },
+      },
+      before,
+    );
     // A soft light around the route at night, like a lit lane on a dark dashboard.
     m.addLayer(
       {
@@ -499,7 +652,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': this.theme.routeGlow, 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 12, 16, 30, 19, 54] },
+        paint: { 'line-color': this.theme.routeGlow, 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin) },
       },
       before,
     );
@@ -509,7 +662,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': this.theme.routeCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 16, 14, 19, 26] },
+        paint: { 'line-color': this.theme.routeCasing, 'line-width': routeWidth('route-casing', this.thin) },
       },
       before,
     );
@@ -520,7 +673,7 @@ export class MapView {
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10, 19, 20],
+          'line-width': routeWidth('route-line', this.thin),
           'line-gradient': this.gradient(),
         },
       },
@@ -536,7 +689,7 @@ export class MapView {
         paint: {
           'line-color': '#ffffff',
           'line-opacity': 0.9,
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.5, 16, 4, 19, 8],
+          'line-width': routeWidth('route-tunnel', this.thin),
           'line-dasharray': [1.4, 1.2],
         },
       },
@@ -553,7 +706,7 @@ export class MapView {
           'line-color': this.theme.pulseGlow,
           'line-opacity': ['*', 0.75, ['get', 'a']],
           'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 9, 16, 22, 19, 40],
+          'line-width': routeWidth('route-pulse-glow', this.thin),
         },
       },
       before,
@@ -567,7 +720,7 @@ export class MapView {
         paint: {
           'line-color': this.theme.pulse,
           'line-opacity': ['get', 'a'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 4.5, 19, 9],
+          'line-width': routeWidth('route-pulse', this.thin),
         },
       },
       before,
@@ -577,14 +730,14 @@ export class MapView {
       type: 'line',
       source: 'maneuver',
       layout: { 'line-cap': 'butt', 'line-join': 'round' },
-      paint: { 'line-color': this.theme.routeCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 18] },
+      paint: { 'line-color': this.theme.routeCasing, 'line-width': routeWidth('maneuver-casing', this.thin) },
     });
     m.addLayer({
       id: 'maneuver-line',
       type: 'line',
       source: 'maneuver',
       layout: { 'line-cap': 'butt', 'line-join': 'round' },
-      paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 3, 18, 11] },
+      paint: { 'line-color': '#ffffff', 'line-width': routeWidth('maneuver-line', this.thin) },
     });
     if (!m.hasImage('arrowhead')) m.addImage('arrowhead', arrowheadImage(), { pixelRatio: 2 });
     m.addLayer({
@@ -599,7 +752,7 @@ export class MapView {
         'icon-pitch-alignment': 'map',
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 14, 0.45, 18, 1.4],
+        'icon-size': this.arrowSize(),
       },
     });
   }
@@ -848,10 +1001,12 @@ export class MapView {
     // Scale as the scale bar's length at the car, eased so the camera breathes in and out smoothly
     // instead of jumping when the next turn changes. The zoom puts the scale a hair under the bar's
     // full length, so the bar shows the round number itself.
-    const target = this.scale === 'auto' ? autoSpan(o.speed, o.distToNext, o.wide) : this.scale;
+    let target = this.scale === 'auto' ? autoSpan(o.speed, o.distToNext, o.wide) : this.scale;
+    if (this.scale === 'auto' && o.close) target = closeSpan(target, o.close);
     const k = Math.min(1, since / 1500);
     this.spanNow = Math.exp(Math.log(this.spanNow) + (Math.log(target) - Math.log(this.spanNow)) * (this.scale === 'auto' ? k : 1));
     const zoom = zoomForSpan(this.spanNow, p[1], SCALE_PX * 0.98);
+    this.setThin(this.spanNow < THIN_BELOW);
     const c = this.map.getCenter();
     const far = Math.abs(c.lng - p[0]) + Math.abs(c.lat - p[1]) > 0.03;
     const opts = { center: p, bearing: heading, pitch: 55, zoom, padding: o.padding };

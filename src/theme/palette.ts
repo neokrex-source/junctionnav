@@ -5,7 +5,8 @@
  *
  *   Day   (light purple): light grey #F2F0F6, white, black #121016, violet #7C3AED
  *   Night (dark purple):  near-black #0B0910, plum #1A0D2E, white, lilac #B77BFF
- *   Both: amber for warnings, rose for danger, green for confirmations.
+ *   Both: amber for warnings, rose for danger, green for confirmations; orange, cyan and lime
+ *   for the other roads at a split, so the one to take stays the only purple line.
  */
 export interface MapPalette {
   land: string;
@@ -47,6 +48,12 @@ export interface Theme {
   /** The impulses that run along the route while navigating: a bright core and its glow. */
   pulse: string;
   pulseGlow: string;
+  /**
+   * The other roads at an upcoming split (the ones not to take), one colour each, all well apart
+   * from the route's purple and from the danger rose; and the outline that lifts them off the map.
+   */
+  forks: [string, string, string];
+  forkCasing: string;
   pin: string;
   map: MapPalette;
 }
@@ -61,6 +68,8 @@ export const DAY: Theme = {
   routeInk: '#ffffff',
   pulse: '#ffffff',
   pulseGlow: '#a78bfa',
+  forks: ['#ea580c', '#0891b2', '#65a30d'],
+  forkCasing: '#ffffff',
   pin: '#f43f5e',
   map: {
     land: '#f4f3f7',
@@ -100,6 +109,8 @@ export const NIGHT: Theme = {
   routeInk: '#0b0910',
   pulse: '#faf5ff',
   pulseGlow: '#d8b4fe',
+  forks: ['#fb923c', '#22d3ee', '#a3e635'],
+  forkCasing: '#0b0910',
   pin: '#fb7185',
   map: {
     land: '#0d0a14',

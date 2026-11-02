@@ -8,12 +8,12 @@ import { hashString, haversine, type LngLat } from './geo/geo';
 import { detectJunctions, type JunctionCandidate } from './junction/detect';
 import { JunctionDataCache, OverpassProvider, type OsmData } from './junction/osmdata';
 import { GroundMapper, type GroundMap, type GroundSource } from './junction/groundMap';
-import { buildScene, type JunctionScene } from './junction/scene';
+import { buildScene, type ForkLine, type JunctionScene } from './junction/scene';
 import { OverpassSurroundProvider, SurroundCache, type SurroundData } from './junction/surroundings';
 import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
 import { ZoomMap } from './junction/zoomMap';
 import { TerrainCache, TerrariumProvider, type TerrainPatch } from './junction/terrain';
-import { MapView, SCALE_STEPS, routeBounds } from './map/mapView';
+import { closeWeight, MapView, SCALE_STEPS, routeBounds, type FollowOptions } from './map/mapView';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
@@ -26,7 +26,7 @@ import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from '
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
 import { arrivalSpeech, describeStep, formatDistance, formatDuration, lanePhrase, LANGS, spokenInstruction, t, tunnelSpeech, type UiKey } from './routing/instructions';
 import { OsrmRouter } from './routing/osrm';
-import type { Avoid, Route, Router } from './routing/types';
+import type { Avoid, ManeuverType, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
 import { attachSearch, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
 import { PlaceStore } from './state/places';
@@ -48,6 +48,9 @@ import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 import { NATIVE } from './platform';
+
+/** Maneuvers the map zooms in on as they come up (plus every detected split: divider, ramp, exit, entrance). */
+const CLOSE_UP_AT = new Set<ManeuverType>(['turn', 'fork', 'off ramp', 'on ramp', 'merge', 'end of road', 'roundabout', 'rotary', 'roundabout turn', 'exit roundabout', 'exit rotary']);
 
 const KL: LngLat = [101.6869, 3.139];
 const MAX_STOPS = 3;
@@ -361,6 +364,7 @@ class App {
     this.map.onFallback = () => this.zoom?.setStyle(fallback());
     this.map.onLongPress((p) => this.pickOnMap(p));
     this.map.onUserPan(() => this.paintRecenter());
+    this.map.onScaleShown = () => this.paintRecenter();
     this.map.onFollowChange(() => {
       // A scale picked by pinch or wheel is kept for next time, like one picked with the button.
       const sc = this.map.followScale;
@@ -1357,7 +1361,7 @@ class App {
         this.map.startFollowing();
       }
       const p = this.engine.progress;
-      if (p) this.map.followNow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+      if (p) this.map.followNow(p.snapped, p.heading, this.followOpts(p));
       this.paintRecenter();
     });
 
@@ -1833,6 +1837,73 @@ class App {
     if (this.sim) this.sim.outages = this.outagesFor(spans);
   }
 
+  /** How the map follows the car: speed, the next turn, the panels, and a close-up at a split. */
+  private followOpts(p: Progress): FollowOptions {
+    return { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible, close: this.closeWeightFor(p) };
+  }
+
+  /** Along-route positions of the splits and turns the map zooms in on, for one route. */
+  private closeFor: { route: Route; junctions: JunctionCandidate[]; s: number[] } | null = null;
+
+  private closeTargets(route: Route): number[] {
+    const js = this.engine.junctions;
+    if (this.closeFor?.route === route && this.closeFor.junctions === js) return this.closeFor.s;
+    const at = new Set<number>(js.map((c) => c.s));
+    for (const st of route.steps) {
+      const bends = !!st.modifier && st.modifier !== 'straight';
+      if (CLOSE_UP_AT.has(st.type) || ((st.type === 'continue' || st.type === 'new name') && bends)) at.add(st.s);
+    }
+    const list = [...at].sort((a, b) => a - b);
+    this.closeFor = { route, junctions: js, s: list };
+    return list;
+  }
+
+  /**
+   * The close-up at dividers, ramps, exits, entrances, junctions and turns: the map zooms in to
+   * 20 m as one comes up and back out once it is behind (0 = normal, 1 = all the way in).
+   */
+  private closeWeightFor(p: Progress): number {
+    const route = this.engine.route;
+    if (!route || !this.settings.closeUp || !p.onRoute || p.arrived) return 0;
+    let w = 0;
+    for (const at of this.closeTargets(route)) {
+      const d = at - p.s;
+      if (d > 600) break;
+      if (d < -200) continue;
+      w = Math.max(w, closeWeight(d, p.speed));
+    }
+    return w;
+  }
+
+  /** The other roads at the split coming up, for the map: per junction, once its OSM detail is in. */
+  private forkKey = '';
+  private forkCache = new Map<string, ForkLine[]>();
+
+  private syncForks(p: Progress) {
+    const route = this.engine.route;
+    const cand = route && this.settings.closeUp && p.onRoute ? this.engine.junctions.find((c) => p.s >= c.s - 600 && p.s <= c.s + 90) : undefined;
+    const osm = cand ? this.osmReady.get(JunctionDataCache.key(cand.location)) ?? null : null;
+    const key = cand ? `${cand.id}|${cand.location[0].toFixed(5)},${cand.location[1].toFixed(5)}|${osm ? 'osm' : '-'}` : '';
+    if (key === this.forkKey) return;
+    this.forkKey = key;
+    if (!route || !cand || !osm) {
+      this.map.setForks([]);
+      return;
+    }
+    let lines = this.forkCache.get(key);
+    if (!lines) {
+      try {
+        lines = buildScene(route, cand, osm, { lang: this.L }).forks ?? [];
+      } catch (err) {
+        console.warn('[junction] no fork lines', err);
+        lines = [];
+      }
+      if (this.forkCache.size > 24) this.forkCache.clear();
+      this.forkCache.set(key, lines);
+    }
+    this.map.setForks(lines);
+  }
+
   private outagesFor(spans: TunnelSpan[]): [number, number][] {
     return spans.filter(isMajor).map((t) => [t.fromS + 15, t.toS - 10]);
   }
@@ -1856,7 +1927,8 @@ class App {
       this.map.setManeuver(route, p.next);
       if (this.navOverlay === 'steps') this.renderSheet();
     }
-    this.map.follow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+    this.map.follow(p.snapped, p.heading, this.followOpts(p));
+    this.syncForks(p);
     this.paintRecenter();
 
     this.driveSimLanes(p);
@@ -2097,7 +2169,7 @@ class App {
     this.refollowFrame = requestAnimationFrame(() => {
       this.refollowFrame = 0;
       const p = this.engine.progress;
-      if (p && this.map.isFollowing) this.map.followNow(p.snapped, p.heading, { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible });
+      if (p && this.map.isFollowing) this.map.followNow(p.snapped, p.heading, this.followOpts(p));
     });
   }
 

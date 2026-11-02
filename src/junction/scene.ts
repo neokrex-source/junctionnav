@@ -144,6 +144,16 @@ export interface JunctionScene {
   profile: VerticalProfile;
   /** The map around the junction, laid on the ground of the 3D view (see groundMap.ts). */
   groundMap?: GroundMap;
+  /**
+   * The other roads at the split, as on the map (OSM centre lines from the split outwards, or
+   * into it for a merge), for drawing them in their own colours on the navigation map.
+   */
+  forks?: ForkLine[];
+}
+
+export interface ForkLine {
+  role: 'branch' | 'incoming';
+  pts: LngLat[];
 }
 
 export interface SceneOptions {
@@ -731,6 +741,9 @@ function fromOsm(
     }
   }
 
+  // The other roads as they lie on the map, before the lanes are lined up for the 3D view.
+  const forks: ForkLine[] = others.map((st) => ({ role: st.role === 'incoming' ? 'incoming' : 'branch', pts: st.pts.map((p) => frame.toLngLat(p[0], p[1])) }));
+
   // Lane alignment at the junction.
   const shared = isMerge ? taken : approach;
   const sharedIdx = isMerge ? 0 : shared.pts.length - 1;
@@ -884,6 +897,7 @@ function fromOsm(
     expressway: approachExpressway,
     ground,
     profile,
+    forks,
   };
 }
 

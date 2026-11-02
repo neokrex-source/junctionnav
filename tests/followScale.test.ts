@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoSpan, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, zoomForSpan } from '../src/map/mapView';
+import { autoSpan, CLOSE_SPAN, closeSpan, closeWeight, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, THIN_BELOW, widthExpr, zoomForSpan } from '../src/map/mapView';
 
 describe('navigation map scale', () => {
   it('is wider at expressway speed and closes in to 100 m at a turn', () => {
@@ -83,5 +83,42 @@ describe('impulses along the route', () => {
     const end = pulseFeatures(line, 4800, 200, 1.1);
     for (const p of end) expect((p.geometry.coordinates[1][0] - 101.7) * 1e5).toBeLessThanOrEqual(5000 + 1e-6);
     expect(pulseFeatures(line, 4990, 200, 1)).toEqual([]);
+  });
+});
+
+describe('close-up at splits', () => {
+  it('zooms in to 20 m as a split comes up, holds past the gore, then eases back out', () => {
+    // Expressway, 25 m/s (90 km/h): in from 245 m out, all in from 70 m (about 3 s) to 40 m past.
+    const v = 25;
+    expect(closeWeight(400, v)).toBe(0);
+    expect(closeWeight(240, v)).toBeGreaterThan(0);
+    expect(closeWeight(120, v)).toBeLessThan(1);
+    expect(closeWeight(70, v)).toBe(1);
+    expect(closeWeight(0, v)).toBe(1);
+    expect(closeWeight(-40, v)).toBe(1);
+    expect(closeWeight(-90, v)).toBeGreaterThan(0);
+    expect(closeWeight(-90, v)).toBeLessThan(1);
+    expect(closeWeight(-150, v)).toBe(0);
+    // Smooth all the way: no jumps between neighbouring metres.
+    for (let d = -160; d < 420; d++) expect(Math.abs(closeWeight(d, v) - closeWeight(d + 1, v))).toBeLessThan(0.03);
+    // In town, 8 m/s: starts later in metres (but a similar number of seconds out).
+    expect(closeWeight(200, 8)).toBe(0);
+    expect(closeWeight(50, 8)).toBe(1);
+  });
+
+  it('turns the weight into a scale between the normal one and 20 m', () => {
+    expect(CLOSE_SPAN).toBe(20);
+    expect(closeSpan(150, 0)).toBe(150);
+    expect(closeSpan(150, 1)).toBeCloseTo(20, 6);
+    // Half way in zoom levels, not in metres.
+    expect(closeSpan(320, 0.5)).toBeCloseTo(80, 6);
+    expect(roundScale(closeSpan(200, 1))).toBe(20);
+    // At 20 m the route is drawn thin; at the normal scales it is not.
+    expect(CLOSE_SPAN).toBeLessThan(THIN_BELOW);
+    expect(SCALE_MIN).toBeGreaterThan(THIN_BELOW);
+  });
+
+  it('scales line widths by zoom', () => {
+    expect(widthExpr([10, 4, 16, 10, 19, 20], 0.5)).toEqual(['interpolate', ['linear'], ['zoom'], 10, 2, 16, 5, 19, 10]);
   });
 });

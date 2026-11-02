@@ -35,6 +35,8 @@ export interface Settings {
   mapScale: 'auto' | number;
   /** Junction view size next to the map: 1:3, 2:3, or full screen while it is up. */
   jvSize: JvSize;
+  /** Zoom the map in to 20 m at dividers, ramps, exits, entrances and junctions, with the other roads in colour. */
+  closeUp: boolean;
 }
 
 const env = import.meta.env;
@@ -67,6 +69,7 @@ export const DEFAULTS: Settings = {
   look: 2,
   mapScale: 'auto',
   jvSize: '1:3',
+  closeUp: true,
 };
 
 const KEY = 'junctionnav.settings.v1';

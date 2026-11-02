@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDemo } from '../src/demo/network';
 import { detectJunctions } from '../src/junction/detect';
 import { buildScene } from '../src/junction/scene';
+import { haversine } from '../src/geo/geo';
 import { normalizeOsrm } from '../src/routing/osrm';
 import { demoTerrain } from '../src/demo/providers';
 import { groundAt } from '../src/junction/scene';
@@ -21,6 +22,23 @@ describe('demo junction scenes', () => {
     expect(sc.source).toBe('osm');
     expect(Math.max(...taken.h)).toBeGreaterThan(5);
     expect(sc.vertical).toBe('up');
+  });
+
+  it('keeps the other roads at the split as map lines, for the navigation map', () => {
+    for (const [j, role] of [[js[0], 'branch'], [js[4], 'branch'], [js[2], 'incoming']] as const) {
+      const sc = buildScene(route, j, demo.osm);
+      expect(sc.forks?.length, j.kind).toBeGreaterThan(0);
+      for (const f of sc.forks!) {
+        expect(f.role).toBe(role);
+        expect(f.pts.length).toBeGreaterThan(5);
+        // From the split outwards (into it for a merge), as long lines in longitude and latitude.
+        const near = role === 'branch' ? f.pts[0] : f.pts[f.pts.length - 1];
+        expect(haversine(near, sc.origin)).toBeLessThan(30);
+        expect(haversine(f.pts[0], f.pts[f.pts.length - 1])).toBeGreaterThan(120);
+      }
+    }
+    // Without OSM detail (schematic view) there is nothing real to draw on the map.
+    expect(buildScene(route, js[0], null).forks).toBeUndefined();
   });
 
   it('builds the exit with the ramp dropping into a tunnel', () => {

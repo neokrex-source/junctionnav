@@ -67,6 +67,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['2:3', '2:3 (two fifths)'],
       ['full', 'Full screen while it is up'],
     ]);
+    const closeUp = h('input', { id: 'closeUp', type: 'checkbox' }) as HTMLInputElement;
+    closeUp.checked = current.closeUp;
     const voice = h('input', { id: 'voice', type: 'checkbox' }) as HTMLInputElement;
     voice.checked = current.voice;
     const laneAlerts = select('laneAlerts', current.laneAlerts, [
@@ -159,6 +161,13 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
       h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)),
       h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)),
+      h(
+        'div',
+        { class: 'grp' },
+        h('label', { for: 'closeUp' }, 'Close-up at splits'),
+        h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at dividers, ramps, exits, entrances and junctions'),
+        h('div', { class: 'hint' }, 'The route line gets thinner so the road shows, and the other roads at the split are drawn in orange, cyan and lime: only the purple line is your way. Works with the automatic map scale.'),
+      ),
       h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts')),
       grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances and junctions. The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.'),
       h(
@@ -206,6 +215,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         units: units.value as Settings['units'],
         jvMode: jvMode.value as Settings['jvMode'],
         jvSize: jvSize.value as Settings['jvSize'],
+        closeUp: closeUp.checked,
         voice: voice.checked,
         jvSurround: surround.checked,
         jvMapGround: mapGround.checked,
