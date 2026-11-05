@@ -228,7 +228,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   await page.evaluate(() => {
     const a = window.__app;
     a.sim.paused = true;
-    a.sim.jumpTo(a.engine.junctions[0].s - 420);
+    a.sim.jumpTo(a.engine.junctions[0].s - 220); // inside the 300 m where the junction view shows
   });
   await sleep(6000);
   const jv = await page.evaluate(() => {
