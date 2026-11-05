@@ -77,6 +77,9 @@ export function routeGradient(length: number, zones: [number, number][], progres
     stop(Math.max(a / L, f), c.zone);
     stop(b / L, c.base);
   }
+  // A step needs at least one stop: with nothing to mark (no junctions, no driven part) the
+  // whole line is one colour, written as a stop that changes nothing.
+  if (e.length < 5) e.push(0.5, c.base);
   return e;
 }
 
@@ -267,7 +270,8 @@ export class MapView {
         return;
       }
       // The style document itself failed (blocked, offline, wrong URL).
-      if (this.isRemote() && !this.map.isStyleLoaded() && /style|404|403|Failed to fetch|NetworkError|Load failed|AJAXError/i.test(msg)) this.fail(msg);
+      // (Not the app's own layer messages, such as "layers.x.paint" or "Cannot style ...".)
+      if (this.isRemote() && !this.map.isStyleLoaded() && !/^layers\.|Cannot style/.test(msg) && /style|404|403|Failed to fetch|NetworkError|Load failed|AJAXError/i.test(msg)) this.fail(msg);
     });
     // Only gestures carry an originalEvent; the follow camera's own moves do not.
     const userMove = (e: { originalEvent?: unknown }) => {

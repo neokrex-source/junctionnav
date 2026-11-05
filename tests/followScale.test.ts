@@ -136,6 +136,12 @@ describe('orange through junctions', () => {
     // The outline has no driven part.
     expect(routeGradient(10000, zones, null, c)).toEqual(['step', ['line-progress'], 'purple', 0.27, 'orange', 0.306, 'purple', 0.67, 'orange', 0.706, 'purple']);
   });
+  it('is always a valid step expression, also with nothing to mark', () => {
+    // MapLibre needs at least one stop: an outline with no junctions is one colour.
+    expect(routeGradient(10000, [], null, c)).toEqual(['step', ['line-progress'], 'purple', 0.5, 'purple']);
+    expect(routeGradient(10000, [[200, 400]], null, c).length).toBeGreaterThanOrEqual(5);
+    expect(routeGradient(10000, [], 0.5, c)).toEqual(['step', ['line-progress'], 'grey', 0.5, 'purple']);
+  });
   it('keeps the stops rising when stretches touch, overlap or run past the end', () => {
     const g = routeGradient(1000, [[0, 360], [300, 700], [900, 1200]], null, c);
     const stops = g.slice(3).filter((_, i) => i % 2 === 0) as number[];
