@@ -192,7 +192,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         { class: 'grp' },
         h('label', { for: 'closeUp' }, 'Close-up at splits'),
         h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at dividers, ramps, exits, entrances and junctions'),
-        h('div', { class: 'hint' }, 'The route line gets thinner so the road shows, and the other roads at the split are drawn in orange, cyan and lime: only the purple line is your way. Works with the automatic map scale.'),
+        h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange (from 300 m before the split, as in the junction view) and the other roads at the split are grey: only the orange line is your way. Works with the automatic map scale.'),
       ),
       h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts')),
       grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances and junctions. The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.'),

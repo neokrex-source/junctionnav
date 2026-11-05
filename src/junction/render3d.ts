@@ -34,7 +34,7 @@ export interface JvPalette {
   fog: string;
 }
 
-/** Light purple day: a lavender sky over cool grey concrete and asphalt, the route in violet. */
+/** Light purple day: a lavender sky over cool grey concrete and asphalt, the route in orange (as on the map near a junction). */
 export const DAY: JvPalette = {
   skyTop: '#8f86ea',
   skyHorizon: '#f0ecff',
@@ -46,7 +46,7 @@ export const DAY: JvPalette = {
   deck: '#6a6575',
   shoulder: '#5d5966',
   marking: '#f8f7fa',
-  arrow: '#7c3aed',
+  arrow: '#ea580c',
   arrowEdge: '#ffffff',
   guardrail: '#d3cfdb',
   concrete: '#cbc6d4',
@@ -59,7 +59,7 @@ export const DAY: JvPalette = {
   fog: '#f0ecff',
 };
 
-/** Dark purple night: near-black with a plum glow on the horizon, the route in glowing lilac. */
+/** Dark purple night: near-black with a plum glow on the horizon, the route in glowing orange. */
 export const NIGHT: JvPalette = {
   skyTop: '#05030a',
   skyHorizon: '#2a1650',
@@ -71,8 +71,8 @@ export const NIGHT: JvPalette = {
   deck: '#2d2539',
   shoulder: '#221c2d',
   marking: '#e6e1ee',
-  arrow: '#b77bff',
-  arrowEdge: '#ead5ff',
+  arrow: '#fb923c',
+  arrowEdge: '#ffedd5',
   guardrail: '#544a66',
   concrete: '#3d3450',
   concreteDark: '#2c253b',

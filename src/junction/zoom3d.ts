@@ -37,8 +37,8 @@ const DAY: Palette = {
   pillar: '#bab3c6',
   trench: '#958ea3',
   shadow: '#000000',
-  route: '#7c3aed',
-  routeEdge: '#3b1680',
+  route: '#ea580c',
+  routeEdge: '#7c2d12',
 };
 const NIGHT: Palette = {
   deck: '#33284a',
@@ -48,8 +48,8 @@ const NIGHT: Palette = {
   pillar: '#2c2440',
   trench: '#15111f',
   shadow: '#000000',
-  route: '#b77bff',
-  routeEdge: '#2e0f57',
+  route: '#fb923c',
+  routeEdge: '#431407',
 };
 
 /** Collects triangles per colour. */

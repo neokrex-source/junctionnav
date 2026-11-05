@@ -5,7 +5,7 @@ import './styles/app.css';
 import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
 import { hashString, haversine, type LngLat } from './geo/geo';
-import { detectJunctions, type JunctionCandidate } from './junction/detect';
+import { detectJunctions, JUNCTION_TAIL, type JunctionCandidate } from './junction/detect';
 import { JunctionDataCache, OverpassProvider, type OsmData } from './junction/osmdata';
 import { GroundMapper, type GroundMap, type GroundSource } from './junction/groundMap';
 import { buildScene, type ForkLine, type JunctionScene } from './junction/scene';
@@ -1803,6 +1803,7 @@ class App {
     this.altsAt = Date.now();
     this.altsFromS = 0;
     this.map.showRoutes([route], 0);
+    this.paintJunctions();
     this.map.setDestination(this.navDest);
     this.source?.stop();
     if (simulate) {
@@ -2106,6 +2107,11 @@ class App {
     }
   }
 
+  /** The route turns orange through each junction: from where its junction view comes up to just past the split. */
+  private paintJunctions() {
+    this.map.setJunctionZones(this.engine.junctions.map((c) => [c.showFromS, c.s + JUNCTION_TAIL]));
+  }
+
   /** Drives on `r` from `startS` metres along it: guidance, map, junctions, tunnels and the next prompt. */
   private applyRoute(r: Route, startS: number) {
     this.trip.stops = this.remainingStops();
@@ -2121,6 +2127,7 @@ class App {
       this.sim.jumpTo(startS);
     }
     this.map.showRoutes([r], 0);
+    this.paintJunctions();
     this.map.setProgress(startS);
     if (this.navDest) this.map.setDestination(this.navDest);
     this.activeJ = null;

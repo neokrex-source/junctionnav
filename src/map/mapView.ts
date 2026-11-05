@@ -55,6 +55,31 @@ export function autoSpan(speed: number, distToNext: number, wide = false): numbe
   return clampSpan(span);
 }
 
+/**
+ * A 'step' expression over line-progress for a route `length` metres long: `passed` up to the
+ * car (`progress`, a fraction, or null for no driven part), then `base`, with `zone` over each
+ * [from, to] stretch (metres). Stops always rise, as MapLibre requires.
+ */
+export function routeGradient(length: number, zones: [number, number][], progress: number | null, c: { passed: string; base: string; zone: string }): unknown[] {
+  const L = Math.max(1, length);
+  const f = progress == null ? 0 : Math.min(0.9999, Math.max(0.0001, progress));
+  const e: unknown[] = ['step', ['line-progress'], progress == null ? c.base : c.passed];
+  let last = 0;
+  const stop = (at: number, color: string) => {
+    const x = Math.max(at, last + 1e-6);
+    if (x >= 0.99999) return;
+    e.push(x, color);
+    last = x;
+  };
+  if (progress != null) stop(f, c.base);
+  for (const [a, b] of zones) {
+    if (b / L <= f) continue;
+    stop(Math.max(a / L, f), c.zone);
+    stop(b / L, c.base);
+  }
+  return e;
+}
+
 /** The scale while passing a split: divider, ramp, exit, entrance, junction or turn. */
 export const CLOSE_SPAN = 20;
 
@@ -571,10 +596,8 @@ export class MapView {
     const m = this.map;
     if (!m.getLayer('route-line')) return;
     m.setPaintProperty('route-alt', 'line-color', t.alt);
-    m.setPaintProperty('route-glow', 'line-color', t.routeGlow);
-    m.setPaintProperty('route-casing', 'line-color', t.routeCasing);
-    m.setPaintProperty('route-line', 'line-gradient', this.gradient());
-    m.setPaintProperty('maneuver-casing', 'line-color', t.routeCasing);
+    this.paintRoute();
+    this.paintArrow();
     m.setPaintProperty('route-pulse', 'line-color', t.pulse);
     m.setPaintProperty('route-pulse-glow', 'line-color', t.pulseGlow);
     m.setPaintProperty('fork-casing', 'line-color', t.forkCasing);
@@ -607,9 +630,8 @@ export class MapView {
 
   private forks: { role: 'branch' | 'incoming'; pts: LngLat[] }[] = [];
 
-  private forkColor(): maplibregl.ExpressionSpecification {
-    const [a, b, c] = this.theme.forks;
-    return ['match', ['get', 'k'], 0, a, 1, b, c];
+  private forkColor(): string {
+    return this.theme.fork;
   }
 
   private forksFC(): FeatureCollection {
@@ -622,8 +644,8 @@ export class MapView {
   }
 
   /**
-   * The other roads at the split coming up (the ones not to take), drawn in orange, cyan and lime
-   * so the purple route stays the only way to go. An empty list clears them.
+   * The other roads at the split coming up (the ones not to take), drawn in grey so the orange
+   * route through the junction stays the only bright line. An empty list clears them.
    */
   setForks(lines: { role: 'branch' | 'incoming'; pts: LngLat[] }[]) {
     if (!lines.length && !this.forks.length) return;
@@ -685,7 +707,7 @@ export class MapView {
       },
       before,
     );
-    // The other roads at the split coming up, in their own colours (under the route line).
+    // The other roads at the split coming up, in grey (under the route line).
     m.addSource('forks', { type: 'geojson', data: this.forksFC() });
     m.addLayer(
       {
@@ -727,7 +749,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': this.theme.routeGlow, 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin) },
+        paint: { 'line-gradient': this.gradient('glow'), 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin) },
       },
       before,
     );
@@ -737,7 +759,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': this.theme.routeCasing, 'line-width': routeWidth('route-casing', this.thin) },
+        paint: { 'line-gradient': this.gradient('casing'), 'line-width': routeWidth('route-casing', this.thin) },
       },
       before,
     );
@@ -749,7 +771,7 @@ export class MapView {
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
           'line-width': routeWidth('route-line', this.thin),
-          'line-gradient': this.gradient(),
+          'line-gradient': this.gradient('line'),
         },
       },
       before,
@@ -832,9 +854,39 @@ export class MapView {
     });
   }
 
-  private gradient() {
-    const f = Math.min(0.9999, Math.max(0.0001, this.progressFrac));
-    return ['step', ['line-progress'], this.theme.passed, f, this.theme.route] as unknown as maplibregl.ExpressionSpecification;
+  /** Route stretches through junctions, drawn orange: [from, to] in metres along the selected route. */
+  private junctionZones: [number, number][] = [];
+
+  /**
+   * The route's colours along its length (line-progress): the part already driven, the route,
+   * and the orange stretches through junctions, for the line itself, its casing or its glow.
+   */
+  private gradient(part: 'line' | 'casing' | 'glow' = 'line') {
+    const t = this.theme;
+    const [base, zone] = part === 'casing' ? [t.routeCasing, t.junctionCasing] : part === 'glow' ? [t.routeGlow, t.junctionGlow] : [t.route, t.junction];
+    const r = this.routes[this.selected];
+    const f = part === 'line' ? this.progressFrac : null;
+    return routeGradient(r?.line.length ?? 1, this.junctionZones, f, { passed: t.passed, base, zone }) as unknown as maplibregl.ExpressionSpecification;
+  }
+
+  /** Repaints the route's colours (the driven part changes often; the junction stretches with the route). */
+  private paintRoute(all = true) {
+    const m = this.map;
+    if (!m.getLayer('route-line')) return;
+    m.setPaintProperty('route-line', 'line-gradient', this.gradient('line'));
+    if (!all) return;
+    m.setPaintProperty('route-casing', 'line-gradient', this.gradient('casing'));
+    m.setPaintProperty('route-glow', 'line-gradient', this.gradient('glow'));
+  }
+
+  /**
+   * Junctions on the selected route: the route turns orange from `from` (where the junction view
+   * comes up, 300 m before the split) to `to` (a little past it, onto the branch taken).
+   */
+  setJunctionZones(zones: [number, number][]) {
+    this.junctionZones = [...zones].filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+    this.paintRoute();
+    this.paintArrow();
   }
 
   private routesFC(mainOnly: boolean): FeatureCollection {
@@ -853,6 +905,7 @@ export class MapView {
     this.selected = selected;
     this.progressFrac = 0;
     this.progressS = 0;
+    this.junctionZones = [];
     const r = routes[selected];
     this.tunnelSpans = r ? tunnelsFromRoute(r) : [];
     this.refreshRouteData();
@@ -882,7 +935,7 @@ export class MapView {
     (this.map.getSource('routes') as GeoJSONSource | undefined)?.setData(this.routesFC(false));
     (this.map.getSource('route-main') as GeoJSONSource | undefined)?.setData(this.routesFC(true));
     (this.map.getSource('tunnels') as GeoJSONSource | undefined)?.setData(this.tunnelFC());
-    if (this.map.getLayer('route-line')) this.map.setPaintProperty('route-line', 'line-gradient', this.gradient());
+    this.paintRoute();
   }
 
   clearRoutes() {
@@ -898,7 +951,7 @@ export class MapView {
     const f = s / Math.max(1, r.line.length);
     if (Math.abs(f - this.progressFrac) < 0.0005) return;
     this.progressFrac = f;
-    if (this.map.getLayer('route-line')) this.map.setPaintProperty('route-line', 'line-gradient', this.gradient());
+    this.paintRoute(false);
   }
 
   /** White turn arrow drawn on the route around the next maneuver. */
@@ -921,7 +974,20 @@ export class MapView {
         ],
       };
     }
+    this.arrowS = step && route ? step.s : null;
     (this.map.getSource('maneuver') as GeoJSONSource | undefined)?.setData(this.arrow);
+    this.paintArrow();
+  }
+
+  /** Where the turn arrow is (metres along the route), for its outline colour. */
+  private arrowS: number | null = null;
+
+  /** The turn arrow's outline: dark orange inside a junction's orange stretch, else the route's. */
+  private paintArrow() {
+    if (!this.map.getLayer('maneuver-casing')) return;
+    const at = this.arrowS;
+    const inZone = at != null && this.junctionZones.some(([a, b]) => at >= a && at <= b);
+    this.map.setPaintProperty('maneuver-casing', 'line-color', inZone ? this.theme.junctionCasing : this.theme.routeCasing);
   }
 
   /**

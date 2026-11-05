@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoSpan, CLOSE_SPAN, closeSpan, closeWeight, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, THIN_BELOW, widthExpr, zoomForSpan } from '../src/map/mapView';
+import { autoSpan, routeGradient, CLOSE_SPAN, closeSpan, closeWeight, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, THIN_BELOW, widthExpr, zoomForSpan } from '../src/map/mapView';
 
 describe('navigation map scale', () => {
   it('is wider at expressway speed and closes in to 100 m at a turn', () => {
@@ -120,5 +120,26 @@ describe('close-up at splits', () => {
 
   it('scales line widths by zoom', () => {
     expect(widthExpr([10, 4, 16, 10, 19, 20], 0.5)).toEqual(['interpolate', ['linear'], ['zoom'], 10, 2, 16, 5, 19, 10]);
+  });
+});
+
+describe('orange through junctions', () => {
+  const c = { passed: 'grey', base: 'purple', zone: 'orange' };
+  it('colours the stretch through each junction, after the part already driven', () => {
+    // A 10 km route with junctions at 3 km and 7 km: orange from 300 m before to 60 m past.
+    const zones: [number, number][] = [[2700, 3060], [6700, 7060]];
+    expect(routeGradient(10000, zones, 0.1, c)).toEqual(['step', ['line-progress'], 'grey', 0.1, 'purple', 0.27, 'orange', 0.306, 'purple', 0.67, 'orange', 0.706, 'purple']);
+    // Inside the first stretch: orange from the car to its end.
+    expect(routeGradient(10000, zones, 0.28, c).slice(3, 7)).toEqual([0.28, 'purple', 0.28 + 1e-6, 'orange']);
+    // Past it: only the second one is left.
+    expect(routeGradient(10000, zones, 0.4, c)).toEqual(['step', ['line-progress'], 'grey', 0.4, 'purple', 0.67, 'orange', 0.706, 'purple']);
+    // The outline has no driven part.
+    expect(routeGradient(10000, zones, null, c)).toEqual(['step', ['line-progress'], 'purple', 0.27, 'orange', 0.306, 'purple', 0.67, 'orange', 0.706, 'purple']);
+  });
+  it('keeps the stops rising when stretches touch, overlap or run past the end', () => {
+    const g = routeGradient(1000, [[0, 360], [300, 700], [900, 1200]], null, c);
+    const stops = g.slice(3).filter((_, i) => i % 2 === 0) as number[];
+    for (let i = 1; i < stops.length; i++) expect(stops[i]).toBeGreaterThan(stops[i - 1]);
+    expect(Math.max(...stops)).toBeLessThan(1);
   });
 });

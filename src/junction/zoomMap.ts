@@ -45,14 +45,14 @@ export class ZoomMap {
         type: 'line',
         source: 'jv-route',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': themeFor(this.night).routeCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 10, 18, 26] },
+        paint: { 'line-color': themeFor(this.night).junctionCasing, 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 10, 18, 26] },
       });
       map.addLayer({
         id: 'jv-route',
         type: 'line',
         source: 'jv-route',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': themeFor(this.night).route, 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 6, 18, 18] },
+        paint: { 'line-color': themeFor(this.night).junction, 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 6, 18, 18] },
       });
       map.addLayer(this.layer3d);
     });
@@ -91,8 +91,8 @@ export class ZoomMap {
       this.night = night;
       const t = themeFor(night);
       if (map.getLayer('jv-route')) {
-        map.setPaintProperty('jv-route', 'line-color', t.route);
-        map.setPaintProperty('jv-route-casing', 'line-color', t.routeCasing);
+        map.setPaintProperty('jv-route', 'line-color', t.junction);
+        map.setPaintProperty('jv-route-casing', 'line-color', t.junctionCasing);
       }
     }
     this.layer3d.setScene(scene, night);

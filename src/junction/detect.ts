@@ -83,6 +83,11 @@ export function classifyStep(route: Route, i: number): JunctionKind | null {
   }
 }
 
+/** How far before a split the junction view shows and the route turns orange (metres). */
+export const JUNCTION_LEAD = 300;
+/** How far past the split the route stays orange (onto the branch taken). */
+export const JUNCTION_TAIL = 60;
+
 /** Find maneuvers that deserve a junction view: ramps, exits, forks, merges and divider splits. */
 export function detectJunctions(route: Route): JunctionCandidate[] {
   const out: JunctionCandidate[] = [];
@@ -91,7 +96,8 @@ export function detectJunctions(route: Route): JunctionCandidate[] {
     if (!kind) continue;
     const step = route.steps[i];
     const highway = isHighwayContext(route, i);
-    const lead = highway ? 1000 : 380;
+    // The junction view comes up 300 m before the split, as the route turns orange on the map.
+    const lead = JUNCTION_LEAD;
     const prevS = route.steps[i - 1].s;
     const showFromS = Math.max(prevS + 25, step.s - lead);
     if (step.s - showFromS < 60) continue; // too close to the previous maneuver to be useful

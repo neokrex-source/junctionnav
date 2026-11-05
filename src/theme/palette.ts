@@ -5,8 +5,8 @@
  *
  *   Day   (light purple): light grey #F2F0F6, white, black #121016, violet #7C3AED
  *   Night (dark purple):  near-black #0B0910, plum #1A0D2E, white, lilac #B77BFF
- *   Both: amber for warnings, rose for danger, green for confirmations; orange, cyan and lime
- *   for the other roads at a split, so the one to take stays the only purple line.
+ *   Both: amber for warnings, rose for danger, green for confirmations; orange for the route
+ *   through a junction (and in the junction views), grey for the other roads at the split.
  */
 export interface MapPalette {
   land: string;
@@ -49,10 +49,14 @@ export interface Theme {
   pulse: string;
   pulseGlow: string;
   /**
-   * The other roads at an upcoming split (the ones not to take), one colour each, all well apart
-   * from the route's purple and from the danger rose; and the outline that lifts them off the map.
+   * The route through a junction: orange for the 300 m before the split and a little past it,
+   * the same as the route in the junction views, with its outline and (at night) glow.
    */
-  forks: [string, string, string];
+  junction: string;
+  junctionCasing: string;
+  junctionGlow: string;
+  /** The other roads at the split (the ones not to take): a neutral grey, and the outline that lifts them off the map. */
+  fork: string;
   forkCasing: string;
   pin: string;
   map: MapPalette;
@@ -68,7 +72,10 @@ export const DAY: Theme = {
   routeInk: '#ffffff',
   pulse: '#ffffff',
   pulseGlow: '#a78bfa',
-  forks: ['#ea580c', '#0891b2', '#65a30d'],
+  junction: '#ea580c',
+  junctionCasing: '#7c2d12',
+  junctionGlow: 'rgba(234, 88, 12, 0)',
+  fork: '#8a8398',
   forkCasing: '#ffffff',
   pin: '#f43f5e',
   map: {
@@ -109,7 +116,10 @@ export const NIGHT: Theme = {
   routeInk: '#0b0910',
   pulse: '#faf5ff',
   pulseGlow: '#d8b4fe',
-  forks: ['#fb923c', '#22d3ee', '#a3e635'],
+  junction: '#fb923c',
+  junctionCasing: '#431407',
+  junctionGlow: 'rgba(251, 146, 60, 0.34)',
+  fork: '#7a7190',
   forkCasing: '#0b0910',
   pin: '#fb7185',
   map: {
