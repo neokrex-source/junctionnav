@@ -132,7 +132,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const ctx = await browser.newContext({ viewport: { width: 412, height: 860 }, geolocation: { latitude: O[1], longitude: O[0] }, permissions: ['geolocation'] });
-  const calls = { incidents: 0, legacy: 0, route: 0, flow: 0, news: 0, failRouting: false };
+  const calls = { incidents: 0, legacy: 0, route: 0, flow: 0, news: 0, failRouting: false, extraDelay: 0 };
   await ctx.route('**/*', async (r) => {
     const u = r.request().url();
     if (u.includes('api.tomtom.com')) {
@@ -149,9 +149,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         if (calls.failRouting) return r.fulfill({ status: 503, body: '{}', headers: { 'Access-Control-Allow-Origin': '*' } });
         const body = JSON.parse(r.request().postData() || '{}');
         const pts = body.supportingPoints ?? [];
-        const mid = pts[Math.floor(pts.length / 2)];
-        const onAlt = mid && mid.longitude > P(800, 0)[0];
-        return r.fulfill({ json: { routes: [{ summary: onAlt ? { travelTimeInSeconds: 1100, trafficDelayInSeconds: 60 } : { travelTimeInSeconds: 2000, trafficDelayInSeconds: 780 } }] }, headers: { 'Access-Control-Allow-Origin': '*' } });
+        // The alternative heads east well before the main route's turn at 6 km north.
+        const onAlt = pts.some((q) => q.longitude > P(1500, 0)[0] && q.latitude < P(0, 5500)[1]);
+        const x = calls.extraDelay;
+        return r.fulfill({ json: { routes: [{ summary: onAlt ? { travelTimeInSeconds: 1100, trafficDelayInSeconds: 60 } : { travelTimeInSeconds: 2000 + x, trafficDelayInSeconds: 780 + x } }] }, headers: { 'Access-Control-Allow-Origin': '*' } });
       }
       if (u.includes('/flow/')) {
         calls.flow++;
@@ -316,12 +317,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await drive(1700);
   const far = await cardNow();
   check('no card 700 m before the jam (the chip instead)', !far.shown && /Slow traffic/.test(far.chip ?? ''), far);
+  // The voice guide speaks at most every few seconds; let the 500 m reminder through.
+  await page.evaluate(() => (window.__app.tv.lastAt = 0));
   await drive(2000);
   const card = await cardNow();
   await shot('3b-traffic-card');
   check('card pops up within 500 m of the jam', card.shown && card.title === 'Slow traffic' && /\d+ m ahead/.test(card.dist ?? '') && card.icon && !card.chip, card);
   check('card shows the delay', card.facts === '+8 min', card.facts);
   check('card is slim (at most 5% of the screen)', card.box && card.box.share <= 0.05 && card.box.h <= Math.max(36, card.box.vh * 0.05) + 1, card.box);
+  const saidNear = await page.evaluate(() => window.__said ?? []);
+  check('voice reminder at 500 m', saidNear.some((t) => /^Slow traffic in \d+ metres\.$/.test(t)), saidNear.slice(-3));
   await drive(2700);
   const inside = await cardNow();
   check('card counts down inside the jam', inside.shown && /^\d+ m left$/.test(inside.dist ?? ''), inside);
@@ -344,6 +349,44 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('traffic list: route incidents, news on the route, other news', list.heads.length === 3 && list.rows.length === 2, list);
   check('traffic list shows arrival with traffic', /Arrival with traffic/.test(list.eta ?? ''), list.eta);
   await page.click('.sheet-head button');
+
+  // ---- the voice guide after the jam
+  const sayUntil = async (re, positions) => {
+    for (const at of positions) {
+      await page.evaluate(() => (window.__app.tv.lastAt = 0));
+      await drive(at);
+      if ((await page.evaluate(() => window.__said ?? [])).some((t) => re.test(t))) return true;
+    }
+    return false;
+  };
+  // Out of the jam: the voice says so (a warning for the accident further on may come first).
+  const cleared = await sayUntil(/^Traffic is clearing\.$/, [3450, 3480, 3510, 3540]);
+  check('voice says the traffic is clearing after the jam', cleared, (await page.evaluate(() => window.__said ?? [])).slice(-4));
+  // Traffic gets worse: a new travel time moves the arrival, and the voice gives the new time.
+  await page.evaluate(() => {
+    const app = window.__app;
+    const tr = app.trafficNow(app.engine.progress);
+    app.tv.arrival = Date.now() + tr.time * 1000;
+    app.tv.updateAt = 0;
+    app.traffic.etaAt = -Infinity;
+  });
+  calls.extraDelay = 900;
+  await drive(3560);
+  await page.waitForFunction(() => window.__app.traffic.eta?.delay >= 1600, null, { timeout: 10_000 }).catch(() => {});
+  const updated = await sayUntil(/^Traffic update: arriving at \d\d:\d\d, \d+ minutes later\.$/, [3580, 3600, 3620, 3640]);
+  check('voice gives the new arrival time when traffic changes', updated, {
+    said: (await page.evaluate(() => window.__said ?? [])).slice(-4),
+    state: await page.evaluate(() => {
+      const a = window.__app;
+      const tr = a.trafficNow(a.engine.progress);
+      return { eta: a.traffic.eta, s: a.engine.progress?.s, tv: { arrival: a.tv.arrival, answered: a.tv.answered, updateAt: a.tv.updateAt }, now: Date.now(), tr, incAt: a.traffic.incidentsAt };
+    }),
+  });
+  calls.extraDelay = 0;
+  const saidAll = await page.evaluate(() => window.__said ?? []);
+  check('voice summary of traffic at the start', saidAll.some((t) => /^Traffic on your route adds about 13 minutes\. Arriving at \d\d:\d\d\.$/.test(t)), saidAll.slice(0, 6));
+  const newsSaid = saidAll.some((t) => /^Traffic news on your route: Lorry breaks down on DUKE/.test(t)) || (await sayUntil(/^Traffic news on your route: Lorry breaks down on DUKE/, [3660, 3680, 3700]));
+  check('voice reads news about a road on the route', newsSaid, (await page.evaluate(() => window.__said ?? [])).slice(-3));
 
   // ---- an incident popup on the map
   await page.evaluate(([c]) => {

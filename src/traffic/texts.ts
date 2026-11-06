@@ -256,3 +256,54 @@ export function fasterSpeech(save: number, lang: LangCode): string {
   if (lang === 'ja') return `${m}分早く着くルートがあります。`;
   return `A faster route is available, saving ${m} minutes.`;
 }
+
+/* ------------------------------------------------------------------ the traffic voice guide */
+
+/** At the start of a drive: what traffic adds, and when you arrive. */
+export function summarySpeech(delay: number, clock: string, lang: LangCode): string {
+  const m = Math.round(delay / 60);
+  if (lang === 'ms') return m >= 2 ? `Trafik di laluan anda menambah kira-kira ${m} minit. Tiba pada ${clock}.` : `Tiada kelewatan trafik di laluan anda. Tiba pada ${clock}.`;
+  if (lang === 'ja') return m >= 2 ? `ルート上の渋滞で約${m}分遅れます。到着は${clock}の予定です。` : `ルート上に渋滞はありません。到着は${clock}の予定です。`;
+  return m >= 2 ? `Traffic on your route adds about ${m} minutes. Arriving at ${clock}.` : `No traffic delays on your route. Arriving at ${clock}.`;
+}
+
+/** The short reminder when the trouble is close: "Slow traffic in 400 metres." */
+export function nearSpeech(kind: IncidentKind, dist: number, lang: LangCode, units: Units): string {
+  const d = LANGS[lang].spokenDistance(dist, units);
+  if (lang === 'ms') return `${KINDS.ms[kind]} dalam ${d}.`;
+  if (lang === 'ja') return `${d}先、${KINDS.ja[kind]}です。`;
+  return `${KINDS.en[kind]} in ${d}.`;
+}
+
+/** Through the slow stretch. */
+export function clearSpeech(lang: LangCode): string {
+  if (lang === 'ms') return 'Trafik kembali lancar.';
+  if (lang === 'ja') return '渋滞を抜けました。';
+  return 'Traffic is clearing.';
+}
+
+/** The traffic delay changed: the new arrival time, and how much later or earlier. */
+export function etaChangeSpeech(change: number, clock: string, lang: LangCode): string {
+  const m = Math.max(1, Math.round(Math.abs(change) / 60));
+  const later = change > 0;
+  if (lang === 'ms') return `Kemas kini trafik: tiba pada ${clock}, ${m} minit ${later ? 'lewat' : 'lebih awal'}.`;
+  if (lang === 'ja') return `交通情報の更新です。到着は${clock}、${m}分${later ? '遅く' : '早く'}なります。`;
+  return `Traffic update: arriving at ${clock}, ${m} minutes ${later ? 'later' : 'earlier'}.`;
+}
+
+/** Malay or English, for headlines (the feed has both). */
+export function headlineLang(title: string): LangCode {
+  return /\b(di|dan|ke|kemalangan|kesesakan|lebuhraya|ditutup|penutupan|banjir|lencongan|arah|selepas|berhampiran|akibat|kenderaan|lori|susulan)\b/i.test(title) ? 'ms' : 'en';
+}
+
+/**
+ * News naming a road on the route: the headline itself when it is in the language the app
+ * speaks, else which road it is about.
+ */
+export function newsSpeech(title: string, road: string, lang: LangCode): string {
+  const own = lang !== 'ja' && headlineLang(title) === lang;
+  const t = title.replace(/\s+/g, ' ').trim().replace(/[.!?]?$/, '.');
+  if (lang === 'ms') return own ? `Berita trafik di laluan anda: ${t}` : `Ada berita trafik tentang ${road} di laluan anda.`;
+  if (lang === 'ja') return `ルート上の${road}について交通ニュースがあります。`;
+  return own ? `Traffic news on your route: ${t}` : `There is traffic news about ${road} on your route.`;
+}

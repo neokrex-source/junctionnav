@@ -53,7 +53,7 @@ import { incidentColor, incidentIconUrl, TrafficLayer, TRAFFIC_ATTRIBUTION } fro
 import { jamSvg } from './ui/trafficIcon';
 import { fasterAlternative, TrafficService } from './traffic/service';
 import { incidentDelayAhead, routeTimeFrom, trafficRemaining } from './traffic/onRoute';
-import { kindName, minutes, newsKindName, tt, warningSpeech, worthWarning, fasterSpeech } from './traffic/texts';
+import { clearSpeech, etaChangeSpeech, fasterSpeech, kindName, minutes, nearSpeech, newsKindName, newsSpeech, summarySpeech, tt, warningSpeech, worthWarning } from './traffic/texts';
 import { roadName } from './traffic/roads';
 import type { Incident, NewsItem, RouteIncident } from './traffic/types';
 import type { AppMode, ModeHooks } from './native/appMode';
@@ -66,6 +66,28 @@ const KL: LngLat = [101.6869, 3.139];
 const TRAFFIC_CARD_WITHIN = 500;
 /** Traffic answers older than this no longer count for the arrival time. */
 const TRAFFIC_FRESH = 15 * 60_000;
+
+/** What the traffic voice guide has said on a drive. */
+function newTrafficVoice() {
+  return {
+    startedAt: Date.now(),
+    lastAt: 0,
+    near: new Set<string>(),
+    inside: new Map<string, number>(),
+    clearPending: false,
+    /** Arrival time last announced (ms), and when traffic last came in for it. */
+    arrival: null as number | null,
+    answered: 0,
+    updateAt: 0,
+    news: new Set<string>(),
+    newsAt: 0,
+  };
+}
+
+/** A stretch worth saying "Traffic is clearing" after: slow traffic that cost time. */
+function clearsAfter(i: RouteIncident): boolean {
+  return i.kind !== 'closure' && (i.delay >= 60 || i.magnitude === 'major' || i.magnitude === 'moderate') && i.endS - i.s >= 150;
+}
 const MAX_STOPS = 3;
 type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic';
 type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
@@ -217,6 +239,8 @@ class App {
   private flowVariant: 'classic' | 'orbis' = 'classic';
   /** Incidents already announced on this drive. */
   private trafficWarned = new Set<string>();
+  /** The traffic voice guide on this drive: what has been said, and when. */
+  private tv = newTrafficVoice();
   /** Travel times with traffic for the routes being compared before a drive. */
   private planTraffic = new Map<Route, { travelTime: number; delay: number; at: number }>();
   /** The faster route on offer, and the ones turned down (with what they would have saved). */
@@ -1891,6 +1915,7 @@ class App {
     this.altsAt = Date.now();
     this.altsFromS = 0;
     this.trafficWarned.clear();
+    this.tv = newTrafficVoice();
     this.cardClosed.clear();
     this.fasterDeclined.clear();
     this.hideFaster();
@@ -2094,7 +2119,7 @@ class App {
     this.testRun?.progress(p, prompts, this.settings.tunnelAlerts);
     // Live traffic: what is due to be asked, warnings for what is ahead, a faster route on offer.
     this.traffic.tick(p.s);
-    if (!prompts.length) this.trafficWarnings(p);
+    if (!prompts.length) this.trafficVoice(p);
     this.paintTrafficChip(p);
     if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
@@ -2446,18 +2471,91 @@ class App {
     }
   }
 
-  /** One spoken warning at a time for what is coming up on the route (3 km ahead at speed, 1.5 km in town). */
-  private trafficWarnings(p: Progress) {
-    if (!this.settings.trafficAlerts || !this.traffic.live || !p.onRoute) return;
-    const reach = p.speed > 16 ? 3000 : 1500;
-    for (const i of this.traffic.onRoute) {
-      const d = i.s - p.s;
-      if (d > reach) break;
-      if (d < 150 || this.trafficWarned.has(i.id) || !worthWarning(i)) continue;
-      this.trafficWarned.add(i.id);
+  /**
+   * The traffic voice guide, one thing at a time and never over a turn prompt:
+   *  - a warning for trouble on the route 3 km ahead at speed (1.5 km in town), with the delay,
+   *    and a short reminder at 500 m;
+   *  - "Traffic is clearing" once through a slow stretch;
+   *  - at the start, what traffic adds and when you arrive; later, the new arrival time when
+   *    fresh traffic moves it by 5 minutes or more;
+   *  - news naming a road on the route (the faster route offer speaks for itself, see checkFaster).
+   */
+  private trafficVoice(p: Progress) {
+    if (!this.settings.trafficAlerts || !p.onRoute || p.arrived || this.arrivedAnnounced) return;
+    const tv = this.tv;
+    const now = Date.now();
+    const L = this.L;
+    const units = this.settings.units;
+    const live = this.traffic.live;
+    // The slow stretches the car is driving through, to say when they are behind it.
+    if (live) for (const i of this.traffic.onRoute) if (p.s >= i.s && p.s < i.endS && clearsAfter(i)) tv.inside.set(i.id, i.endS);
+    for (const [id, endS] of tv.inside) {
+      if (p.s <= endS + 30) continue;
+      tv.inside.delete(id);
+      const more = this.traffic.onRoute.some((i) => i.endS > p.s && i.s - p.s < 300 && clearsAfter(i));
+      if (!tv.inside.size && !more) tv.clearPending = true;
+    }
+    if (now - tv.lastAt < 6000) return;
+    const say = (text: string, chime = false) => {
+      tv.lastAt = now;
+      if (!chime) return this.say(text, false);
       this.voice.chime();
-      window.setTimeout(() => this.say(warningSpeech(i, d, this.L, this.settings.units), false), 420);
-      break;
+      window.setTimeout(() => this.say(text, false), 420);
+    };
+    // Trouble ahead.
+    if (live) {
+      const reach = p.speed > 16 ? 3000 : 1500;
+      for (const i of this.traffic.onRoute) {
+        const d = i.s - p.s;
+        if (d > reach) break;
+        if (d < 150 || !worthWarning(i)) continue;
+        if (d <= TRAFFIC_CARD_WITHIN) {
+          if (tv.near.has(i.id)) continue;
+          tv.near.add(i.id);
+          const first = !this.trafficWarned.has(i.id);
+          this.trafficWarned.add(i.id);
+          return say(first ? warningSpeech(i, d, L, units) : nearSpeech(i.kind, d, L, units), true);
+        }
+        if (this.trafficWarned.has(i.id)) continue;
+        this.trafficWarned.add(i.id);
+        return say(warningSpeech(i, d, L, units), true);
+      }
+    }
+    // The rest waits while a turn is coming up.
+    if (p.distToNext < 400) return;
+    if (tv.clearPending) {
+      tv.clearPending = false;
+      return say(clearSpeech(L));
+    }
+    const tr = this.trafficNow(p);
+    if (tr && p.remaining > 2000) {
+      const arrival = now + tr.time * 1000;
+      const answered = Math.max(this.traffic.eta?.at ?? 0, Number.isFinite(this.traffic.incidentsAt) ? this.traffic.incidentsAt : 0);
+      if (tv.arrival == null) {
+        tv.arrival = arrival;
+        tv.answered = answered;
+        tv.updateAt = now;
+        if (now - tv.startedAt < 3 * 60_000) return say(summarySpeech(tr.delay, this.clock(new Date(arrival)), L));
+      } else if (answered > tv.answered) {
+        // Only right after new traffic came in, so a change is the traffic's doing.
+        tv.answered = answered;
+        const change = (arrival - tv.arrival) / 1000;
+        if (Math.abs(change) >= 300 && now - tv.updateAt > 5 * 60_000) {
+          tv.arrival = arrival;
+          tv.updateAt = now;
+          return say(etaChangeSpeech(change, this.clock(new Date(arrival)), L));
+        }
+      }
+    }
+    // News naming a road on the route (after the summary, or a minute in without live traffic).
+    if (this.settings.trafficNews && now - tv.newsAt > 10 * 60_000 && (tv.arrival != null || !live || now - tv.startedAt > 60_000)) {
+      const fresh = this.traffic.routeNews.find((n) => !tv.news.has(n.link) && now - Date.parse(n.published) < 2 * 3600_000);
+      if (fresh) {
+        for (const n of this.traffic.routeNews) tv.news.add(n.link);
+        tv.newsAt = now;
+        const road = fresh.roads.find((r) => this.traffic.roads.includes(r)) ?? fresh.roads[0];
+        return say(newsSpeech(fresh.title, road ? roadName(road) : '', L));
+      }
     }
   }
 
@@ -2584,7 +2682,8 @@ class App {
     el.title = tt(this.L, 'faster', { via: best.route.summary || '…', m: minutes(best.save) });
     el.append(h('span', { class: 'fa-ico', html: ICON.bolt }), h('span', { class: 'fa-text' }, text), take, keep);
     el.hidden = false;
-    if (isNew) {
+    if (isNew && this.settings.trafficAlerts) {
+      this.tv.lastAt = Date.now();
       this.voice.chime();
       window.setTimeout(() => this.say(fasterSpeech(best.save, this.L), false), 420);
     }

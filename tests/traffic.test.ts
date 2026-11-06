@@ -7,6 +7,7 @@ import { boxAhead, incidentDelayAhead, incidentsOnRoute, newsForRoute, pointsAhe
 import { roadName, roadsInText, roadsOfSteps } from '../src/traffic/roads';
 import { fasterAlternative, TrafficService, type AltEta } from '../src/traffic/service';
 import { bboxArea, kindOf, normalizeIncident, TomTomTraffic } from '../src/traffic/tomtom';
+import { clearSpeech, etaChangeSpeech, headlineLang, nearSpeech, newsSpeech, summarySpeech } from '../src/traffic/texts';
 import type { Incident, NewsItem, RouteIncident } from '../src/traffic/types';
 
 const f = new LocalFrame([101.69, 3.14]);
@@ -182,6 +183,29 @@ describe('delay from the incidents ahead', () => {
 
   it('gives closures no delay', () => {
     expect(incidentDelayAhead([ri('c', 1000, 1500, 0, 'closure')], 0)).toBe(0);
+  });
+});
+
+describe('traffic voice guide', () => {
+  it('speaks the summary, reminders, clearing and updates in each language', () => {
+    expect(summarySpeech(780, '19:12', 'en')).toBe('Traffic on your route adds about 13 minutes. Arriving at 19:12.');
+    expect(summarySpeech(30, '19:12', 'en')).toBe('No traffic delays on your route. Arriving at 19:12.');
+    expect(summarySpeech(780, '19:12', 'ms')).toBe('Trafik di laluan anda menambah kira-kira 13 minit. Tiba pada 19:12.');
+    expect(summarySpeech(780, '19:12', 'ja')).toBe('ルート上の渋滞で約13分遅れます。到着は19:12の予定です。');
+    expect(nearSpeech('jam', 400, 'en', 'metric')).toBe('Slow traffic in 400 metres.');
+    expect(nearSpeech('accident', 400, 'ms', 'metric')).toBe('Kemalangan dalam 400 meter.');
+    expect(nearSpeech('closure', 400, 'ja', 'metric')).toBe('400メートル先、通行止めです。');
+    expect(clearSpeech('en')).toBe('Traffic is clearing.');
+    expect(etaChangeSpeech(600, '19:22', 'en')).toBe('Traffic update: arriving at 19:22, 10 minutes later.');
+    expect(etaChangeSpeech(-420, '19:05', 'ms')).toBe('Kemas kini trafik: tiba pada 19:05, 7 minit lebih awal.');
+  });
+
+  it('reads a headline only in the language it speaks', () => {
+    expect(headlineLang('Kemalangan di Lebuhraya Persekutuan, dua lorong ditutup')).toBe('ms');
+    expect(headlineLang('Lorry breaks down on DUKE, 3km crawl towards Sentul')).toBe('en');
+    expect(newsSpeech('Lorry breaks down on DUKE, 3km crawl towards Sentul', 'DUKE', 'en')).toBe('Traffic news on your route: Lorry breaks down on DUKE, 3km crawl towards Sentul.');
+    expect(newsSpeech('Lorry breaks down on DUKE, 3km crawl towards Sentul', 'DUKE', 'ms')).toBe('Ada berita trafik tentang DUKE di laluan anda.');
+    expect(newsSpeech('Kemalangan di Lebuhraya Persekutuan', 'Federal Highway', 'ja')).toBe('ルート上のFederal Highwayについて交通ニュースがあります。');
   });
 });
 

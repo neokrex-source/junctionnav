@@ -59,7 +59,8 @@ export class TrafficService {
   onChange: (() => void) | null = null;
 
   private route: Route | null = null;
-  private roads: string[] = [];
+  /** The roads (HIGHWAYS keys) of the route being driven. */
+  roads: string[] = [];
   private alts: Route[] = [];
   private s = 0;
   private incAt = -Infinity;

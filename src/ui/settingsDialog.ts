@@ -176,7 +176,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           h('div', { class: 'key-row' }, tomtomKey, testKey),
           keyState,
           h('label', { class: 'toggle' }, trafficMap, 'Show live traffic on the map and your route'),
-          h('label', { class: 'toggle' }, trafficAlerts, 'Spoken warnings for accidents, closures and jams ahead'),
+          h('label', { class: 'toggle' }, trafficAlerts, 'Voice guide for traffic: warnings ahead, clearing traffic, arrival time changes, faster routes and news'),
           TRAFFIC_NEWS_URL ? h('label', { class: 'toggle' }, trafficNews, 'Traffic news from Malaysian news sites') : null,
           h(
             'div',
