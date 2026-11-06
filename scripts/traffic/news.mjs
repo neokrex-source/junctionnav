@@ -16,10 +16,11 @@ const MAX_ITEMS = 40;
 const gnews = (q, lang) =>
   `https://news.google.com/rss/search?q=${encodeURIComponent(`${q} when:1d`)}&hl=${lang === 'ms' ? 'ms' : 'en-MY'}&gl=MY&ceid=MY:${lang}`;
 
+const MAJOR = 'PLUS OR NKVE OR ELITE OR DUKE OR LDP OR MEX OR SPRINT OR KESAS OR NPE OR SKVE OR "Federal Highway" OR Karak OR LPT OR MRR2 OR Causeway OR "Second Link" OR "Penang Bridge"';
 export const FEEDS = [
-  { name: 'Google News', url: gnews('(traffic OR jam OR congestion OR accident OR crash OR closure OR closed OR flood) (highway OR expressway OR road OR toll) Malaysia', 'en') },
-  { name: 'Google News', url: gnews('(kesesakan OR kemalangan OR ditutup OR penutupan OR banjir OR lencongan) (lebuhraya OR jalan OR tol)', 'ms') },
-  { name: 'The Star', url: 'https://www.thestar.com.my/rss/News/Nation' },
+  { name: 'Google News', url: gnews(`(traffic OR jam OR congestion OR accident OR crash OR closure OR closed OR flood) (highway OR expressway OR road OR toll) Malaysia`, 'en') },
+  { name: 'Google News', url: gnews(`(jam OR congestion OR crash OR accident OR closed OR closure OR flood OR landslide) (${MAJOR})`, 'en') },
+  { name: 'Google News', url: gnews('(kesesakan OR kemalangan OR ditutup OR penutupan OR banjir OR lencongan OR "tanah runtuh") (lebuhraya OR jalan OR tol)', 'ms') },
   { name: 'Malay Mail', url: 'https://www.malaymail.com/feed/rss/malaysia' },
   { name: 'Free Malaysia Today', url: 'https://www.freemalaysiatoday.com/category/nation/feed/' },
   { name: 'New Straits Times', url: 'https://www.nst.com.my/feed' },
@@ -85,8 +86,23 @@ const ROADS = new RegExp(
   ].map((w) => `\\b${w}\\b`).join('|'),
   'i',
 );
-/** Not about the roads: trafficking, summonses, air or web traffic, discount campaigns. */
-const NOT = /trafficking|pemerdagangan|summons|saman|compound|kompaun|discount|diskaun|air traffic|web traffic|internet traffic|traffic light camera|drug|dadah/i;
+/**
+ * Not news of the roads right now: trafficking, summonses, air or web traffic, discounts, and
+ * stories about road safety in general, campaigns, statistics and court cases over old crashes.
+ */
+const NOT = new RegExp(
+  [
+    'trafficking', 'pemerdagangan', 'summons', 'saman', 'compound', 'kompaun', 'discount', 'diskaun', 'air traffic', 'web traffic', 'internet traffic', 'drug', 'dadah',
+    'black ?spots?', 'kawasan panas', 'upgrad', 'naik taraf', 'statistic', 'statistik', 'campaign', 'kempen', 'ops? selamat', 'awareness', 'kesedaran',
+    'court', 'mahkamah', 'charged', 'didakwa', 'sentenced', 'dihukum', 'jail', 'penjara', 'compensation', 'pampasan', 'insurance', 'insurans',
+  ].join('|'),
+  'i',
+);
+/**
+ * A particular road: one the app knows, a named road ("Jalan Ampang", "Lebuhraya Persekutuan",
+ * "Old Klang Road"; not "jalan raya", which means roads in general), a KM marker, a toll plaza.
+ */
+const NAMED = /\b(?:Jalan|Jln|Lebuhraya|Lebuh|Persiaran|Lorong|Susur|Jambatan|Terowong|Plaza Tol)\s+(?!Raya\b)\p{Lu}|\p{Lu}[\p{L}'-]+\s+(?:Road|Highway|Expressway|Street|Avenue|Bridge|Tunnel|Toll|Interchange|Flyover|Bypass|Link)\b|\bKM\s?\d+|\btoll plaza\b/u;
 
 const KIND = [
   ['accident', /accident|crash|collision|collided|overturn|pile[- ]up|skidded|rammed|kemalangan|nahas|terbalik|bertembung|rempuh/i],
@@ -108,7 +124,7 @@ export function trafficItem(it, now = Date.now()) {
   if (!Number.isFinite(t) || now - t > MAX_AGE_H * 3600_000 || t - now > 3600_000) return null;
   if (NOT.test(it.title) || !TRAFFIC.test(it.title)) return null;
   const roads = roadsInText(text);
-  if (!roads.length && !ROADS.test(text)) return null;
+  if (!roads.length && !(ROADS.test(text) && NAMED.test(text))) return null;
   return { title: it.title, link: it.link, source: it.source, published: new Date(t).toISOString(), roads, kind: classify(it.title) };
 }
 

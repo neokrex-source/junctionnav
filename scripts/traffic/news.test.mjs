@@ -30,6 +30,13 @@ test('keeps traffic on roads, drops the rest', () => {
   assert.equal(trafficItem(it('Crash on DUKE causes 5km crawl', 13), now), null);
   assert.equal(trafficItem(it('Market closed for the holiday'), now), null);
   assert.equal(classify('Massive jam at Plaza Tol Sungai Besi'), 'jam');
+  // General road safety stories, court cases and roads in general are not news of the roads now.
+  assert.equal(trafficItem(it('Road upgrades help curb repeat accidents at 80% of blackspots'), now), null);
+  assert.equal(trafficItem(it('Kemalangan jalan raya temukan sahabat lama'), now), null);
+  assert.equal(trafficItem(it('Lorry driver charged over fatal crash on Jalan Kuching'), now), null);
+  assert.equal(trafficItem(it('Crash causes long queue', 1, 'The crash happened on the road near the shops.'), now), null);
+  assert.equal(trafficItem(it('Crash causes long queue', 1, 'The crash happened on Jalan Genting Klang near Setapak.'), now)?.kind, 'accident');
+  assert.deepEqual(trafficItem(it('Major Causeway jam after power outage at Woodlands Checkpoint'), now)?.roads, ['CAUSEWAY']);
 });
 
 test('removes duplicates and sorts newest first', () => {
