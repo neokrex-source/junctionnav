@@ -2026,7 +2026,7 @@ class App {
 
   /**
    * The close-up at dividers, ramps, exits, entrances, junctions and turns: the map zooms in to
-   * 20 m as one comes up and back out once it is behind (0 = normal, 1 = all the way in).
+   * 50 m as one comes up and back out once it is behind (0 = normal, 1 = all the way in).
    */
   private closeWeightFor(p: Progress): number {
     const route = this.engine.route;

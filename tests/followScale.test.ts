@@ -87,7 +87,7 @@ describe('impulses along the route', () => {
 });
 
 describe('close-up at splits', () => {
-  it('is at 20 m within 100 m either side of every junction, easing in before and out after', () => {
+  it('is at 50 m within 100 m either side of every junction, easing in before and out after', () => {
     for (const v of [0, 8, 16, 25, 33]) {
       // All the way in from 100 m before to 100 m after, at every speed.
       for (const d of [100, 60, 0, -60, -100]) expect(closeWeight(d, v), `${d} m at ${v} m/s`).toBe(1);
@@ -105,14 +105,14 @@ describe('close-up at splits', () => {
     expect(closeWeight(280, 25)).toBeGreaterThan(0);
   });
 
-  it('turns the weight into a scale between the normal one and 20 m', () => {
-    expect(CLOSE_SPAN).toBe(20);
+  it('turns the weight into a scale between the normal one and 50 m', () => {
+    expect(CLOSE_SPAN).toBe(50);
     expect(closeSpan(150, 0)).toBe(150);
-    expect(closeSpan(150, 1)).toBeCloseTo(20, 6);
+    expect(closeSpan(150, 1)).toBeCloseTo(50, 6);
     // Half way in zoom levels, not in metres.
-    expect(closeSpan(320, 0.5)).toBeCloseTo(80, 6);
-    expect(roundScale(closeSpan(200, 1))).toBe(20);
-    // At 20 m the route is drawn thin; at the normal scales it is not.
+    expect(closeSpan(200, 0.5)).toBeCloseTo(100, 6);
+    expect(roundScale(closeSpan(200, 1))).toBe(50);
+    // At 50 m the route is drawn thin; at the normal scales it is not.
     expect(CLOSE_SPAN).toBeLessThan(THIN_BELOW);
     expect(SCALE_MIN).toBeGreaterThan(THIN_BELOW);
   });

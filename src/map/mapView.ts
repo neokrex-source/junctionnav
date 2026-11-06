@@ -94,7 +94,7 @@ export function routeGradient(
 }
 
 /** The scale while passing a split: divider, ramp, exit, entrance, junction or turn. */
-export const CLOSE_SPAN = 20;
+export const CLOSE_SPAN = 50;
 
 /** The map is all the way in (CLOSE_SPAN) from this far before every junction to this far after it (metres). */
 export const CLOSE_WITHIN = 100;
@@ -106,7 +106,7 @@ export const CLOSE_WITHIN = 100;
  * the few seconds before and back out over the 80 m after.
  *
  * The follow camera eases toward the target scale (about 1.5 s behind), so at speed the zoom
- * starts that much earlier: the map really shows 20 m by the time the car is 100 m out.
+ * starts that much earlier: the map really shows 50 m by the time the car is 100 m out.
  */
 export function closeWeight(d: number, speed: number): number {
   const lag = Math.min(60, Math.max(0, speed) * 2.2);
@@ -128,8 +128,8 @@ export function closeSpan(base: number, w: number): number {
   return Math.exp(Math.log(base) + (Math.log(Math.min(base, CLOSE_SPAN)) - Math.log(base)) * k);
 }
 
-/** Below this scale the route line and the turn arrow are drawn thin, so the roads show beside them. */
-export const THIN_BELOW = 45;
+/** Below this scale (so in a close-up) the route line and the turn arrow are drawn thin, so the roads show beside them. */
+export const THIN_BELOW = 70;
 
 /** Line widths by zoom ([zoom, px, ...]) of the route layers, and the factor each gets when thin. */
 const ROUTE_WIDTHS: Record<string, { stops: number[]; thin: number }> = {
@@ -1042,7 +1042,7 @@ export class MapView {
   /**
    * Moves the car icon. Between GPS fixes it glides to the new position over about the time
    * since the last one, as the follow camera eases there too, so the icon stays put on screen
-   * instead of jumping ahead every second (very visible in a 20 m close-up). Big jumps (a GPS
+   * instead of jumping ahead every second (very visible in a close-up). Big jumps (a GPS
    * jump, a reroute, the simulator skipping ahead) and reduced motion place it at once.
    */
   setPuck(p: LngLat | null, heading = 0) {
