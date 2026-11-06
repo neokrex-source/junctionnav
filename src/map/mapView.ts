@@ -96,19 +96,24 @@ export function routeGradient(
 /** The scale while passing a split: divider, ramp, exit, entrance, junction or turn. */
 export const CLOSE_SPAN = 20;
 
+/** The map is all the way in (CLOSE_SPAN) from this far before every junction to this far after it (metres). */
+export const CLOSE_WITHIN = 100;
+
 /**
- * How far the map is zoomed into a split, from 0 (the normal scale) to 1 (CLOSE_SPAN). `d` is the
- * distance to the split along the route, negative once past it. The map starts closing in about
- * ten seconds out, is all the way in for the last three seconds and the first 40 m past the split
- * (where the roads part), and is back to normal 140 m past it.
+ * How far the map is zoomed into a junction, from 0 (the normal scale) to 1 (CLOSE_SPAN). `d` is
+ * the distance to the junction along the route, negative once past it. The map is all the way in
+ * within 100 m either side of the junction (the dark orange stretch of the route), eases in over
+ * the few seconds before and back out over the 80 m after.
+ *
+ * The follow camera eases toward the target scale (about 1.5 s behind), so at speed the zoom
+ * starts that much earlier: the map really shows 20 m by the time the car is 100 m out.
  */
 export function closeWeight(d: number, speed: number): number {
-  // All the way in for the last 3 seconds or so: at 20 m the map shows about 70 to 80 m of road
-  // ahead below the junction view, so the split is in sight. Easing in over the 7 seconds before.
-  const hold = Math.min(90, Math.max(50, speed * 2.8));
-  const from = hold + Math.min(220, Math.max(100, speed * 7));
-  const after = 40;
-  const out = 140;
+  const lag = Math.min(60, Math.max(0, speed) * 2.2);
+  const hold = CLOSE_WITHIN + lag;
+  const from = hold + Math.min(180, Math.max(100, speed * 6));
+  const after = CLOSE_WITHIN;
+  const out = after + 80;
   const ease = (t: number) => t * t * (3 - 2 * t);
   if (d > from || d < -out) return 0;
   if (d > hold) return ease((from - d) / (from - hold));

@@ -87,23 +87,22 @@ describe('impulses along the route', () => {
 });
 
 describe('close-up at splits', () => {
-  it('zooms in to 20 m as a split comes up, holds past the gore, then eases back out', () => {
-    // Expressway, 25 m/s (90 km/h): in from 245 m out, all in from 70 m (about 3 s) to 40 m past.
-    const v = 25;
-    expect(closeWeight(400, v)).toBe(0);
-    expect(closeWeight(240, v)).toBeGreaterThan(0);
-    expect(closeWeight(120, v)).toBeLessThan(1);
-    expect(closeWeight(70, v)).toBe(1);
-    expect(closeWeight(0, v)).toBe(1);
-    expect(closeWeight(-40, v)).toBe(1);
-    expect(closeWeight(-90, v)).toBeGreaterThan(0);
-    expect(closeWeight(-90, v)).toBeLessThan(1);
-    expect(closeWeight(-150, v)).toBe(0);
-    // Smooth all the way: no jumps between neighbouring metres.
-    for (let d = -160; d < 420; d++) expect(Math.abs(closeWeight(d, v) - closeWeight(d + 1, v))).toBeLessThan(0.03);
-    // In town, 8 m/s: starts later in metres (but a similar number of seconds out).
-    expect(closeWeight(200, 8)).toBe(0);
-    expect(closeWeight(50, 8)).toBe(1);
+  it('is at 20 m within 100 m either side of every junction, easing in before and out after', () => {
+    for (const v of [0, 8, 16, 25, 33]) {
+      // All the way in from 100 m before to 100 m after, at every speed.
+      for (const d of [100, 60, 0, -60, -100]) expect(closeWeight(d, v), `${d} m at ${v} m/s`).toBe(1);
+      // Normal again well before and after.
+      expect(closeWeight(450, v)).toBe(0);
+      expect(closeWeight(-181, v)).toBe(0);
+      expect(closeWeight(-140, v)).toBeGreaterThan(0);
+      expect(closeWeight(-140, v)).toBeLessThan(1);
+      // Smooth all the way: no jumps between neighbouring metres.
+      for (let d = -200; d < 460; d++) expect(Math.abs(closeWeight(d, v) - closeWeight(d + 1, v))).toBeLessThan(0.03);
+    }
+    // At expressway speed the zoom starts earlier, so the camera (about 1.5 s behind) is in by 100 m.
+    expect(closeWeight(130, 25)).toBe(1);
+    expect(closeWeight(130, 0)).toBeLessThan(1);
+    expect(closeWeight(280, 25)).toBeGreaterThan(0);
   });
 
   it('turns the weight into a scale between the normal one and 20 m', () => {
