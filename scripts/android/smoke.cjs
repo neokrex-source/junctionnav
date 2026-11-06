@@ -27,6 +27,24 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   if (!device) throw new Error('No Android device or emulator found');
   report.info.device = `${device.model()} (${device.serial()})`;
   const shot = async (name) => device.screenshot({ path: path.join(out, `${name}.png`) });
+  // The emulator runs slowly, and its own apps (launcher, Messages) sometimes stop answering; the
+  // "isn't responding" dialog then takes the back key meant for JunctionNav. Ask Android not to
+  // show those, and before each back press tap "Wait" on any that still appears.
+  for (const cmd of ['settings put global hide_error_dialogs 1', 'settings put secure anr_show_background 0', 'pm disable-user --user 0 com.google.android.apps.messaging']) {
+    await device.shell(cmd).catch(() => {});
+  }
+  const back = async () => {
+    for (let i = 0; i < 3; i++) {
+      const focus = (await device.shell('dumpsys window | grep -m1 mCurrentFocus')).toString();
+      if (!/Not Responding|isn't responding|Application Error/i.test(focus)) break;
+      report.problems.push(`system dialog in the way: ${focus.trim().slice(0, 160)}`);
+      const wait = await device.wait({ text: 'Wait' }, { timeout: 2000 }).then(() => true, () => false);
+      if (wait) await device.tap({ text: 'Wait' }).catch(() => {});
+      else await device.shell('am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS').catch(() => {});
+      await sleep(800);
+    }
+    await device.shell('input keyevent KEYCODE_BACK');
+  };
 
   await device.installApk(fs.readFileSync(apk));
   // As if the user tapped "Allow" on the location prompt, and a GPS fix in Kuala Lumpur.
@@ -168,7 +186,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   await page.$eval('dialog.settings .off', (el) => el.scrollIntoView({ block: 'center' }));
   await sleep(2500);
   await shot('3-settings-offline');
-  await device.shell('input keyevent KEYCODE_BACK');
+  await back();
   await sleep(1200);
   const closed = await page.evaluate(() => !document.querySelector('dialog[open]'));
   check('back button closes Settings', closed);
@@ -258,7 +276,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     window.__hidden = false;
     document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && (window.__hidden = true));
   });
-  await device.shell('input keyevent KEYCODE_BACK');
+  await back();
   // The emulator draws the map and the 3D view in software, so give the app up to 10 s.
   let top = '';
   let wentHidden = null;
@@ -304,7 +322,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     await page.$eval('dialog.settings #appMode', (el) => el.scrollIntoView({ block: 'center' }));
     await sleep(1200);
     await shot('6-settings-website-mode');
-    await device.shell('input keyevent KEYCODE_BACK');
+    await back();
     await sleep(1000);
     await page.evaluate(() => {
       void window.__app.setAppMode('built-in');
