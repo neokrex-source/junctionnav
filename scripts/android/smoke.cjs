@@ -33,7 +33,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   for (const cmd of ['settings put global hide_error_dialogs 1', 'settings put secure anr_show_background 0', 'pm disable-user --user 0 com.google.android.apps.messaging']) {
     await device.shell(cmd).catch(() => {});
   }
-  const back = async () => {
+  const pressBack = async () => {
     for (let i = 0; i < 3; i++) {
       const focus = (await device.shell('dumpsys window | grep -m1 mCurrentFocus')).toString();
       if (!/Not Responding|isn't responding|Application Error/i.test(focus)) break;
@@ -186,7 +186,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   await page.$eval('dialog.settings .off', (el) => el.scrollIntoView({ block: 'center' }));
   await sleep(2500);
   await shot('3-settings-offline');
-  await back();
+  await pressBack();
   await sleep(1200);
   const closed = await page.evaluate(() => !document.querySelector('dialog[open]'));
   check('back button closes Settings', closed);
@@ -276,7 +276,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     window.__hidden = false;
     document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && (window.__hidden = true));
   });
-  await back();
+  await pressBack();
   // The emulator draws the map and the 3D view in software, so give the app up to 10 s.
   let top = '';
   let wentHidden = null;
@@ -322,15 +322,15 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     await page.$eval('dialog.settings #appMode', (el) => el.scrollIntoView({ block: 'center' }));
     await sleep(1200);
     await shot('6-settings-website-mode');
-    await back();
+    await pressBack();
     await sleep(1000);
     await page.evaluate(() => {
       void window.__app.setAppMode('built-in');
     });
     await page.waitForFunction(() => window.__appCopy === 'built-in' && !!window.__app, null, { timeout: 60_000, polling: 1000 });
     await sleep(2000);
-    const back = await page.evaluate(() => ({ copy: window.__appCopy, signedIn: !document.querySelector('.auth:not([hidden])') }));
-    check('switches back to the built-in version', back.copy === 'built-in' && back.signedIn, back);
+    const builtIn = await page.evaluate(() => ({ copy: window.__appCopy, signedIn: !document.querySelector('.auth:not([hidden])') }));
+    check('switches back to the built-in version', builtIn.copy === 'built-in' && builtIn.signedIn, builtIn);
   } catch (e) {
     check('website mode', false, String(e?.message ?? e).slice(0, 400));
   }
