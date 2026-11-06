@@ -8,7 +8,7 @@
 import type { LngLat } from '../geo/geo';
 import type { Route } from '../routing/types';
 import { fetchNews } from './news';
-import { boxAhead, incidentsOnRoute, newsForRoute, pointsAhead, recentNews, routeRoads, routeTimeFrom } from './onRoute';
+import { boxAhead, incidentDelayAhead, incidentsOnRoute, newsForRoute, pointsAhead, recentNews, routeRoads, routeTimeFrom } from './onRoute';
 import { TomTomTraffic, type Bbox } from './tomtom';
 import type { Incident, NewsItem, RouteIncident, TrafficEta } from './types';
 
@@ -53,6 +53,8 @@ export class TrafficService {
   newsUpdated = '';
   /** The last TomTom problem, for Settings and the traffic list ('' when fine). */
   error = '';
+  /** When the incidents last arrived (ms). */
+  incidentsAt = -Infinity;
   /** Called whenever any of the above changes. */
   onChange: (() => void) | null = null;
 
@@ -65,6 +67,8 @@ export class TrafficService {
   private incBusy = false;
   private etaAt = -Infinity;
   private etaBusy = false;
+  /** What the incidents ahead added up to when the travel time was asked, to ask again when that changes. */
+  private incDelayAtEta = 0;
   private altsAt = -Infinity;
   private altsBusy = false;
   private newsAt = -Infinity;
@@ -110,6 +114,7 @@ export class TrafficService {
     if (!this.route) return;
     this.eta = eta;
     this.etaAt = eta.at;
+    this.incDelayAtEta = incidentDelayAhead(this.onRoute, eta.fromS);
     this.onChange?.();
   }
 
@@ -162,6 +167,7 @@ export class TrafficService {
       .then((list) => {
         if (signal.aborted || this.route) return;
         this.incidents = list;
+        this.incidentsAt = this.now();
         this.error = '';
         this.onChange?.();
       })
@@ -179,7 +185,7 @@ export class TrafficService {
     this.eta = null;
     this.altEtas = [];
     this.error = '';
-    this.incAt = this.etaAt = this.browseAt = -Infinity;
+    this.incAt = this.etaAt = this.browseAt = this.incidentsAt = -Infinity;
     this.browseBox = null;
     this.onChange?.();
   }
@@ -225,8 +231,11 @@ export class TrafficService {
       const list = await this.tomtom.incidents(bbox, signal);
       if (signal.aborted || this.route !== route) return;
       this.incidents = list;
+      this.incidentsAt = this.now();
       this.incToS = toS;
       this.onRoute = incidentsOnRoute(route, list, Math.max(0, this.s - 50)).filter((i) => i.s <= toS + 500);
+      // Traffic ahead got clearly better or worse: a fresh travel time now rather than in a few minutes.
+      if (this.eta && Math.abs(incidentDelayAhead(this.onRoute, this.s) - this.incDelayAtEta) >= 120 && this.now() - this.etaAt > 60_000) this.etaAt = -Infinity;
       this.error = '';
       this.onChange?.();
     } catch (err) {
@@ -245,6 +254,7 @@ export class TrafficService {
       const r = await this.tomtom.travelTime(pointsAhead(route, s, 300, 100), signal);
       if (signal.aborted || this.route !== route) return;
       this.eta = { ...r, fromS: s, at: this.now(), base: routeTimeFrom(route, s) };
+      this.incDelayAtEta = incidentDelayAhead(this.onRoute, s);
       this.error = '';
       this.onChange?.();
     } catch (err) {
@@ -273,6 +283,7 @@ export class TrafficService {
       const main = await this.tomtom.travelTime(pointsAhead(route, s, 300, 100), signal);
       if (signal.aborted || this.route !== route) return;
       this.eta = { ...main, fromS: s, at: this.now(), base: routeTimeFrom(route, s) };
+      this.incDelayAtEta = incidentDelayAhead(this.onRoute, s);
       const out: AltEta[] = [];
       for (const { alt, pr } of todo) {
         const r = await this.tomtom.travelTime(pointsAhead(alt, pr.s, 300, 100), signal).catch(() => null);

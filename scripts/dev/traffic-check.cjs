@@ -132,7 +132,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const ctx = await browser.newContext({ viewport: { width: 412, height: 860 }, geolocation: { latitude: O[1], longitude: O[0] }, permissions: ['geolocation'] });
-  const calls = { incidents: 0, legacy: 0, route: 0, flow: 0, news: 0 };
+  const calls = { incidents: 0, legacy: 0, route: 0, flow: 0, news: 0, failRouting: false };
   await ctx.route('**/*', async (r) => {
     const u = r.request().url();
     if (u.includes('api.tomtom.com')) {
@@ -146,6 +146,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       }
       if (u.includes('/calculateRoute/')) {
         calls.route++;
+        if (calls.failRouting) return r.fulfill({ status: 503, body: '{}', headers: { 'Access-Control-Allow-Origin': '*' } });
         const body = JSON.parse(r.request().postData() || '{}');
         const pts = body.supportingPoints ?? [];
         const mid = pts[Math.floor(pts.length / 2)];
@@ -377,6 +378,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const after = await page.evaluate(() => ({ summary: window.__app.engine.route.summary, toast: document.querySelector('.toast.is-on')?.textContent ?? '', faster: !document.querySelector('.faster').hidden }));
   await shot('6-switched');
   check('switching takes the faster route', after.summary !== before && /faster route/.test(after.toast), { before, after });
+
+  // ---- no travel time from TomTom: the arrival time counts the incidents' delays instead
+  calls.failRouting = true;
+  await page.evaluate(() => window.__app.endNav());
+  await page.waitForFunction(() => window.__app.routes.length === 2 && !window.__app.routesLoading, null, { timeout: 20_000 });
+  await page.evaluate(() => {
+    const app = window.__app;
+    app.selectRoute(0);
+    app.startNav(true);
+    app.sim.paused = true;
+  });
+  await page.waitForFunction(() => window.__app.traffic.onRoute.length >= 2, null, { timeout: 20_000 }).catch(() => {});
+  await page.evaluate(() => window.__app.traffic.tick(window.__app.engine.progress?.s ?? 0));
+  await sleep(1500);
+  const fallback = await page.evaluate(() => ({
+    eta: window.__app.traffic.eta,
+    sub: document.querySelector('.eta-sub')?.textContent,
+    main: document.querySelector('.eta-main')?.textContent,
+    base: Math.round(window.__app.engine.progress?.remainingTime ?? 0),
+  }));
+  // Jam 8 min plus accident 5 min ahead: 13 min on top of the route's own time.
+  check('without a travel time, the arrival time counts the incidents ahead', fallback.eta === null && /\+13 min traffic/.test(fallback.sub ?? ''), fallback);
+  calls.failRouting = false;
 
   // ---- night
   await page.evaluate(() => {

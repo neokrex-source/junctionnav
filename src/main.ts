@@ -52,7 +52,7 @@ import { BUILT_IN, NATIVE, TRAFFIC_NEWS_URL } from './platform';
 import { incidentColor, incidentIconUrl, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
 import { jamSvg } from './ui/trafficIcon';
 import { fasterAlternative, TrafficService } from './traffic/service';
-import { routeTimeFrom, trafficRemaining } from './traffic/onRoute';
+import { incidentDelayAhead, routeTimeFrom, trafficRemaining } from './traffic/onRoute';
 import { kindName, minutes, newsKindName, tt, warningSpeech, worthWarning, fasterSpeech } from './traffic/texts';
 import { roadName } from './traffic/roads';
 import type { Incident, NewsItem, RouteIncident } from './traffic/types';
@@ -64,6 +64,8 @@ const CLOSE_UP_AT = new Set<ManeuverType>(['turn', 'fork', 'off ramp', 'on ramp'
 const KL: LngLat = [101.6869, 3.139];
 /** The traffic chip opens into a card with the details this close to an incident on the route. */
 const TRAFFIC_CARD_WITHIN = 500;
+/** Traffic answers older than this no longer count for the arrival time. */
+const TRAFFIC_FRESH = 15 * 60_000;
 const MAX_STOPS = 3;
 type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic';
 type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
@@ -2404,11 +2406,28 @@ class App {
     }
   }
 
-  /** Time to go and traffic delay from where the car is, with live traffic (fresh answers only). */
-  private trafficNow(p: Progress): { time: number; delay: number } | null {
+  /**
+   * Time to go and the traffic delay from where the car is (and to the next stop), with live
+   * traffic: TomTom's travel time for the route when it is fresh, else the delays the incidents
+   * ahead report. Null without fresh traffic.
+   */
+  private trafficNow(p: Progress): { time: number; delay: number; stopTime: number | null } | null {
+    if (!this.traffic.live) return null;
+    const now = Date.now();
+    const stopBase = p.nextStop ? Math.max(0, (p.nextStop.eta.getTime() - now) / 1000) : null;
     const eta = this.traffic.eta;
-    if (!eta || !this.traffic.live || Date.now() - eta.at > 15 * 60_000 || eta.fromS > p.s + 100) return null;
-    return trafficRemaining(eta, p.remainingTime);
+    if (eta && now - eta.at <= TRAFFIC_FRESH && eta.fromS <= p.s + 100) {
+      const r = trafficRemaining(eta, p.remainingTime);
+      return { ...r, stopTime: stopBase == null ? null : trafficRemaining(eta, stopBase).time };
+    }
+    if (now - this.traffic.incidentsAt <= TRAFFIC_FRESH) {
+      const delay = incidentDelayAhead(this.traffic.onRoute, p.s);
+      if (delay >= 60) {
+        const stopDelay = p.nextStop ? incidentDelayAhead(this.traffic.onRoute, p.s, p.s + p.nextStop.dist) : 0;
+        return { time: p.remainingTime + delay, delay, stopTime: stopBase == null ? null : stopBase + stopDelay };
+      }
+    }
+    return null;
   }
 
   private paintEta(p: Progress) {
@@ -2417,9 +2436,10 @@ class App {
     const left = tr?.time ?? p.remainingTime;
     this.el.etaMain.innerHTML = `${this.clock(new Date(Date.now() + left * 1000))}<small>${this.tr('arrival')}</small>`;
     const sub = this.el.etaSub;
-    sub.textContent = p.nextStop
-      ? `${this.tr('stop')} ${p.nextStop.number}: ${this.clock(p.nextStop.eta)} · ${formatDistance(p.nextStop.dist, units)}`
-      : `${formatDuration(left)} · ${formatDistance(p.remaining, units)}`;
+    if (p.nextStop) {
+      const stopAt = tr?.stopTime != null ? new Date(Date.now() + tr.stopTime * 1000) : p.nextStop.eta;
+      sub.textContent = `${this.tr('stop')} ${p.nextStop.number}: ${this.clock(stopAt)} · ${formatDistance(p.nextStop.dist, units)}`;
+    } else sub.textContent = `${formatDuration(left)} · ${formatDistance(p.remaining, units)}`;
     if (tr && tr.delay >= 60) {
       const share = tr.delay / Math.max(60, tr.time);
       sub.append(' ', h('span', { class: `eta-traffic is-${share >= 0.25 ? 'major' : share >= 0.1 ? 'moderate' : 'minor'}` }, tt(this.L, 'trafficDelay', { m: minutes(tr.delay) })));

@@ -122,3 +122,34 @@ export function trafficRemaining(eta: TrafficEta, baseNow: number): { time: numb
   const k = eta.base > 0 ? Math.max(0, Math.min(1.5, baseNow / eta.base)) : 1;
   return { time: eta.travelTime * k, delay: eta.delay * k };
 }
+
+/**
+ * Time lost to the incidents on the route between `s` and `toS`, seconds: each incident's delay,
+ * or the share still ahead of one the car is already in. Incidents that overlap (an accident and
+ * the queue behind it are often reported apart) count once, with the larger delay. Closures report
+ * no delay; they need a new route, not a later arrival.
+ */
+export function incidentDelayAhead(list: RouteIncident[], s: number, toS = Infinity): number {
+  const parts = list
+    .filter((i) => i.endS > s && i.s < toS && i.delay > 0)
+    .map((i) => {
+      const len = Math.max(1, i.endS - i.s);
+      const share = Math.max(0, Math.min(1, (Math.min(toS, i.endS) - Math.max(s, i.s)) / len));
+      return { a: i.s, b: i.endS, d: i.delay * share };
+    })
+    .sort((x, y) => x.a - y.a);
+  let total = 0;
+  let end = -Infinity;
+  let best = 0;
+  for (const p of parts) {
+    if (p.a < end) {
+      best = Math.max(best, p.d);
+      end = Math.max(end, p.b);
+    } else {
+      total += best;
+      best = p.d;
+      end = p.b;
+    }
+  }
+  return total + best;
+}

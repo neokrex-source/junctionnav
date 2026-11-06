@@ -3,11 +3,11 @@ import { LocalFrame, type LngLat } from '../src/geo/geo';
 import { normalizeOsrm, type OsrmResponse } from '../src/routing/osrm';
 import type { Route } from '../src/routing/types';
 import { parseNews } from '../src/traffic/news';
-import { boxAhead, incidentsOnRoute, newsForRoute, pointsAhead, routeTimeFrom, trafficRemaining } from '../src/traffic/onRoute';
+import { boxAhead, incidentDelayAhead, incidentsOnRoute, newsForRoute, pointsAhead, routeTimeFrom, trafficRemaining } from '../src/traffic/onRoute';
 import { roadName, roadsInText, roadsOfSteps } from '../src/traffic/roads';
 import { fasterAlternative, TrafficService, type AltEta } from '../src/traffic/service';
 import { bboxArea, kindOf, normalizeIncident, TomTomTraffic } from '../src/traffic/tomtom';
-import type { Incident, NewsItem } from '../src/traffic/types';
+import type { Incident, NewsItem, RouteIncident } from '../src/traffic/types';
 
 const f = new LocalFrame([101.69, 3.14]);
 const P = (x: number, y: number): LngLat => f.toLngLat(x, y);
@@ -159,6 +159,32 @@ describe('incidents on the route', () => {
   });
 });
 
+describe('delay from the incidents ahead', () => {
+  const ri = (id: string, s: number, endS: number, delay: number, kind: Incident['kind'] = 'jam'): RouteIncident => ({ ...inc(id, []), kind, s, endS, delay });
+
+  it('adds up what is ahead, and the rest of the one the car is in', () => {
+    const list = [ri('a', 1000, 2000, 300), ri('b', 5000, 5400, 120)];
+    expect(incidentDelayAhead(list, 0)).toBe(420);
+    expect(incidentDelayAhead(list, 1500)).toBe(270);
+    expect(incidentDelayAhead(list, 3000)).toBe(120);
+    expect(incidentDelayAhead(list, 6000)).toBe(0);
+  });
+
+  it('stops at a stop along the way', () => {
+    const list = [ri('a', 1000, 2000, 300), ri('b', 5000, 5400, 120)];
+    expect(incidentDelayAhead(list, 0, 4000)).toBe(300);
+    expect(incidentDelayAhead(list, 0, 1500)).toBe(150);
+  });
+
+  it('counts an accident and the queue behind it once', () => {
+    expect(incidentDelayAhead([ri('queue', 1000, 2000, 480), ri('crash', 1900, 2000, 300, 'accident')], 0)).toBe(480);
+  });
+
+  it('gives closures no delay', () => {
+    expect(incidentDelayAhead([ri('c', 1000, 1500, 0, 'closure')], 0)).toBe(0);
+  });
+});
+
 describe('traffic news', () => {
   const now = Date.parse('2026-11-06T08:00:00Z');
   const item = (title: string, roads: string[], hoursAgo: number): NewsItem => ({
@@ -262,6 +288,38 @@ describe('traffic service', () => {
     // Past the jam: it drops off the list.
     svc.tick(7000);
     expect(svc.onRoute).toHaveLength(0);
+  });
+
+  it('asks for a new travel time at once when traffic ahead changes', async () => {
+    let delay = 240;
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${init?.method ?? 'GET'} ${url}`);
+        const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        if (url.includes('/incidents/details'))
+          return json({ incidents: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [P(2, 6000), P(2, 6800)] }, properties: { id: 'j1', iconCategory: 'jam', magnitudeOfDelay: 'major', lengthInMeters: 800, delayInSeconds: delay } }] });
+        return json({ routes: [{ summary: { travelTimeInSeconds: 1500 + delay, trafficDelayInSeconds: delay } }] });
+      }),
+    );
+    let now = 1_000_000;
+    const svc = new TrafficService({ key: () => 'k', newsUrl: () => '', newsOn: () => false, incidentsOn: () => true, now: () => now, online: () => true });
+    svc.setRoute(r);
+    svc.tick(0);
+    await vi.waitFor(() => expect(svc.eta?.delay).toBe(240));
+    await vi.waitFor(() => expect(svc.onRoute).toHaveLength(1));
+    const etaCalls = () => calls.filter((c) => c.includes('/calculateRoute/')).length;
+    expect(etaCalls()).toBe(1);
+    // Four minutes on, the jam is much worse: the incidents come in, and the travel time follows
+    // right away instead of a minute later.
+    delay = 900;
+    now += 4 * 60_000 + 1000;
+    svc.tick(500);
+    await vi.waitFor(() => expect(svc.onRoute[0]?.delay).toBe(900));
+    svc.tick(510);
+    await vi.waitFor(() => expect(svc.eta?.delay).toBe(900));
+    expect(etaCalls()).toBe(2);
   });
 
   it('does nothing with TomTom without a key', async () => {
