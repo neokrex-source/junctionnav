@@ -200,6 +200,9 @@ export interface FollowOptions {
   close?: number;
 }
 
+/** Route opacities while live traffic shows under it. */
+export const ROUTE_SEE_THROUGH: Record<string, number> = { 'route-line': 0.5, 'route-casing': 0.22, 'route-glow': 0.35 };
+
 export class MapView {
   readonly map: maplibregl.Map;
   private puck: maplibregl.Marker;
@@ -771,7 +774,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-gradient': this.gradient('glow'), 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin) },
+        paint: { 'line-gradient': this.gradient('glow'), 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin), 'line-opacity': this.routeOpacity('route-glow') },
       },
       before,
     );
@@ -781,7 +784,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-gradient': this.gradient('casing'), 'line-width': routeWidth('route-casing', this.thin) },
+        paint: { 'line-gradient': this.gradient('casing'), 'line-width': routeWidth('route-casing', this.thin), 'line-opacity': this.routeOpacity('route-casing') },
       },
       before,
     );
@@ -794,6 +797,7 @@ export class MapView {
         paint: {
           'line-width': routeWidth('route-line', this.thin),
           'line-gradient': this.gradient('line'),
+          'line-opacity': this.routeOpacity('route-line'),
         },
       },
       before,
@@ -893,6 +897,28 @@ export class MapView {
   }
 
   /** Repaints the route's colours (the driven part changes often; the junction stretches with the route). */
+  /**
+   * See-through route (with live traffic on): the line, its edge and glow let the congestion
+   * colours under them show, so a red road stays red under the route.
+   */
+  private seeThrough = false;
+
+  setRouteSeeThrough(on: boolean) {
+    if (on === this.seeThrough) return;
+    this.seeThrough = on;
+    const m = this.map;
+    for (const id of ['route-line', 'route-casing', 'route-glow']) if (m.getLayer(id)) m.setPaintProperty(id, 'line-opacity', this.routeOpacity(id));
+  }
+
+  get routeSeeThrough(): boolean {
+    return this.seeThrough;
+  }
+
+  private routeOpacity(id: string): number {
+    if (!this.seeThrough) return 1;
+    return ROUTE_SEE_THROUGH[id] ?? 1;
+  }
+
   private paintRoute(all = true) {
     const m = this.map;
     if (!m.getLayer('route-line')) return;

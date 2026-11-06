@@ -1457,49 +1457,53 @@ button { cursor: pointer; }
 .tc-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .faster {
-  display: grid;
-  grid-template-columns: auto 1fr;
+  display: flex;
   align-items: center;
-  gap: 6px 10px;
-  padding: 10px 12px;
-  border-left: 4px solid var(--ok);
+  gap: 8px;
+  height: max(36px, 5vh);
+  padding: 0 2px 0 12px;
+  border-radius: 999px;
+  box-shadow: var(--shadow), var(--edge), inset 4px 0 0 var(--ok);
+  min-width: 0;
 }
-.fa-ico .ico { width: 20px; height: 20px; color: var(--ok); display: block; }
-.fa-text { font: 700 16px/1.2 var(--font-cond); }
-.fa-btns { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
-.fa-btns .btn { padding: 6px 14px; min-height: 36px; flex: 0 0 auto; }
+.fa-ico .ico { width: 18px; height: 18px; color: var(--ok); display: block; }
+.fa-text { flex: 1; min-width: 0; font: 700 15px/1 var(--font-cond); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.faster .fa-take { flex: none; min-height: 0; height: min(30px, calc(max(36px, 5vh) - 8px)); padding: 0 12px; font-size: 14px; border-radius: 999px; }
+.faster .fa-keep { flex: none; padding: 4px; font-size: 16px; }
 @media (max-width: 480px) {
   .traffic-chip, .traffic-card, .faster, .nav-stack > .sim { margin-right: 66px; }
 }
 
-/* Within 500 m of an incident on the route the chip opens into this card. */
+/* Within 500 m of an incident on the route the chip opens into this slim bar (about 5% of the screen). */
 .traffic-card {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: start;
-  gap: 4px 12px;
-  padding: 12px 8px 12px 12px;
-  box-shadow: var(--shadow), var(--edge), inset 5px 0 0 var(--tc, var(--route));
-  background: color-mix(in srgb, var(--tc, var(--route)) 10%, var(--surface-solid));
-  transform-origin: 0 100%;
+  align-self: flex-start;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: max(36px, 5vh);
+  padding: 0 2px 0 6px;
+  border-radius: 999px;
+  box-shadow: var(--shadow), var(--edge), inset 0 0 0 2px var(--tc, var(--route));
+  background: color-mix(in srgb, var(--tc, var(--route)) 12%, var(--surface-solid));
+  transform-origin: 0 50%;
   cursor: pointer;
 }
 .traffic-card[hidden] { display: none; }
-.traffic-card.is-in { animation: tcard-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.traffic-card.is-in { animation: tcard-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
 @keyframes tcard-in {
-  from { opacity: 0; transform: translateY(14px) scale(0.9); }
+  from { opacity: 0; transform: scale(0.85); }
 }
 @media (prefers-reduced-motion: reduce) {
   .traffic-card.is-in { animation: none; }
 }
-.tcard-icon { width: 52px; height: 52px; display: block; margin-left: 2px; }
-.tcard-body { display: grid; gap: 2px; min-width: 0; }
-.tcard-title { font: 700 19px/1.15 var(--font-cond); }
-.tcard-dist { font: 700 26px/1.05 var(--font-cond); font-variant-numeric: tabular-nums; color: var(--tc, var(--ink)); }
+.tcard-icon { width: 26px; height: 26px; flex: none; display: block; }
+.tcard-line { min-width: 0; display: flex; align-items: baseline; gap: 7px; white-space: nowrap; overflow: hidden; font: 700 15px/1 var(--font-cond); }
+.tcard-title { overflow: hidden; text-overflow: ellipsis; }
+.tcard-dist { flex: none; font-size: 17px; font-variant-numeric: tabular-nums; color: var(--tc, var(--ink)); }
 :root[data-theme="dark"] .tcard-dist { color: color-mix(in srgb, var(--tc) 55%, #fff); }
-.tcard-facts { font: 700 15px/1.2 var(--font-cond); }
-.tcard-where { color: var(--muted); font-size: 13px; line-height: 1.3; }
-.tcard-close { align-self: start; }
+.tcard-facts { flex: none; color: var(--muted); }
+.tcard-close { flex: none; padding: 4px; font-size: 16px; }
 
 .traffic-list { display: grid; gap: 6px; }
 .traffic-list h3 { margin: 10px 0 2px; font: 700 15px/1.2 var(--font-cond); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }

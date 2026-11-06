@@ -2374,6 +2374,8 @@ class App {
   private syncTrafficFlow() {
     const on = !ARTIFACT && !this.demo && this.traffic.live;
     this.trafficLayer.setFlow(on ? this.traffic.tomtom.flowTiles(this.flowVariant, isNight(this.settings)) : null);
+    // The congestion colours show through the route line.
+    this.map.setRouteSeeThrough(on);
     if (!on) this.trafficLayer.setIncidents([], [], null);
   }
 
@@ -2498,21 +2500,19 @@ class App {
         this.hideTrafficCard();
         if (this.engine.progress) this.paintTrafficChip(this.engine.progress);
       });
-      const road = i.from && i.to ? tt(L, 'from', { a: i.from, b: i.to }) : i.from || i.to || '';
-      const desc = i.description && i.description.toLowerCase() !== kindName('en', i.kind).toLowerCase() ? i.description : '';
-      const facts = [i.delay >= 60 ? tt(L, 'delay', { m: minutes(i.delay) }) : '', i.endS - i.s > 60 ? tt(L, 'long', { d: formatDistance(i.endS - i.s, units) }) : ''].filter(Boolean).join(' · ');
+      // One slim line: what, how far, the delay. The rest is a tap away in the traffic list.
       card.append(
         h('img', { class: 'tcard-icon', src: incidentIconUrl(i.kind), alt: '' }),
         h(
-          'div',
-          { class: 'tcard-body' },
+          'span',
+          { class: 'tcard-line' },
           h('strong', { class: 'tcard-title' }, kindName(L, i.kind)),
-          h('span', { class: 'tcard-dist' }),
-          facts ? h('span', { class: 'tcard-facts' }, facts) : null,
-          desc || road ? h('span', { class: 'tcard-where' }, [desc, road].filter(Boolean).join(' · ')) : null,
+          h('b', { class: 'tcard-dist' }),
+          i.delay >= 60 ? h('span', { class: 'tcard-facts' }, tt(L, 'delay', { m: minutes(i.delay) })) : null,
         ),
         close,
       );
+      card.title = [i.description, i.from && i.to ? tt(L, 'from', { a: i.from, b: i.to }) : ''].filter(Boolean).join(' · ');
       card.hidden = false;
       // Pops open from the chip.
       card.classList.remove('is-in');
@@ -2521,7 +2521,7 @@ class App {
     }
     const d = i.s - p.s;
     const dist = card.querySelector('.tcard-dist');
-    const text = d > 15 ? tt(L, 'ahead', { d: formatDistance(d, units) }) : tt(L, 'forNext', { d: formatDistance(Math.max(0, i.endS - p.s), units) });
+    const text = d > 15 ? tt(L, 'ahead', { d: formatDistance(d, units) }) : tt(L, 'left', { d: formatDistance(Math.max(0, i.endS - p.s), units) });
     if (dist && dist.textContent !== text) dist.textContent = text;
   }
 
@@ -2541,13 +2541,13 @@ class App {
     const declined = this.fasterDeclined.get(best.route);
     if (declined != null && best.save < declined + 300) return this.hideFaster();
     const isNew = this.faster?.route !== best.route;
-    const text = tt(this.L, 'faster', { via: best.route.summary || '…', m: minutes(best.save) });
+    const text = tt(this.L, 'fasterShort', { via: best.route.summary || '…', m: minutes(best.save) });
     this.faster = { route: best.route, s: best.s, save: best.save };
     const el = this.el.faster;
     // Same offer as on screen: leave the buttons alone (a tap may be under way).
     if (!isNew && !el.hidden && el.dataset.text === text) return;
     el.dataset.text = text;
-    const take = h('button', { class: 'btn btn-primary', type: 'button' }, tt(this.L, 'switch'));
+    const take = h('button', { class: 'btn btn-primary fa-take', type: 'button' }, tt(this.L, 'switch'));
     take.addEventListener('click', () => {
       const f = this.faster;
       if (!f) return;
@@ -2555,13 +2555,14 @@ class App {
       this.takeAlternative(f.route, pr.s);
       toast(tt(this.L, 'switched'), 3500);
     });
-    const keep = h('button', { class: 'btn btn-ghost', type: 'button' }, tt(this.L, 'keep'));
+    const keep = h('button', { class: 'mini fa-keep', type: 'button', html: ICON.close, 'aria-label': tt(this.L, 'keep'), title: tt(this.L, 'keep') });
     keep.addEventListener('click', () => {
       if (this.faster) this.fasterDeclined.set(this.faster.route, this.faster.save);
       this.hideFaster();
     });
     el.innerHTML = '';
-    el.append(h('span', { class: 'fa-ico', html: ICON.bolt }), h('span', { class: 'fa-text' }, text), h('span', { class: 'fa-btns' }, keep, take));
+    el.title = tt(this.L, 'faster', { via: best.route.summary || '…', m: minutes(best.save) });
+    el.append(h('span', { class: 'fa-ico', html: ICON.bolt }), h('span', { class: 'fa-text' }, text), take, keep);
     el.hidden = false;
     if (isNew) {
       this.voice.chime();

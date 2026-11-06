@@ -75,7 +75,9 @@ export type TrafficKey =
   | 'ago'
   | 'ahead'
   | 'forNext'
-  | 'long';
+  | 'left'
+  | 'long'
+  | 'fasterShort';
 
 const UI: Record<LangCode, Record<TrafficKey, string>> = {
   en: {
@@ -106,7 +108,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     ago: '{t} ago',
     ahead: '{d} ahead',
     forNext: 'For the next {d}',
+    left: '{d} left',
     long: '{d} long',
+    fasterShort: 'Via {via}: {m} min faster',
   },
   ms: {
     traffic: 'Trafik',
@@ -136,7 +140,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     ago: '{t} lalu',
     ahead: '{d} di hadapan',
     forNext: 'Untuk {d} lagi',
+    left: '{d} lagi',
     long: 'Sepanjang {d}',
+    fasterShort: 'Melalui {via}: {m} min lebih pantas',
   },
   ja: {
     traffic: '交通情報',
@@ -166,7 +172,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     ago: '{t}前',
     ahead: '{d}先',
     forNext: 'この先{d}続きます',
+    left: '残り{d}',
     long: '長さ{d}',
+    fasterShort: '{via}経由: {m}分早い',
   },
 };
 

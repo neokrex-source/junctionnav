@@ -265,7 +265,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('traffic chip shows the next incident', /Slow traffic/.test(nav.chip ?? ''), nav.chip);
   check('arrival time includes traffic', /\+\d+ min traffic/.test(nav.etaSub ?? ''), nav.etaSub);
   check('news on the route flagged', nav.routeNews.length === 1, nav.routeNews);
-  check('faster route offered', /Faster route via Jalan Ampang: saves 15 min/.test(nav.faster ?? ''), nav.faster);
+  check('faster route offered', /Via Jalan Ampang: 15 min faster/.test(nav.faster ?? ''), nav.faster);
+  // Popups stay slim: about 5% of the screen.
+  const fasterBox = await page.evaluate(() => {
+    const r = document.querySelector('.faster:not([hidden])')?.getBoundingClientRect();
+    return r && { h: r.height, share: (r.width * r.height) / (innerWidth * innerHeight), vh: innerHeight };
+  });
+  check('faster route bar is slim (at most 5% of the screen)', fasterBox && fasterBox.share <= 0.05 && fasterBox.h <= Math.max(36, fasterBox.vh * 0.05) + 1, fasterBox);
+  const see = await page.evaluate(() => ['route-line', 'route-casing', 'route-glow'].map((id) => window.__app.map.map.getPaintProperty(id, 'line-opacity')));
+  check('route line is see-through with live traffic on', see[0] === 0.5 && see[1] < 0.5, see);
   check('incident edge drawn along the route', nav.edge > 0, nav.edge);
 
   // Spoken warning: drive up to 1.2 km before the jam.
@@ -298,6 +306,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         shown: !!c && !c.hidden,
         title: c?.querySelector('.tcard-title')?.textContent ?? null,
         dist: c?.querySelector('.tcard-dist')?.textContent ?? null,
+        box: c && !c.hidden ? (({ width, height }) => ({ h: height, share: (width * height) / (innerWidth * innerHeight), vh: innerHeight }))(c.getBoundingClientRect()) : null,
         facts: c?.querySelector('.tcard-facts')?.textContent ?? null,
         icon: !!c?.querySelector('img.tcard-icon')?.getAttribute('src')?.startsWith('data:image/png'),
         chip: document.querySelector('.traffic-chip:not([hidden])')?.textContent ?? null,
@@ -310,10 +319,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const card = await cardNow();
   await shot('3b-traffic-card');
   check('card pops up within 500 m of the jam', card.shown && card.title === 'Slow traffic' && /\d+ m ahead/.test(card.dist ?? '') && card.icon && !card.chip, card);
-  check('card shows the delay and length', /\+8 min · 900 m long/.test(card.facts ?? ''), card.facts);
+  check('card shows the delay', card.facts === '+8 min', card.facts);
+  check('card is slim (at most 5% of the screen)', card.box && card.box.share <= 0.05 && card.box.h <= Math.max(36, card.box.vh * 0.05) + 1, card.box);
   await drive(2700);
   const inside = await cardNow();
-  check('card counts down inside the jam', inside.shown && /For the next \d+ m/.test(inside.dist ?? ''), inside);
+  check('card counts down inside the jam', inside.shown && /^\d+ m left$/.test(inside.dist ?? ''), inside);
   await page.click('.tcard-close');
   await sleep(400);
   const closed = await cardNow();
