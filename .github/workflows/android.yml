@@ -187,7 +187,9 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: node scripts/android/smoke.cjs apk/JunctionNav-debug.apk android-check "${{ needs.apk.outputs.version }}"
+          # After the check the runner shuts the emulator down; now and then it never exits and
+          # the job sits until it times out. A watchdog stops it for good a minute later.
+          script: node scripts/android/smoke.cjs apk/JunctionNav-debug.apk android-check "${{ needs.apk.outputs.version }}"; s=$?; setsid nohup sh -c 'sleep 60; pkill -9 -f qemu-system' >/dev/null 2>&1 & exit $s
       - name: Push the screenshots
         if: always()
         run: |
