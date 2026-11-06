@@ -5,3 +5,4 @@ dist-lab
 server/osrm/data
 dist-artifact
 dist-android
+dist-traffic

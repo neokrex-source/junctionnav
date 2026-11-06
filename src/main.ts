@@ -31,7 +31,7 @@ import type { Avoid, ManeuverType, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
 import { attachSearch, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
 import { PlaceStore } from './state/places';
-import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, type Settings } from './state/settings';
+import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
 import { themeFor } from './theme/palette';
 import { Banner } from './ui/banner';
 import { h, toast } from './ui/dom';
@@ -48,7 +48,13 @@ import { driveQuery, KL_DRIVES, type TestDrive } from './sim/drives';
 import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
-import { BUILT_IN, NATIVE } from './platform';
+import { BUILT_IN, NATIVE, TRAFFIC_NEWS_URL } from './platform';
+import { incidentColor, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
+import { fasterAlternative, TrafficService } from './traffic/service';
+import { routeTimeFrom, trafficRemaining } from './traffic/onRoute';
+import { kindName, minutes, newsKindName, tt, warningSpeech, worthWarning, fasterSpeech } from './traffic/texts';
+import { roadName } from './traffic/roads';
+import type { Incident, NewsItem, RouteIncident } from './traffic/types';
 import type { AppMode, ModeHooks } from './native/appMode';
 
 /** Maneuvers the map zooms in on as they come up (plus every detected split: divider, ramp, exit, entrance). */
@@ -56,8 +62,8 @@ const CLOSE_UP_AT = new Set<ManeuverType>(['turn', 'fork', 'off ramp', 'on ramp'
 
 const KL: LngLat = [101.6869, 3.139];
 const MAX_STOPS = 3;
-type View = 'browse' | 'results' | 'place' | 'directions' | 'nav';
-type NavOverlay = null | 'steps' | 'search' | 'place';
+type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic';
+type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
 
 const svg = (body: string) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
 const S = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
@@ -81,6 +87,9 @@ const ICON = {
   overview: svg(`<path ${S} d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>`),
   recenter: svg(`<circle ${S} cx="12" cy="12" r="7"/><path ${S} d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/>`),
   dot: '<span class="dot" aria-hidden="true"></span>',
+  traffic: svg(`<rect ${S} x="8" y="2.5" width="8" height="19" rx="3"/><circle cx="12" cy="7" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="17" r="1.6" fill="currentColor"/><path ${S} d="M8 6H5.5M8 11H5.5M18.5 6H16M18.5 11H16"/>`),
+  news: svg(`<path ${S} d="M5 5h11v14H6a1 1 0 0 1-1-1zM16 9h3v9a1 1 0 0 1-1 1h-2M8 9h5M8 12.5h5M8 16h3"/>`),
+  bolt: svg(`<path fill="currentColor" d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/>`),
 };
 
 interface Trip {
@@ -191,6 +200,25 @@ class App {
   navDest: LngLat | null = null;
   navPlace: CategoryPlace | null = null;
 
+  /** Live traffic (TomTom, with a key) and traffic news (no key). */
+  traffic = new TrafficService({
+    key: () => tomtomKey(this.settings),
+    newsUrl: () => (ARTIFACT ? '' : TRAFFIC_NEWS_URL),
+    newsOn: () => this.settings.trafficNews && !this.demo,
+    incidentsOn: () => this.settings.trafficMap && !this.demo && !ARTIFACT,
+  });
+  trafficLayer!: TrafficLayer;
+  /** Which TomTom congestion tiles answer for this key. */
+  private flowVariant: 'classic' | 'orbis' = 'classic';
+  /** Incidents already announced on this drive. */
+  private trafficWarned = new Set<string>();
+  /** Travel times with traffic for the routes being compared before a drive. */
+  private planTraffic = new Map<Route, { travelTime: number; delay: number; at: number }>();
+  /** The faster route on offer, and the ones turned down (with what they would have saved). */
+  private faster: { route: Route; s: number; save: number } | null = null;
+  private fasterDeclined = new Map<Route, number>();
+  private fasterCheckedAt = 0;
+
   el = {
     app: h('div', { class: 'app' }),
     map: h('div', { class: 'map', id: 'map' }),
@@ -214,6 +242,8 @@ class App {
     simPlay: h('button', { type: 'button' }, 'Pause') as HTMLButtonElement,
     simSpeed: h('button', { type: 'button' }, '×1') as HTMLButtonElement,
     fabs: h('div', { class: 'fabs' }),
+    trafficChip: h('button', { class: 'traffic-chip card', type: 'button', hidden: true }) as HTMLButtonElement,
+    faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
   get L() {
@@ -356,6 +386,8 @@ class App {
     const e = this.el;
     document.body.append(e.app);
     e.app.append(e.map);
+    // The layout keys off the view (the map buttons show only while browsing on phones).
+    e.app.dataset.view = this.view;
     this.applyTheme();
     // The hosted preview can only draw the bundled demo roads, so never ask for remote tiles there.
     const startStyle = ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : resolveStyle(this.settings, isNight(this.settings));
@@ -385,6 +417,16 @@ class App {
     this.map.setFollowScale(this.settings.mapScale);
     this.map.setUnits(this.settings.units);
     this.map.onRouteClick((idx) => this.selectRoute(idx));
+    // Live traffic over the map.
+    this.trafficLayer = new TrafficLayer(this.map.map, { describe: (i) => this.incidentPopup(i) });
+    this.trafficLayer.onFlowFailing = () => {
+      if (this.flowVariant !== 'classic') return console.warn('[traffic] the congestion tiles do not load for this key');
+      this.flowVariant = 'orbis';
+      this.syncTrafficFlow();
+    };
+    this.traffic.onChange = () => this.onTraffic();
+    this.map.map.on('moveend', () => this.browseTraffic());
+    window.addEventListener('online', () => this.browseTraffic());
 
     this.buildTopbar();
     this.buildNav();
@@ -420,6 +462,8 @@ class App {
       });
 
     void this.initOffline();
+    this.syncTrafficFlow();
+    if (this.settings.trafficNews) void this.traffic.refreshNews(true);
     const tripLink = parseTripLink(location.search);
     // Demo drives and trip links start once someone is signed in.
     this.whenSignedIn(() => {
@@ -476,6 +520,10 @@ class App {
         toast(`Location unavailable: ${(err as Error).message}`);
       }
     });
+    // Traffic: what is happening around here, and the news (browsing the map).
+    const traffic = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Traffic', html: ICON.traffic, id: 'btn-traffic' });
+    traffic.addEventListener('click', () => (this.view === 'traffic' ? this.setView('browse') : this.openTraffic()));
+    if (!ARTIFACT) e.fabs.append(traffic);
     e.fabs.append(locate);
     e.app.append(e.fabs);
   }
@@ -563,7 +611,7 @@ class App {
     const nav = v === 'nav';
     e.topbar.hidden = nav;
     e.searchCard.hidden = v === 'directions';
-    e.chips.hidden = v === 'directions' || v === 'place';
+    e.chips.hidden = v === 'directions' || v === 'place' || v === 'traffic';
     e.dir.hidden = v !== 'directions';
     e.fabs.hidden = nav;
     e.guide.hidden = !nav;
@@ -589,6 +637,7 @@ class App {
     else if (this.view === 'place' && this.place) this.renderPlace(s, this.place);
     else if (this.view === 'directions') this.showSteps ? this.renderStepsSheet(s) : this.renderRoutes(s);
     else if (this.view === 'nav' && this.navOverlay) this.renderNavOverlay(s);
+    else if (this.view === 'traffic') this.renderTraffic(s, false);
     else show = false;
     s.hidden = !show;
     s.scrollTop = 0;
@@ -1047,6 +1096,8 @@ class App {
       this.routes = res.routes;
       this.warnings = res.warnings;
       this.selected = 0;
+      this.planTraffic.clear();
+      void this.loadPlanTraffic(this.routes, ctrl.signal);
       this.map.showRoutes(this.routes, 0);
       this.map.fit(routeBounds(this.routes), this.overviewPadding());
       if (!this.demo) this.places.addRecent(dest);
@@ -1091,14 +1142,26 @@ class App {
     const locale = this.L === 'ja' ? 'ja-JP' : this.L === 'ms' ? 'ms-MY' : 'en-GB';
     this.routes.forEach((r, i) => {
       const jCount = detectJunctions(r).length;
-      const eta = new Date(Date.now() + r.duration * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+      // With live traffic: TomTom's time for this route, and what traffic adds to it.
+      const tr = this.planTraffic.get(r);
+      const dur = tr?.travelTime ?? r.duration;
+      const eta = new Date(Date.now() + dur * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+      const share = tr ? tr.delay / Math.max(60, tr.travelTime) : 0;
+      const traffic = tr
+        ? h(
+            'span',
+            { class: `r-traffic is-${tr.delay < 60 ? 'clear' : share >= 0.25 ? 'major' : share >= 0.1 ? 'moderate' : 'minor'}` },
+            tr.delay < 60 ? tt(this.L, 'noDelays') : tt(this.L, 'trafficDelay', { m: minutes(tr.delay) }),
+          )
+        : null;
       const label = r.label === 'fastest' ? 'fastest' : r.label === 'tollFree' ? 'tollFree' : r.label === 'shortest' ? 'shortest' : 'alternative';
       const b = h(
         'button',
         { class: `route-opt is-${r.label}`, type: 'button', 'aria-pressed': String(i === this.selected) },
         h('span', { class: 'r-label' }, this.tr(label)),
-        h('span', { class: 'r-time' }, formatDuration(r.duration)),
+        h('span', { class: 'r-time' }, formatDuration(dur)),
         h('span', { class: 'r-eta' }, `${this.tr('arrive')} ${eta}`),
+        traffic,
         h('span', { class: 'r-meta' }, `${formatDistance(r.distance, this.settings.units)}${r.summary ? ` · ${this.tr('via')} ${r.summary}` : ''}`),
         h(
           'span',
@@ -1256,6 +1319,8 @@ class App {
   private startDemo(autoStart: boolean) {
     const demo = buildDemo();
     this.demo = true;
+    this.traffic.clear();
+    this.syncTrafficFlow();
     this.router = new DemoRouter();
     this.jdata = new JunctionDataCache(new DemoJunctionProvider());
     this.surr = new SurroundCache(new DemoSurroundProvider());
@@ -1295,6 +1360,7 @@ class App {
 
   private leaveDemo() {
     this.demo = false;
+    this.syncTrafficFlow();
     this.realProviders();
     this.refreshMapSource(true);
     this.trip = { origin: null, stops: [], destination: null };
@@ -1361,7 +1427,15 @@ class App {
       if (!this.settings.voice) this.voice.stop();
     });
     this.paintMute();
-    e.foot.append(h('div', { class: 'eta card' }, h('div', { style: 'min-width:0' }, e.etaMain, e.etaSub), h('div', { class: 'eta-btns' }, find, e.mute, overview, end)), e.speed);
+    // Tapping the arrival time opens the traffic on the route (incidents ahead and the news).
+    const etaText = h('button', { class: 'eta-text', type: 'button', 'aria-label': 'Traffic on the route' }, e.etaMain, e.etaSub);
+    etaText.addEventListener('click', () => this.toggleNavOverlay('traffic'));
+    e.trafficChip.addEventListener('click', () => this.toggleNavOverlay('traffic'));
+    e.foot.append(
+      // The simulator bar sits in the same column, so the traffic cards stay clear of it.
+      h('div', { class: 'nav-stack' }, e.faster, e.trafficChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      e.speed,
+    );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
     // (auto, 1 km, 500 m, 200 m, 100 m: what the scale bar stands for at the car). Pinch zoom or
     // the mouse wheel while following set it too, settling on 100, 150, 200, 300, 500, 700 m or 1 km.
@@ -1424,7 +1498,7 @@ class App {
       this.testCard.button,
       this.testCard.panel,
     );
-    e.app.append(e.guide, e.foot, e.recenter, e.sim);
+    e.app.append(e.guide, e.foot, e.recenter);
   }
 
   /* ================================================================ Android app version */
@@ -1511,6 +1585,8 @@ class App {
         });
         s.append(box);
       }
+    } else if (this.navOverlay === 'traffic') {
+      this.renderTraffic(s, true);
     } else if (this.navOverlay === 'place' && this.navPlace) {
       const pl = this.navPlace;
       s.append(this.sheetHead(pl.name, () => {
@@ -1717,6 +1793,7 @@ class App {
       this.refreshMapSource(true);
     }
     this.map.setTheme(themeFor(night));
+    this.syncTrafficFlow();
     this.sceneCache.clear();
     const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
     if (cand && this.panel.visible) this.showJunction(cand, true);
@@ -1799,9 +1876,16 @@ class App {
     this.navDest = route.geometry[route.geometry.length - 1];
     this.trip.stops = this.trip.stops.filter((p): p is Place => !!p);
     // The other routes from planning are the first alternatives; they are refreshed on the way.
-    this.alts = distinctAlternatives(route, this.routes.filter((_, i) => i !== this.selected));
+    this.traffic.setRoute(route, 0);
+    this.setAlts(distinctAlternatives(route, this.routes.filter((_, i) => i !== this.selected)));
     this.altsAt = Date.now();
     this.altsFromS = 0;
+    this.trafficWarned.clear();
+    this.fasterDeclined.clear();
+    this.hideFaster();
+    // The travel time with traffic from planning, while it is fresh.
+    const planned = this.planTraffic.get(route);
+    if (planned && Date.now() - planned.at < 5 * 60_000 && !simulate) this.traffic.seed({ travelTime: planned.travelTime, delay: planned.delay, fromS: 0, at: planned.at, base: routeTimeFrom(route, 0) });
     this.map.showRoutes([route], 0);
     this.paintJunctions();
     this.map.setDestination(this.navDest);
@@ -1850,6 +1934,10 @@ class App {
     this.wake.off();
     this.voice.stop();
     this.engine.route = null;
+    this.traffic.setRoute(null);
+    this.setAlts([]);
+    this.hideFaster();
+    this.el.trafficChip.hidden = true;
     this.panel.hide();
     this.activeJ = null;
     this.lastFix = null;
@@ -1959,7 +2047,6 @@ class App {
     this.myPos = fix.lngLat;
     if (!this.sim && !fix.dr && Math.random() < 0.05) rememberPosition(fix.lngLat);
     const units = this.settings.units;
-    const locale = this.L === 'ja' ? 'ja-JP' : this.L === 'ms' ? 'ms-MY' : 'en-GB';
 
     this.map.setPuck(p.snapped, p.heading);
     this.map.setProgress(p.s);
@@ -1975,11 +2062,7 @@ class App {
 
     this.driveSimLanes(p);
     this.banner.update(p.next, p.after, p.distToNext, this.L, units, true, p.lane);
-    const eta = p.eta.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-    this.el.etaMain.innerHTML = `${eta}<small>${this.tr('arrival')}</small>`;
-    this.el.etaSub.textContent = p.nextStop
-      ? `${this.tr('stop')} ${p.nextStop.number}: ${p.nextStop.eta.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })} · ${formatDistance(p.nextStop.dist, units)}`
-      : `${formatDuration(p.remainingTime)} · ${formatDistance(p.remaining, units)}`;
+    this.paintEta(p);
     this.tunnelCard.update(this.settings.tunnelAlerts ? p.tunnel : null, { lang: this.L, units, theme: this.themeFor(route), dr: p.dr });
     const kmh = Math.round(p.speed * 3.6);
     this.el.speed.innerHTML = `<div>${units === 'imperial' ? Math.round(kmh / 1.609) : kmh}<small>${units === 'imperial' ? 'mph' : 'km/h'}</small></div>`;
@@ -1997,6 +2080,11 @@ class App {
       }
     }
     this.testRun?.progress(p, prompts, this.settings.tunnelAlerts);
+    // Live traffic: what is due to be asked, warnings for what is ahead, a faster route on offer.
+    this.traffic.tick(p.s);
+    if (!prompts.length) this.trafficWarnings(p);
+    this.paintTrafficChip(p);
+    if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
       toast(describeStep(route.steps.find((st) => st.waypoint === p.stopsPassed) ?? p.next, this.L).action);
@@ -2131,6 +2219,8 @@ class App {
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
     this.tunnels.setRoute(r);
+    this.traffic.setRoute(r, startS);
+    this.hideFaster();
     if (this.sim) {
       this.sim.route = r;
       this.sim.jumpTo(startS);
@@ -2154,16 +2244,26 @@ class App {
     if (!this.alts.length || this.remainingStops().length) return false;
     const m = matchAlternative(this.alts, fix.lngLat, fix.heading ?? null, Math.max(35, Math.min(80, fix.accuracy * 1.5)));
     if (!m) return false;
-    const old = this.engine.route;
-    this.alts = [...this.alts.filter((r) => r !== m.route), ...(old ? [old] : [])].slice(0, 3);
-    this.lastReroute = Date.now();
-    this.applyRoute(m.route, m.s);
+    this.takeAlternative(m.route, m.s);
     const p = this.engine.update(fix);
     const eta = p?.eta.toLocaleTimeString(this.L === 'ja' ? 'ja-JP' : this.L === 'ms' ? 'ms-MY' : 'en-GB', { hour: '2-digit', minute: '2-digit' });
     toast(`On an alternative route${eta ? `, arriving ${eta}` : ''}.`, 4000);
     // Fresh alternatives from here soon.
     this.altsAt = Date.now() - 100_000;
     return true;
+  }
+
+  /** Drive on one of the alternatives from `s` along it; the route left behind becomes an alternative. */
+  private takeAlternative(r: Route, s: number) {
+    const old = this.engine.route;
+    this.setAlts([...this.alts.filter((x) => x !== r), ...(old ? [old] : [])].slice(0, 3));
+    this.lastReroute = Date.now();
+    this.applyRoute(r, s);
+  }
+
+  private setAlts(list: Route[]) {
+    this.alts = list;
+    this.traffic.setAlternatives(list);
   }
 
   /**
@@ -2180,7 +2280,7 @@ class App {
     this.router
       .route({ origin: fix.lngLat, destination: this.navDest, bearing: fix.heading, alternatives: true, avoid: this.settings.avoid })
       .then((res) => {
-        if (this.engine.route === route) this.alts = distinctAlternatives(route, res.routes);
+        if (this.engine.route === route) this.setAlts(distinctAlternatives(route, res.routes));
       })
       .catch(() => {
         /* no connection: keep the ones we have */
@@ -2193,7 +2293,7 @@ class App {
     const H = window.innerHeight;
     const g = this.el.guide.getBoundingClientRect();
     let bottom = H - 70;
-    for (const el of [this.el.foot.querySelector('.eta'), this.el.sim]) {
+    for (const el of [this.el.foot.querySelector('.eta'), this.el.trafficChip, this.el.faster, this.el.sim]) {
       if (!el || (el as HTMLElement).hidden) continue;
       const r = el.getBoundingClientRect();
       if (r.height > 0) bottom = Math.min(bottom, r.top);
@@ -2239,7 +2339,7 @@ class App {
       if (res.warnings.length) toast(res.warnings[0], 5000);
       this.applyRoute(r, 0);
       // The other routes from here are the new alternatives.
-      this.alts = distinctAlternatives(r, res.routes.slice(1));
+      this.setAlts(distinctAlternatives(r, res.routes.slice(1)));
       this.altsAt = Date.now();
       this.altsFromS = 0;
     } catch (err) {
@@ -2248,6 +2348,291 @@ class App {
       this.rerouting = false;
       this.el.reroute.hidden = true;
     }
+  }
+
+  /* ================================================================ live traffic */
+
+  private locale(): string {
+    return this.L === 'ja' ? 'ja-JP' : this.L === 'ms' ? 'ms-MY' : 'en-GB';
+  }
+
+  private clock(d: Date): string {
+    return d.toLocaleTimeString(this.locale(), { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** The congestion layer on the map, when live traffic is on (not in the demo or the preview). */
+  private syncTrafficFlow() {
+    const on = !ARTIFACT && !this.demo && this.traffic.live;
+    this.trafficLayer.setFlow(on ? this.traffic.tomtom.flowTiles(this.flowVariant, isNight(this.settings)) : null);
+    if (!on) this.trafficLayer.setIncidents([], [], null);
+  }
+
+  /** Browsing the map: the incidents in view. */
+  private browseTraffic() {
+    if (this.view === 'nav' || ARTIFACT || this.demo) return;
+    const b = this.map.map.getBounds();
+    this.traffic.browse([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], this.map.map.getZoom());
+  }
+
+  /** New traffic (incidents, travel times, news): map, arrival time, traffic chip, faster route, lists. */
+  private onTraffic() {
+    const route = this.view === 'nav' ? this.engine.route : null;
+    const live = !ARTIFACT && !this.demo && this.traffic.live;
+    this.trafficLayer.setIncidents(live ? this.traffic.incidents : [], live && route ? this.traffic.onRoute : [], route);
+    const p = this.engine.progress;
+    if (route && p) {
+      this.paintEta(p);
+      this.paintTrafficChip(p);
+      this.checkFaster();
+    }
+    if ((this.view === 'nav' && this.navOverlay === 'traffic') || this.view === 'traffic') {
+      const top = this.el.sheet.scrollTop;
+      this.renderSheet();
+      this.el.sheet.scrollTop = top;
+    }
+  }
+
+  /** Time to go and traffic delay from where the car is, with live traffic (fresh answers only). */
+  private trafficNow(p: Progress): { time: number; delay: number } | null {
+    const eta = this.traffic.eta;
+    if (!eta || !this.traffic.live || Date.now() - eta.at > 15 * 60_000 || eta.fromS > p.s + 100) return null;
+    return trafficRemaining(eta, p.remainingTime);
+  }
+
+  private paintEta(p: Progress) {
+    const units = this.settings.units;
+    const tr = this.trafficNow(p);
+    const left = tr?.time ?? p.remainingTime;
+    this.el.etaMain.innerHTML = `${this.clock(new Date(Date.now() + left * 1000))}<small>${this.tr('arrival')}</small>`;
+    const sub = this.el.etaSub;
+    sub.textContent = p.nextStop
+      ? `${this.tr('stop')} ${p.nextStop.number}: ${this.clock(p.nextStop.eta)} · ${formatDistance(p.nextStop.dist, units)}`
+      : `${formatDuration(left)} · ${formatDistance(p.remaining, units)}`;
+    if (tr && tr.delay >= 60) {
+      const share = tr.delay / Math.max(60, tr.time);
+      sub.append(' ', h('span', { class: `eta-traffic is-${share >= 0.25 ? 'major' : share >= 0.1 ? 'moderate' : 'minor'}` }, tt(this.L, 'trafficDelay', { m: minutes(tr.delay) })));
+    }
+  }
+
+  /** One spoken warning at a time for what is coming up on the route (3 km ahead at speed, 1.5 km in town). */
+  private trafficWarnings(p: Progress) {
+    if (!this.settings.trafficAlerts || !this.traffic.live || !p.onRoute) return;
+    const reach = p.speed > 16 ? 3000 : 1500;
+    for (const i of this.traffic.onRoute) {
+      const d = i.s - p.s;
+      if (d > reach) break;
+      if (d < 150 || this.trafficWarned.has(i.id) || !worthWarning(i)) continue;
+      this.trafficWarned.add(i.id);
+      this.voice.chime();
+      window.setTimeout(() => this.say(warningSpeech(i, d, this.L, this.settings.units), false), 420);
+      break;
+    }
+  }
+
+  /** Above the arrival time: the next incident on the route, or news naming its roads. */
+  private paintTrafficChip(p: Progress) {
+    const chip = this.el.trafficChip;
+    const L = this.L;
+    const next = this.traffic.live ? this.traffic.onRoute.find((i) => i.endS > p.s) : undefined;
+    let key = '';
+    if (next) {
+      const d = next.s - p.s;
+      const where = d <= 30 ? tt(L, 'now') : tt(L, 'inDist', { d: formatDistance(d, this.settings.units) });
+      const delay = next.delay >= 60 ? ` · ${tt(L, 'delay', { m: minutes(next.delay) })}` : '';
+      key = `i|${next.id}|${kindName(L, next.kind)} · ${where}${delay}`;
+      if (chip.dataset.key !== key) {
+        chip.innerHTML = '';
+        chip.style.setProperty('--tc', incidentColor(next));
+        chip.append(h('span', { class: 'tc-dot', 'aria-hidden': 'true' }), h('span', { class: 'tc-text' }, key.split('|')[2]));
+      }
+    } else if (this.traffic.routeNews.length) {
+      const n = this.traffic.routeNews.length;
+      key = `n|${n}|${L}`;
+      if (chip.dataset.key !== key) {
+        chip.innerHTML = '';
+        chip.style.removeProperty('--tc');
+        chip.append(h('span', { class: 'tc-ico', html: ICON.news }), h('span', { class: 'tc-text' }, `${tt(L, 'newsRoute')} (${n})`));
+      }
+    }
+    chip.dataset.key = key;
+    chip.hidden = !key;
+  }
+
+  /** Offers one of the prepared alternatives when live traffic makes it clearly faster. */
+  private checkFaster() {
+    this.fasterCheckedAt = Date.now();
+    const p = this.engine.progress;
+    if (!p || !this.engine.route || !this.traffic.live || this.remainingStops().length || !p.onRoute) return this.hideFaster();
+    const best = fasterAlternative(this.traffic.altEtas, p.snapped, Date.now());
+    if (!best) return this.hideFaster();
+    const declined = this.fasterDeclined.get(best.route);
+    if (declined != null && best.save < declined + 300) return this.hideFaster();
+    const isNew = this.faster?.route !== best.route;
+    const text = tt(this.L, 'faster', { via: best.route.summary || '…', m: minutes(best.save) });
+    this.faster = { route: best.route, s: best.s, save: best.save };
+    const el = this.el.faster;
+    // Same offer as on screen: leave the buttons alone (a tap may be under way).
+    if (!isNew && !el.hidden && el.dataset.text === text) return;
+    el.dataset.text = text;
+    const take = h('button', { class: 'btn btn-primary', type: 'button' }, tt(this.L, 'switch'));
+    take.addEventListener('click', () => {
+      const f = this.faster;
+      if (!f) return;
+      const pr = f.route.line.project(this.engine.progress?.snapped ?? f.route.line.pointAt(f.s), Math.max(0, f.s - 200));
+      this.takeAlternative(f.route, pr.s);
+      toast(tt(this.L, 'switched'), 3500);
+    });
+    const keep = h('button', { class: 'btn btn-ghost', type: 'button' }, tt(this.L, 'keep'));
+    keep.addEventListener('click', () => {
+      if (this.faster) this.fasterDeclined.set(this.faster.route, this.faster.save);
+      this.hideFaster();
+    });
+    el.innerHTML = '';
+    el.append(h('span', { class: 'fa-ico', html: ICON.bolt }), h('span', { class: 'fa-text' }, text), h('span', { class: 'fa-btns' }, keep, take));
+    el.hidden = false;
+    if (isNew) {
+      this.voice.chime();
+      window.setTimeout(() => this.say(fasterSpeech(best.save, this.L), false), 420);
+    }
+  }
+
+  private hideFaster() {
+    this.faster = null;
+    this.el.faster.hidden = true;
+  }
+
+  /** Browsing the map: the traffic sheet (incidents around here and the news). */
+  private openTraffic() {
+    this.place = null;
+    this.setView('traffic');
+    this.browseTraffic();
+    void this.traffic.refreshNews();
+  }
+
+  /** The traffic list: incidents on the route (driving) or in view (browsing), then the news. */
+  private renderTraffic(s: HTMLElement, nav: boolean) {
+    const L = this.L;
+    const close = () => (nav ? this.toggleNavOverlay(null) : this.setView('browse'));
+    s.append(this.sheetHead(tt(L, 'traffic'), close));
+    const tr = this.traffic;
+    const p = nav ? this.engine.progress : null;
+    const list = h('div', { class: 'traffic-list' });
+    if (!tr.live) {
+      list.append(h('p', { class: 'muted' }, tomtomKey(this.settings) ? tt(L, 'liveOff') : tt(L, 'needKey')));
+      if (!tomtomKey(this.settings)) {
+        const open = h('button', { class: 'btn btn-ghost', type: 'button' }, this.tr('settings'));
+        open.addEventListener('click', () => void this.editSettings());
+        list.append(h('div', { class: 'sheet-row' }, open));
+      }
+    } else {
+      if (tr.error) list.append(h('p', { class: 'warn' }, tr.error));
+      if (nav && p) {
+        const now = this.trafficNow(p);
+        if (now) {
+          list.append(
+            h(
+              'p',
+              { class: 'tl-eta' },
+              tt(L, 'arrival', { t: this.clock(new Date(Date.now() + now.time * 1000)) }),
+              ' · ',
+              now.delay >= 60 ? h('strong', {}, tt(L, 'trafficDelay', { m: minutes(now.delay) })) : tt(L, 'noDelays'),
+            ),
+          );
+        }
+        list.append(h('h3', {}, tt(L, 'onRoute')));
+        const ahead = tr.onRoute.filter((i) => i.endS > p.s);
+        if (!ahead.length) list.append(h('p', { class: 'muted' }, tt(L, 'noIncidents')));
+        for (const i of ahead) list.append(this.incidentRow(i, i.s - p.s, true));
+      } else {
+        list.append(h('h3', {}, tt(L, 'inArea')));
+        if (this.map.map.getZoom() < 10) list.append(h('p', { class: 'muted' }, tt(L, 'zoomIn')));
+        else {
+          const c = this.map.map.getCenter().toArray() as LngLat;
+          const near = tr.incidents
+            .map((i) => ({ i, d: Math.min(...i.geometry.filter((_, k, a) => k % Math.ceil(a.length / 8) === 0).map((q) => haversine(c, q))) }))
+            .sort((a, b) => a.d - b.d)
+            .slice(0, 15);
+          if (!near.length) list.append(h('p', { class: 'muted' }, tt(L, 'noIncidentsArea')));
+          for (const { i, d } of near) list.append(this.incidentRow(i, d, false));
+        }
+      }
+      list.append(h('p', { class: 'tl-source', html: `${TRAFFIC_ATTRIBUTION} · ${tt(L, 'source')}` }));
+    }
+    if (this.settings.trafficNews && TRAFFIC_NEWS_URL) {
+      const onRoute = nav ? tr.routeNews : [];
+      if (onRoute.length) {
+        list.append(h('h3', {}, tt(L, 'newsRoute')));
+        for (const n of onRoute) list.append(this.newsRow(n, true));
+      }
+      list.append(h('h3', {}, tt(L, 'news')));
+      const rest = tr.news.filter((n) => !onRoute.includes(n)).slice(0, 15);
+      if (!rest.length && !onRoute.length) list.append(h('p', { class: 'muted' }, tt(L, 'noNews')));
+      for (const n of rest) list.append(this.newsRow(n, false));
+      if (tr.newsUpdated) list.append(h('p', { class: 'tl-source' }, tt(L, 'updated', { t: this.clock(new Date(tr.newsUpdated)) })));
+    }
+    s.append(list);
+  }
+
+  private incidentRow(i: Incident, dist: number, ahead: boolean): HTMLElement {
+    const L = this.L;
+    const where = ahead ? (dist <= 30 ? tt(L, 'now') : tt(L, 'inDist', { d: formatDistance(dist, this.settings.units) })) : formatDistance(dist, this.settings.units);
+    const head = [kindName(L, i.kind), i.delay >= 60 ? tt(L, 'delay', { m: minutes(i.delay) }) : ''].filter(Boolean).join(' · ');
+    const road = i.from && i.to ? tt(L, 'from', { a: i.from, b: i.to }) : i.from || i.to || '';
+    const desc = i.description && i.description.toLowerCase() !== kindName('en', i.kind).toLowerCase() ? i.description : '';
+    const b = h(
+      'button',
+      { class: 'tl-row', type: 'button', style: `--tc:${incidentColor(i)}` },
+      h('span', { class: 'tc-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'tl-body' }, h('strong', {}, head), h('span', { class: 'tl-meta' }, [where, road].filter(Boolean).join(' · ')), desc ? h('span', { class: 'tl-desc' }, desc) : null),
+    );
+    // Show it on the map (while driving, the map comes back to the car on its own after a while).
+    b.addEventListener('click', () => {
+      const at = ahead && this.engine.route && 's' in i ? this.engine.route.line.pointAt((i as RouteIncident).s) : i.geometry[0];
+      if (this.view === 'nav') this.toggleNavOverlay(null);
+      this.map.showPoint(at, this.map.map.getBearing(), 15.5);
+    });
+    return b;
+  }
+
+  private newsRow(n: NewsItem, onRoute: boolean): HTMLElement {
+    const L = this.L;
+    const mins = Math.max(1, Math.round((Date.now() - Date.parse(n.published)) / 60_000));
+    const age = mins < 60 ? `${mins} min` : `${Math.round(mins / 60)} h`;
+    return h(
+      'a',
+      { class: `tl-news${onRoute ? ' is-route' : ''}`, href: n.link, target: '_blank', rel: 'noopener noreferrer' },
+      h('strong', {}, n.title),
+      h(
+        'span',
+        { class: 'tl-meta' },
+        [newsKindName(L, n.kind), n.source, tt(L, 'ago', { t: age })].join(' · '),
+        ...n.roads.slice(0, 3).map((r) => h('span', { class: 'tl-road' }, roadName(r))),
+      ),
+    );
+  }
+
+  /** What an incident on the map is, when its icon is tapped. */
+  private incidentPopup(i: Incident): HTMLElement {
+    const L = this.L;
+    const road = i.from && i.to ? tt(L, 'from', { a: i.from, b: i.to }) : i.from || i.to || '';
+    return h(
+      'div',
+      { class: 'tp', style: `--tc:${incidentColor(i)}` },
+      h('strong', {}, [kindName(L, i.kind), i.delay >= 60 ? tt(L, 'delay', { m: minutes(i.delay) }) : ''].filter(Boolean).join(' · ')),
+      i.description ? h('span', {}, i.description) : null,
+      road ? h('span', { class: 'tl-meta' }, road) : null,
+      i.length > 0 ? h('span', { class: 'tl-meta' }, formatDistance(i.length, this.settings.units)) : null,
+    );
+  }
+
+  /** Travel times with traffic for the routes on offer before a drive. */
+  private async loadPlanTraffic(routes: Route[], signal?: AbortSignal) {
+    if (!this.traffic.live || this.demo) return;
+    const times = await this.traffic.planTimes(routes, signal);
+    if (this.routes !== routes) return;
+    const at = Date.now();
+    times.forEach((t, i) => t && this.planTraffic.set(routes[i], { ...t, at }));
+    if (this.view === 'directions' && !this.showSteps) this.renderSheet();
   }
 
   /* ================================================================ layout helpers */
@@ -2378,6 +2763,21 @@ class App {
     }
     if (prev.appearance !== next.appearance) this.applyDayNight();
     else this.applyTheme();
+    // Live traffic: a new key or traffic turned on or off starts it over.
+    if (tomtomKey(prev) !== tomtomKey(next) || prev.trafficMap !== next.trafficMap) {
+      this.flowVariant = 'classic';
+      this.traffic.clear();
+      this.planTraffic.clear();
+      this.syncTrafficFlow();
+      this.browseTraffic();
+      if (this.view === 'directions') void this.loadPlanTraffic(this.routes);
+    }
+    if (prev.trafficNews !== next.trafficNews) {
+      if (next.trafficNews) void this.traffic.refreshNews(true);
+      else this.traffic.clearNews();
+    }
+    if (!next.trafficMap) this.hideFaster();
+    if (this.view === 'traffic' || this.navOverlay === 'traffic') this.renderSheet();
     if (!this.demo) {
       if (prev.routerUrl !== next.routerUrl || prev.overpassUrls !== next.overpassUrls) this.realProviders();
       const changed = (a: string | StyleSpecification, b: string | StyleSpecification) => (typeof a === 'string' || typeof b === 'string' ? a !== b : JSON.stringify(a) !== JSON.stringify(b));

@@ -172,6 +172,21 @@ Before a tunnel the app shows an advance sign under the banner, says it out loud
 
 The demo route starts with a 500 m tunnel through a hill, Terowong Bukit Demo, just before the first junction. The simulator stops sending GPS inside it, so you can watch the estimate carry the position through.
 
+### Live traffic and traffic news
+
+Two sources, each used when it is there:
+
+- **Live traffic (TomTom).** Paste a free TomTom API key in Settings (sign up at [developer.tomtom.com](https://developer.tomtom.com/user/register), no card; the key is on your dashboard) and press **Test key**. Then:
+  - **On the map**, roads slower than usual are coloured (yellow, red, dark red; free-flowing roads stay clear), and accidents, closures, lane closures, roadworks, floods, weather and broken-down vehicles show as lines with an icon. Tap an icon for what it is, from where to where and the delay. While browsing, the traffic button (above the locate button) lists what is going on in view, nearest first.
+  - **On the route cards**, each route's time comes from TomTom with today's traffic, with "+12 min traffic" (or "No traffic delays").
+  - **While driving**, stretches of the route that are slow or closed get a coloured edge along the route line (the route keeps its own colours and orange through junctions), a chip above the arrival time names the next one ("Accident · in 2.1 km · +5 min"), and one spoken warning comes for each worth hearing: 3 km ahead at speed, 1.5 km in town ("Accident ahead, in 2 kilometres. About 5 minutes' delay."). Closures, accidents, floods and hazards always; slow traffic and roadworks when they cost time. *Spoken warnings for accidents, closures and jams ahead* in Settings turns them off.
+  - **Arrival time** counts traffic: the rest of the route is sent to TomTom as points along it, so the time is for your route, not one TomTom would pick, and it counts down as you drive between answers. "+X min traffic" shows under it. Tap the arrival time for the traffic list: incidents ahead, news about your roads, other news.
+  - **Faster route.** The alternatives kept ready for rerouting are timed too. When one saves at least 5 minutes and 10%, a card offers it ("Faster route via Jalan Ampang: saves 9 min") with **Switch** and **Keep**, and the app says so once. It is offered only while you can still take it.
+  - **Allowance.** Incidents for the road ahead every 4 minutes (sooner near the end of the stretch it asked about or after a new route), the travel time every 5, the alternatives every 10, nothing when not driving except the map in view. The free tier (2,500 incident requests, 20,000 route requests and 200,000 traffic tiles a month) covers well over an hour of driving every day. A site owner can set the repository variable `VITE_TOMTOM_KEY` to give everyone a key; a key in Settings takes its place.
+- **Traffic news (no key).** `.github/workflows/traffic-news.yml` runs `scripts/traffic/news.mjs` every 20 minutes on GitHub: it reads Malaysian news feeds (Google News searches in English and Malay, The Star, Malay Mail, Free Malaysia Today, New Straits Times, Berita Harian, Harian Metro, Bernama), keeps headlines from the last 12 hours about jams, accidents, closures, floods and roadworks on a road (not trafficking, summonses and the like), tags the roads they name (PLUS, NKVE, DUKE, MEX, Federal Highway, Jalan Tun Razak and 35 more, by name, abbreviation or route number, from `src/traffic/roads.ts`) and publishes `news.json` on the `traffic-news` branch. The app reads it every 10 minutes; while driving, news naming a road on your route is flagged in the chip and at the top of the traffic list. Tap a headline to read it. *Traffic news from Malaysian news sites* in Settings turns it off.
+
+The demo and the hosted preview have no traffic. `scripts/dev/traffic-check.cjs` checks it all in a browser with TomTom, the router and the feed answered by the check itself.
+
 ### Offline maps (Peninsular Malaysia)
 
 Download the whole of Peninsular Malaysia (with Singapore) once, and the app keeps working with no signal: the map, directions with lane advice and junction views (hills included), place search, the category buttons and tunnel signs.
@@ -223,8 +238,10 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 | Search | `photon.komoot.io` | OSM-based, allows search-as-you-type. Fair use only. |
 | Terrain | AWS Terrain Tiles (Terrarium) | One or two small images per junction, for hills and valleys in junction views. |
 | Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 350 full downloads). |
+| Live traffic | TomTom Traffic and Routing APIs | Optional, with a free key per user (or one for the site). Congestion tiles, incidents, travel times with traffic. |
+| Traffic news | Malaysian news feeds, collected by a GitHub job | No key. Headlines only, linked to the outlet. |
 
-Map data © OpenStreetMap contributors. Attribution is shown on the map.
+Map data © OpenStreetMap contributors, traffic © TomTom. Attribution is shown on the map.
 
 ### Why not Google Maps?
 
@@ -258,6 +275,8 @@ Copy `.env.example` to `.env`. Every value is optional.
 | `VITE_MAP_STYLE` | `ofm-liberty` |
 | `VITE_MAPTILER_KEY`, `VITE_CUSTOM_STYLE_URL` | empty |
 | `VITE_TERRAIN_URL` | AWS Terrain Tiles, `…/terrarium/{z}/{x}/{y}.png` (any Terrarium-encoded source works) |
+| `VITE_TOMTOM_KEY` | empty (each user pastes their own key in Settings) |
+| `VITE_TRAFFIC_NEWS_URL` | set by the Pages and Android builds to the `traffic-news` branch's `news.json` |
 
 Users can also change map style, sign style, language (English, Bahasa Melayu, Japanese), units, voice, junction-view mode and server URLs in **Settings**.
 
@@ -269,6 +288,8 @@ src/
   geo/geo.ts              distances, bearings, polylines, local metric frames
   routing/                OSRM adapter (avoid options, stops, toll distance), instruction text (en/ms/ja)
   search/                 place search (Photon) and category search nearby / along route (Overpass)
+  traffic/                live traffic (TomTom incidents, travel times, congestion tiles), traffic news feed,
+                          matching incidents and news to the route, Malaysian road names, texts (en/ms/ja)
   state/                  settings and saved places
   nav/engine.ts           snapping, current maneuver, off-route, voice prompt timing
   nav/lanes.ts            lane advisor: target lanes, advice distance, GPS lane estimate
@@ -291,6 +312,7 @@ src/
   demo/                   synthetic OSM + OSRM data and offline providers for the demo and tests
   lab/lab.ts              Junction View Lab page
 scripts/offline/          offline pack builder (run by the Pages workflow)
+scripts/traffic/          traffic news collector (run every 20 minutes by the Traffic news workflow)
 scripts/android/          emulator check for the Android app (run by the Android workflow)
 android/                  the Android app's native project (Capacitor; web assets are synced in at build)
 src/platform.ts           browser or Android app, and the addresses that differ between them
@@ -313,6 +335,7 @@ npm run typecheck
 
 ## Known limits and next steps
 
+- **Traffic news is headlines only.** It is as good as the outlets' reporting and an hour or so behind live data; roads are matched by name, so a story naming a road but about the other direction is still flagged. Live traffic needs a TomTom key.
 - **No toll fees.** Routes show kilometres on toll roads, not ringgit or yen; open fee tables (PLUS, NEXCO) would be needed for that.
 - **Stops and alternatives.** OSRM only returns alternative routes for trips without stops.
 - **Data quality follows OSM tagging.** Where `lanes`, `turn:lanes` or `destination` tags are missing, the view falls back to typical lane counts and signs that show road names or refs.

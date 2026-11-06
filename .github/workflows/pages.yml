@@ -41,6 +41,10 @@ jobs:
           # This site, for the Android app's website mode (downloaded into the app, see src/native/appMode.ts).
           VITE_WEB_APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
           VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
+          # Traffic headlines collected by the Traffic news workflow (no key needed).
+          VITE_TRAFFIC_NEWS_URL: https://raw.githubusercontent.com/${{ github.repository }}/traffic-news/news.json
+          # Optional: a TomTom key for everyone (each user can also paste their own in Settings).
+          VITE_TOMTOM_KEY: ${{ vars.VITE_TOMTOM_KEY }}
 
       # ---- offline maps: the newest pack in the cache
       - uses: actions/cache/restore@v4

@@ -269,7 +269,8 @@ export class MapView {
       // Count only tiles that really arrived; failed tiles also fire data events.
       // Our own GeoJSON layers (route, arrow) are tiled too; they say nothing about the network.
       const d = e as { dataType?: string; sourceId?: string; tile?: { state?: string } };
-      if (d.dataType === 'source' && d.tile && d.tile.state === 'loaded' && this.map.getSource(d.sourceId ?? '')?.type !== 'geojson') {
+      // Nor do the traffic tiles (a different server), see trafficLayer.ts.
+      if (d.dataType === 'source' && d.tile && d.tile.state === 'loaded' && !d.sourceId?.startsWith('traffic') && this.map.getSource(d.sourceId ?? '')?.type !== 'geojson') {
         this.tilesOk++;
         if (!this.notice.hidden && this.notice.dataset.kind === 'error') this.notice.hidden = true;
       }
@@ -277,6 +278,8 @@ export class MapView {
     this.map.on('error', (e) => {
       const ev = e as { error?: Error & { url?: string }; sourceId?: string; tile?: unknown };
       const msg = String(ev.error?.message ?? '');
+      // Traffic tiles that fail (no key, over the allowance) are the traffic layer's business.
+      if (ev.sourceId?.startsWith('traffic') || ev.error?.url?.includes('api.tomtom.com')) return;
       this.lastError = msg;
       console.warn('[map]', msg);
       // Tiles, and a source's tile list (TileJSON) that failed to download.

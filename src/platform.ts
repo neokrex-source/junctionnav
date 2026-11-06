@@ -27,3 +27,6 @@ export const APK_URL: string | undefined = NATIVE ? undefined : import.meta.env.
 
 /** The app version built into the APK (set by the Android workflow). */
 export const APP_VERSION: string = import.meta.env.VITE_APP_VERSION || 'dev';
+
+/** Traffic headlines collected by the Traffic news workflow (set by the Pages and Android builds). */
+export const TRAFFIC_NEWS_URL: string = import.meta.env.VITE_TRAFFIC_NEWS_URL || '';

@@ -39,6 +39,14 @@ export interface Settings {
   closeUp: boolean;
   /** Android app only: run the copy built into the app, or the latest website build downloaded into it. */
   appMode: 'built-in' | 'web';
+  /** The user's own TomTom key for live traffic ('' = the one built into the site, if any). */
+  tomtomKey: string;
+  /** Live traffic on the map and the route (needs a TomTom key). */
+  trafficMap: boolean;
+  /** Spoken warnings for accidents, closures and slow traffic ahead on the route. */
+  trafficAlerts: boolean;
+  /** Traffic headlines from Malaysian news (no key needed). */
+  trafficNews: boolean;
 }
 
 const env = import.meta.env;
@@ -73,7 +81,18 @@ export const DEFAULTS: Settings = {
   jvSize: '1:3',
   closeUp: true,
   appMode: 'built-in',
+  tomtomKey: '',
+  trafficMap: true,
+  trafficAlerts: true,
+  trafficNews: true,
 };
+
+/** A TomTom key for everyone, set by the site's build (optional); a key in Settings takes its place. */
+export const BUILT_IN_TOMTOM_KEY: string = env.VITE_TOMTOM_KEY || '';
+
+export function tomtomKey(s: Settings): string {
+  return s.tomtomKey.trim() || BUILT_IN_TOMTOM_KEY;
+}
 
 const KEY = 'junctionnav.settings.v1';
 /** The current look: 2 is the JunctionNav day and night theme (and its map as the default). */

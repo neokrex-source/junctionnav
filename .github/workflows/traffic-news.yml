@@ -1,0 +1,44 @@
+# Collects traffic headlines from Malaysian news feeds every 20 minutes into news.json on the
+# traffic-news branch, which the app reads (no key needed). One commit, replaced each run.
+name: Traffic news
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/traffic/**'
+      - 'src/traffic/roads.ts'
+      - '.github/workflows/traffic-news.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: traffic-news
+  cancel-in-progress: false
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test the collector
+        run: node --experimental-strip-types --test scripts/traffic/news.test.mjs
+      - name: Collect
+        run: node --experimental-strip-types scripts/traffic/news.mjs out/news.json
+      - name: Publish to the traffic-news branch
+        run: |
+          cd out
+          git init -q -b traffic-news
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add news.json
+          git commit -q -m "Traffic news $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" traffic-news

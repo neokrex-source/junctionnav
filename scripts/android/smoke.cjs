@@ -206,6 +206,14 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     } catch (e) {
       r.keepAwakeError = String(e?.message ?? e);
     }
+    // Traffic news (no key): the feed the Traffic news workflow publishes.
+    try {
+      await a.traffic.refreshNews(true);
+      r.trafficNews = { url: a.traffic.o?.newsUrl?.() ?? null, items: a.traffic.news.length, updated: a.traffic.newsUpdated };
+    } catch (e) {
+      r.trafficNews = String(e);
+    }
+    r.trafficButton = !!document.querySelector('#btn-traffic');
     r.position = await new Promise((res) =>
       navigator.geolocation.getCurrentPosition(
         (p) => res([p.coords.longitude, p.coords.latitude]),
@@ -221,6 +229,8 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   // The emulator image may have no voice installed; the plugin answering is what the app needs.
   check("Android's voice answers", app.ttsSpoke || /not available|no engine|language/i.test(app.ttsError ?? ''), app.ttsSpoke ? `${app.ttsLanguages} languages` : app.ttsError);
   check('GPS position reaches the app', Array.isArray(app.position), app.position);
+  // The feed may be empty in a quiet hour; that it answers is what counts.
+  check('traffic news feed answers', app.trafficButton && typeof app.trafficNews === 'object' && !!app.trafficNews.updated, app.trafficNews);
 
   // The demo drive: guidance, the radar pulse and the 3D junction view, as installed.
   await page.evaluate(() => window.__app.startDemo(true));

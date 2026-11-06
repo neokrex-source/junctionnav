@@ -1,9 +1,10 @@
 import { SIGN_THEMES } from '../junction/signs';
 import { STYLES } from '../map/styles';
 import type { OfflineStore } from '../offline/store';
-import { DEFAULTS, type Settings } from '../state/settings';
+import { BUILT_IN_TOMTOM_KEY, DEFAULTS, type Settings } from '../state/settings';
+import { TomTomTraffic } from '../traffic/tomtom';
 import { runningCopy } from '../native/appMode';
-import { APK_URL, APP_VERSION, NATIVE } from '../platform';
+import { APK_URL, APP_VERSION, NATIVE, TRAFFIC_NEWS_URL } from '../platform';
 import { h } from './dom';
 import { offlinePanel } from './offlinePanel';
 
@@ -127,6 +128,65 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
             ),
           )
         : null;
+    // Live traffic (TomTom, the user's own free key) and traffic news (no key).
+    const tomtomKey = h('input', {
+      id: 'tomtomKey',
+      type: 'text',
+      value: current.tomtomKey,
+      placeholder: BUILT_IN_TOMTOM_KEY ? 'Built-in key in use; paste your own to use it instead' : 'Paste your free TomTom API key',
+      autocomplete: 'off',
+      spellcheck: 'false',
+    }) as HTMLInputElement;
+    const trafficMap = h('input', { id: 'trafficMap', type: 'checkbox' }) as HTMLInputElement;
+    trafficMap.checked = current.trafficMap;
+    const trafficAlerts = h('input', { id: 'trafficAlerts', type: 'checkbox' }) as HTMLInputElement;
+    trafficAlerts.checked = current.trafficAlerts;
+    const trafficNews = h('input', { id: 'trafficNews', type: 'checkbox' }) as HTMLInputElement;
+    trafficNews.checked = current.trafficNews;
+    const keyState = h('div', { class: 'key-state', role: 'status' });
+    const testKey = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Test key') as HTMLButtonElement;
+    testKey.addEventListener('click', async () => {
+      const key = tomtomKey.value.trim() || BUILT_IN_TOMTOM_KEY;
+      if (!key) {
+        keyState.dataset.ok = 'false';
+        keyState.textContent = 'Paste a key first.';
+        return;
+      }
+      testKey.disabled = true;
+      keyState.dataset.ok = '';
+      keyState.textContent = 'Checking…';
+      try {
+        // A small box in central Kuala Lumpur.
+        const list = await new TomTomTraffic(() => key).incidents([101.66, 3.12, 101.73, 3.18]);
+        keyState.dataset.ok = 'true';
+        keyState.textContent = `The key works: ${list.length} incident${list.length === 1 ? '' : 's'} in central Kuala Lumpur right now.`;
+      } catch (err) {
+        keyState.dataset.ok = 'false';
+        keyState.textContent = (err as Error).message === 'Failed to fetch' ? 'TomTom could not be reached. Check your internet connection.' : (err as Error).message;
+      } finally {
+        testKey.disabled = false;
+      }
+    });
+    const traffic = opts.preview
+      ? null
+      : h(
+          'div',
+          { class: 'grp' },
+          h('label', { for: 'tomtomKey' }, 'Live traffic (TomTom key)'),
+          h('div', { class: 'key-row' }, tomtomKey, testKey),
+          keyState,
+          h('label', { class: 'toggle' }, trafficMap, 'Show live traffic on the map and your route'),
+          h('label', { class: 'toggle' }, trafficAlerts, 'Spoken warnings for accidents, closures and jams ahead'),
+          TRAFFIC_NEWS_URL ? h('label', { class: 'toggle' }, trafficNews, 'Traffic news from Malaysian news sites') : null,
+          h(
+            'div',
+            { class: 'hint' },
+            'Live traffic colours slow roads on the map, marks accidents, closures, roadworks and floods, warns you before the ones on your route, gives arrival times with traffic and offers a faster route when one opens up. It needs a free TomTom key (no card): sign up at ',
+            h('a', { href: 'https://developer.tomtom.com/user/register', target: '_blank', rel: 'noopener' }, 'developer.tomtom.com'),
+            ', open your dashboard and copy the API key here. The free allowance covers hours of driving every day.' +
+              (TRAFFIC_NEWS_URL ? ' Traffic news needs no key: headlines are collected every 20 minutes, and the ones naming roads on your route are flagged.' : ''),
+          ),
+        );
     const routerUrl = h('input', { id: 'routerUrl', type: 'url', value: current.routerUrl }) as HTMLInputElement;
     const overpassUrls = h('input', { id: 'overpassUrls', type: 'text', value: current.overpassUrls.replace(/\n/g, ', ') }) as HTMLInputElement;
     const photonUrl = h('input', { id: 'photonUrl', type: 'url', value: current.photonUrl }) as HTMLInputElement;
@@ -203,6 +263,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         h('label', { class: 'toggle' }, tunnels, 'Tunnel sign and voice warning'),
         h('div', { class: 'hint' }, 'Shows the tunnel name and length before you reach it, then the distance to the exit. Guidance keeps going on an estimated position when GPS drops out inside.'),
       ),
+      traffic,
       pack?.el,
       androidApp,
       h(
@@ -248,6 +309,10 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         jvMapGround: mapGround.checked,
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
+        tomtomKey: tomtomKey.value.trim(),
+        trafficMap: trafficMap.checked,
+        trafficAlerts: trafficAlerts.checked,
+        trafficNews: trafficNews.checked,
         offlineUse: offlineUse.value as Settings['offlineUse'],
         routerUrl: routerUrl.value.trim() || DEFAULTS.routerUrl,
         overpassUrls: overpassUrls.value.split(',').map((s) => s.trim()).filter(Boolean).join('\n') || DEFAULTS.overpassUrls,
