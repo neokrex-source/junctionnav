@@ -280,6 +280,47 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('faster route announced', said.some((t) => /faster route is available/.test(t)), said.slice(-6));
   await page.evaluate(() => (window.__app.sim.paused = true));
 
+  // ---- within 500 m: the chip opens into a card with the details
+  const drive = async (s) => {
+    await page.evaluate((s) => {
+      const app = window.__app;
+      app.sim.paused = false;
+      app.sim.jumpTo(s);
+    }, s);
+    await page.waitForFunction((s) => Math.abs((window.__app.engine.progress?.s ?? 0) - s) < 60, s, { timeout: 10_000 }).catch(() => {});
+    await page.evaluate(() => (window.__app.sim.paused = true));
+    await sleep(700);
+  };
+  const cardNow = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('.traffic-card');
+      return {
+        shown: !!c && !c.hidden,
+        title: c?.querySelector('.tcard-title')?.textContent ?? null,
+        dist: c?.querySelector('.tcard-dist')?.textContent ?? null,
+        facts: c?.querySelector('.tcard-facts')?.textContent ?? null,
+        icon: !!c?.querySelector('img.tcard-icon')?.getAttribute('src')?.startsWith('data:image/png'),
+        chip: document.querySelector('.traffic-chip:not([hidden])')?.textContent ?? null,
+      };
+    });
+  await drive(1700);
+  const far = await cardNow();
+  check('no card 700 m before the jam (the chip instead)', !far.shown && /Slow traffic/.test(far.chip ?? ''), far);
+  await drive(2000);
+  const card = await cardNow();
+  await shot('3b-traffic-card');
+  check('card pops up within 500 m of the jam', card.shown && card.title === 'Slow traffic' && /\d+ m ahead/.test(card.dist ?? '') && card.icon && !card.chip, card);
+  check('card shows the delay and length', /\+8 min · 900 m long/.test(card.facts ?? ''), card.facts);
+  await drive(2700);
+  const inside = await cardNow();
+  check('card counts down inside the jam', inside.shown && /For the next \d+ m/.test(inside.dist ?? ''), inside);
+  await page.click('.tcard-close');
+  await sleep(400);
+  const closed = await cardNow();
+  check('closing the card brings the chip back', !closed.shown && /Slow traffic · here/.test(closed.chip ?? ''), closed);
+  const fab = await page.evaluate(() => !!document.querySelector('#btn-traffic svg path[fill-rule="evenodd"]'));
+  check('traffic button has the car traffic jam icon', fab);
+
   // ---- the traffic list while driving
   await page.click('.eta-text');
   await sleep(600);

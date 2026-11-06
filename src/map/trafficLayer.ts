@@ -11,6 +11,7 @@ import maplibregl, { type GeoJSONSource } from 'maplibre-gl';
 import type { Feature, FeatureCollection } from 'geojson';
 import type { Route } from '../routing/types';
 import type { Incident, IncidentKind, Magnitude, RouteIncident } from '../traffic/types';
+import { JAM_BACK, JAM_BACK_WIDTH, JAM_FRONT } from '../ui/trafficIcon';
 
 export const TRAFFIC_ATTRIBUTION = '<a href="https://www.tomtom.com" target="_blank" rel="noopener">© TomTom</a>';
 
@@ -46,8 +47,23 @@ const ICON_BG: Record<IncidentKind, string> = {
 
 const KINDS = Object.keys(ICON_BG) as IncidentKind[];
 
+/** The badge for an incident kind as an image address, for the chip, lists and popups. */
+const iconUrls = new Map<IncidentKind, string>();
+export function incidentIconUrl(kind: IncidentKind): string {
+  let u = iconUrls.get(kind);
+  if (!u) {
+    u = iconCanvas(kind).toDataURL('image/png');
+    iconUrls.set(kind, u);
+  }
+  return u;
+}
+
 /** A round badge with a white sign for each kind of incident, drawn once per map. */
 function iconImage(kind: IncidentKind): ImageData {
+  return iconCanvas(kind).getContext('2d')!.getImageData(0, 0, 56, 56);
+}
+
+function iconCanvas(kind: IncidentKind): HTMLCanvasElement {
   const S = 56;
   const c = document.createElement('canvas');
   c.width = S;
@@ -97,15 +113,18 @@ function iconImage(kind: IncidentKind): ImageData {
       g.fill();
       break;
     }
-    case 'jam':
-      // Cars queuing.
-      for (const dy of [-8, 0, 8]) {
-        g.beginPath();
-        g.moveTo(m - 11, m + dy);
-        g.lineTo(m + 11, m + dy);
-        g.stroke();
-      }
+    case 'jam': {
+      // Cars queuing: one from the front, another behind it.
+      const k = 30 / 24;
+      g.save();
+      g.translate(m - 12 * k, m - 12 * k + 0.5);
+      g.scale(k, k);
+      g.fill(new Path2D(JAM_FRONT), 'evenodd');
+      g.lineWidth = JAM_BACK_WIDTH;
+      g.stroke(new Path2D(JAM_BACK));
+      g.restore();
       break;
+    }
     case 'closure':
       g.fillRect(m - 13, m - 3.5, 26, 7);
       break;
@@ -169,7 +188,7 @@ function iconImage(kind: IncidentKind): ImageData {
     default:
       bang();
   }
-  return g.getImageData(0, 0, S, S);
+  return c;
 }
 
 export interface TrafficLayerOptions {

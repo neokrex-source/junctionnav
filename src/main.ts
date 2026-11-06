@@ -49,7 +49,8 @@ import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 import { BUILT_IN, NATIVE, TRAFFIC_NEWS_URL } from './platform';
-import { incidentColor, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
+import { incidentColor, incidentIconUrl, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
+import { jamSvg } from './ui/trafficIcon';
 import { fasterAlternative, TrafficService } from './traffic/service';
 import { routeTimeFrom, trafficRemaining } from './traffic/onRoute';
 import { kindName, minutes, newsKindName, tt, warningSpeech, worthWarning, fasterSpeech } from './traffic/texts';
@@ -61,6 +62,8 @@ import type { AppMode, ModeHooks } from './native/appMode';
 const CLOSE_UP_AT = new Set<ManeuverType>(['turn', 'fork', 'off ramp', 'on ramp', 'merge', 'end of road', 'roundabout', 'rotary', 'roundabout turn', 'exit roundabout', 'exit rotary']);
 
 const KL: LngLat = [101.6869, 3.139];
+/** The traffic chip opens into a card with the details this close to an incident on the route. */
+const TRAFFIC_CARD_WITHIN = 500;
 const MAX_STOPS = 3;
 type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic';
 type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
@@ -87,7 +90,7 @@ const ICON = {
   overview: svg(`<path ${S} d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>`),
   recenter: svg(`<circle ${S} cx="12" cy="12" r="7"/><path ${S} d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/>`),
   dot: '<span class="dot" aria-hidden="true"></span>',
-  traffic: svg(`<rect ${S} x="8" y="2.5" width="8" height="19" rx="3"/><circle cx="12" cy="7" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="17" r="1.6" fill="currentColor"/><path ${S} d="M8 6H5.5M8 11H5.5M18.5 6H16M18.5 11H16"/>`),
+  traffic: jamSvg(),
   news: svg(`<path ${S} d="M5 5h11v14H6a1 1 0 0 1-1-1zM16 9h3v9a1 1 0 0 1-1 1h-2M8 9h5M8 12.5h5M8 16h3"/>`),
   bolt: svg(`<path fill="currentColor" d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/>`),
 };
@@ -216,6 +219,9 @@ class App {
   private planTraffic = new Map<Route, { travelTime: number; delay: number; at: number }>();
   /** The faster route on offer, and the ones turned down (with what they would have saved). */
   private faster: { route: Route; s: number; save: number } | null = null;
+  /** The incident the popup card shows (within 500 m), and the ones closed by hand on this drive. */
+  private cardId = '';
+  private cardClosed = new Set<string>();
   private fasterDeclined = new Map<Route, number>();
   private fasterCheckedAt = 0;
 
@@ -243,6 +249,7 @@ class App {
     simSpeed: h('button', { type: 'button' }, '×1') as HTMLButtonElement,
     fabs: h('div', { class: 'fabs' }),
     trafficChip: h('button', { class: 'traffic-chip card', type: 'button', hidden: true }) as HTMLButtonElement,
+    trafficCard: h('div', { class: 'traffic-card card', hidden: true, role: 'status', 'aria-live': 'polite' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -1431,9 +1438,10 @@ class App {
     const etaText = h('button', { class: 'eta-text', type: 'button', 'aria-label': 'Traffic on the route' }, e.etaMain, e.etaSub);
     etaText.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.trafficChip.addEventListener('click', () => this.toggleNavOverlay('traffic'));
+    e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
-      h('div', { class: 'nav-stack' }, e.faster, e.trafficChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
       e.speed,
     );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
@@ -1881,6 +1889,7 @@ class App {
     this.altsAt = Date.now();
     this.altsFromS = 0;
     this.trafficWarned.clear();
+    this.cardClosed.clear();
     this.fasterDeclined.clear();
     this.hideFaster();
     // The travel time with traffic from planning, while it is fresh.
@@ -1938,6 +1947,7 @@ class App {
     this.setAlts([]);
     this.hideFaster();
     this.el.trafficChip.hidden = true;
+    this.hideTrafficCard();
     this.panel.hide();
     this.activeJ = null;
     this.lastFix = null;
@@ -2293,7 +2303,7 @@ class App {
     const H = window.innerHeight;
     const g = this.el.guide.getBoundingClientRect();
     let bottom = H - 70;
-    for (const el of [this.el.foot.querySelector('.eta'), this.el.trafficChip, this.el.faster, this.el.sim]) {
+    for (const el of [this.el.foot.querySelector('.eta'), this.el.trafficChip, this.el.trafficCard, this.el.faster, this.el.sim]) {
       if (!el || (el as HTMLElement).hidden) continue;
       const r = el.getBoundingClientRect();
       if (r.height > 0) bottom = Math.min(bottom, r.top);
@@ -2429,21 +2439,35 @@ class App {
     }
   }
 
-  /** Above the arrival time: the next incident on the route, or news naming its roads. */
+  /**
+   * Above the arrival time: the next incident on the route, or news naming its roads. Within
+   * 500 m of an incident (and while driving through it) the chip opens into a card with the details.
+   */
   private paintTrafficChip(p: Progress) {
     const chip = this.el.trafficChip;
     const L = this.L;
-    const next = this.traffic.live ? this.traffic.onRoute.find((i) => i.endS > p.s) : undefined;
+    const live = this.traffic.live;
+    const ahead = live ? this.traffic.onRoute.filter((i) => i.endS > p.s) : [];
+    const near = ahead.find((i) => i.s - p.s <= TRAFFIC_CARD_WITHIN && !this.cardClosed.has(i.id));
+    if (near) {
+      this.paintTrafficCard(near, p);
+      chip.hidden = true;
+      chip.dataset.key = '';
+      return;
+    }
+    this.hideTrafficCard();
+    const next = ahead[0];
     let key = '';
     if (next) {
       const d = next.s - p.s;
       const where = d <= 30 ? tt(L, 'now') : tt(L, 'inDist', { d: formatDistance(d, this.settings.units) });
       const delay = next.delay >= 60 ? ` · ${tt(L, 'delay', { m: minutes(next.delay) })}` : '';
-      key = `i|${next.id}|${kindName(L, next.kind)} · ${where}${delay}`;
+      const text = `${kindName(L, next.kind)} · ${where}${delay}`;
+      key = `i|${next.id}|${text}`;
       if (chip.dataset.key !== key) {
         chip.innerHTML = '';
         chip.style.setProperty('--tc', incidentColor(next));
-        chip.append(h('span', { class: 'tc-dot', 'aria-hidden': 'true' }), h('span', { class: 'tc-text' }, key.split('|')[2]));
+        chip.append(h('img', { class: 'tc-icon', src: incidentIconUrl(next.kind), alt: '' }), h('span', { class: 'tc-text' }, text));
       }
     } else if (this.traffic.routeNews.length) {
       const n = this.traffic.routeNews.length;
@@ -2456,6 +2480,55 @@ class App {
     }
     chip.dataset.key = key;
     chip.hidden = !key;
+  }
+
+  /** The popup card for an incident within 500 m: what it is, how far (or how much is left), the delay, where. */
+  private paintTrafficCard(i: RouteIncident, p: Progress) {
+    const card = this.el.trafficCard;
+    const L = this.L;
+    const units = this.settings.units;
+    if (this.cardId !== `${i.id}|${L}`) {
+      this.cardId = `${i.id}|${L}`;
+      card.innerHTML = '';
+      card.style.setProperty('--tc', incidentColor(i));
+      const close = h('button', { class: 'mini tcard-close', type: 'button', html: ICON.close, 'aria-label': this.tr('close') });
+      close.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.cardClosed.add(i.id);
+        this.hideTrafficCard();
+        if (this.engine.progress) this.paintTrafficChip(this.engine.progress);
+      });
+      const road = i.from && i.to ? tt(L, 'from', { a: i.from, b: i.to }) : i.from || i.to || '';
+      const desc = i.description && i.description.toLowerCase() !== kindName('en', i.kind).toLowerCase() ? i.description : '';
+      const facts = [i.delay >= 60 ? tt(L, 'delay', { m: minutes(i.delay) }) : '', i.endS - i.s > 60 ? tt(L, 'long', { d: formatDistance(i.endS - i.s, units) }) : ''].filter(Boolean).join(' · ');
+      card.append(
+        h('img', { class: 'tcard-icon', src: incidentIconUrl(i.kind), alt: '' }),
+        h(
+          'div',
+          { class: 'tcard-body' },
+          h('strong', { class: 'tcard-title' }, kindName(L, i.kind)),
+          h('span', { class: 'tcard-dist' }),
+          facts ? h('span', { class: 'tcard-facts' }, facts) : null,
+          desc || road ? h('span', { class: 'tcard-where' }, [desc, road].filter(Boolean).join(' · ')) : null,
+        ),
+        close,
+      );
+      card.hidden = false;
+      // Pops open from the chip.
+      card.classList.remove('is-in');
+      void card.offsetWidth;
+      card.classList.add('is-in');
+    }
+    const d = i.s - p.s;
+    const dist = card.querySelector('.tcard-dist');
+    const text = d > 15 ? tt(L, 'ahead', { d: formatDistance(d, units) }) : tt(L, 'forNext', { d: formatDistance(Math.max(0, i.endS - p.s), units) });
+    if (dist && dist.textContent !== text) dist.textContent = text;
+  }
+
+  private hideTrafficCard() {
+    if (!this.cardId && this.el.trafficCard.hidden) return;
+    this.cardId = '';
+    this.el.trafficCard.hidden = true;
   }
 
   /** Offers one of the prepared alternatives when live traffic makes it clearly faster. */
@@ -2582,7 +2655,7 @@ class App {
     const b = h(
       'button',
       { class: 'tl-row', type: 'button', style: `--tc:${incidentColor(i)}` },
-      h('span', { class: 'tc-dot', 'aria-hidden': 'true' }),
+      h('img', { class: 'tc-icon', src: incidentIconUrl(i.kind), alt: '' }),
       h('span', { class: 'tl-body' }, h('strong', {}, head), h('span', { class: 'tl-meta' }, [where, road].filter(Boolean).join(' · ')), desc ? h('span', { class: 'tl-desc' }, desc) : null),
     );
     // Show it on the map (while driving, the map comes back to the car on its own after a while).
@@ -2618,7 +2691,7 @@ class App {
     return h(
       'div',
       { class: 'tp', style: `--tc:${incidentColor(i)}` },
-      h('strong', {}, [kindName(L, i.kind), i.delay >= 60 ? tt(L, 'delay', { m: minutes(i.delay) }) : ''].filter(Boolean).join(' · ')),
+      h('strong', {}, h('img', { class: 'tc-icon', src: incidentIconUrl(i.kind), alt: '' }), [kindName(L, i.kind), i.delay >= 60 ? tt(L, 'delay', { m: minutes(i.delay) }) : ''].filter(Boolean).join(' · ')),
       i.description ? h('span', {}, i.description) : null,
       road ? h('span', { class: 'tl-meta' }, road) : null,
       i.length > 0 ? h('span', { class: 'tl-meta' }, formatDistance(i.length, this.settings.units)) : null,

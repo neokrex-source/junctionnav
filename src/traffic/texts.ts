@@ -72,7 +72,10 @@ export type TrafficKey =
   | 'arrival'
   | 'zoomIn'
   | 'now'
-  | 'ago';
+  | 'ago'
+  | 'ahead'
+  | 'forNext'
+  | 'long';
 
 const UI: Record<LangCode, Record<TrafficKey, string>> = {
   en: {
@@ -101,6 +104,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     zoomIn: 'Zoom in to see incidents.',
     now: 'here',
     ago: '{t} ago',
+    ahead: '{d} ahead',
+    forNext: 'For the next {d}',
+    long: '{d} long',
   },
   ms: {
     traffic: 'Trafik',
@@ -128,6 +134,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     zoomIn: 'Zum masuk untuk melihat insiden.',
     now: 'di sini',
     ago: '{t} lalu',
+    ahead: '{d} di hadapan',
+    forNext: 'Untuk {d} lagi',
+    long: 'Sepanjang {d}',
   },
   ja: {
     traffic: '交通情報',
@@ -155,6 +164,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     zoomIn: '拡大すると交通障害が表示されます。',
     now: '現在地',
     ago: '{t}前',
+    ahead: '{d}先',
+    forNext: 'この先{d}続きます',
+    long: '長さ{d}',
   },
 };
 
