@@ -85,8 +85,8 @@ export function classifyStep(route: Route, i: number): JunctionKind | null {
 
 /** How far before a split the junction view shows and the route turns orange (metres). */
 export const JUNCTION_LEAD = 300;
-/** How far past the split the route stays orange (onto the branch taken). */
-export const JUNCTION_TAIL = 60;
+/** The route is dark orange this far either side of the split (metres), orange before that. */
+export const JUNCTION_CORE = 100;
 
 /** Find maneuvers that deserve a junction view: ramps, exits, forks, merges and divider splits. */
 export function detectJunctions(route: Route): JunctionCandidate[] {

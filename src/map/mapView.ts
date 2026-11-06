@@ -55,12 +55,20 @@ export function autoSpan(speed: number, distToNext: number, wide = false): numbe
   return clampSpan(span);
 }
 
+/** A stretch of the route [from, to] in metres: orange on the way into a junction, dark orange ('core') at the split. */
+export type RouteZone = [number, number, ('approach' | 'core')?];
+
 /**
  * A 'step' expression over line-progress for a route `length` metres long: `passed` up to the
  * car (`progress`, a fraction, or null for no driven part), then `base`, with `zone` over each
- * [from, to] stretch (metres). Stops always rise, as MapLibre requires.
+ * [from, to] stretch (metres), or `core` for a 'core' stretch. Stops always rise, as MapLibre requires.
  */
-export function routeGradient(length: number, zones: [number, number][], progress: number | null, c: { passed: string; base: string; zone: string }): unknown[] {
+export function routeGradient(
+  length: number,
+  zones: RouteZone[],
+  progress: number | null,
+  c: { passed: string; base: string; zone: string; core?: string },
+): unknown[] {
   const L = Math.max(1, length);
   const f = progress == null ? 0 : Math.min(0.9999, Math.max(0.0001, progress));
   const e: unknown[] = ['step', ['line-progress'], progress == null ? c.base : c.passed];
@@ -72,11 +80,13 @@ export function routeGradient(length: number, zones: [number, number][], progres
     last = x;
   };
   if (progress != null) stop(f, c.base);
-  for (const [a, b] of zones) {
-    if (b / L <= f) continue;
-    stop(Math.max(a / L, f), c.zone);
-    stop(b / L, c.base);
-  }
+  zones.forEach(([a, b, kind], i) => {
+    if (b / L <= f) return;
+    stop(Math.max(a / L, f), kind === 'core' ? c.core ?? c.zone : c.zone);
+    // Back to the route colour at the end, unless the next stretch starts right there.
+    const next = zones[i + 1];
+    if (!next || next[0] > b + 0.5) stop(b / L, c.base);
+  });
   // A step needs at least one stop: with nothing to mark (no junctions, no driven part) the
   // whole line is one colour, written as a stop that changes nothing.
   if (e.length < 5) e.push(0.5, c.base);
@@ -858,8 +868,8 @@ export class MapView {
     });
   }
 
-  /** Route stretches through junctions, drawn orange: [from, to] in metres along the selected route. */
-  private junctionZones: [number, number][] = [];
+  /** Route stretches through junctions: orange on the way in, dark orange at the split (metres along the route). */
+  private junctionZones: RouteZone[] = [];
 
   /**
    * The route's colours along its length (line-progress): the part already driven, the route,
@@ -867,10 +877,11 @@ export class MapView {
    */
   private gradient(part: 'line' | 'casing' | 'glow' = 'line') {
     const t = this.theme;
-    const [base, zone] = part === 'casing' ? [t.routeCasing, t.junctionCasing] : part === 'glow' ? [t.routeGlow, t.junctionGlow] : [t.route, t.junction];
+    const [base, zone, core] =
+      part === 'casing' ? [t.routeCasing, t.junctionCasing, t.junctionCasing] : part === 'glow' ? [t.routeGlow, t.junctionGlow, t.junctionGlow] : [t.route, t.junction, t.junctionCore];
     const r = this.routes[this.selected];
     const f = part === 'line' ? this.progressFrac : null;
-    return routeGradient(r?.line.length ?? 1, this.junctionZones, f, { passed: t.passed, base, zone }) as unknown as maplibregl.ExpressionSpecification;
+    return routeGradient(r?.line.length ?? 1, this.junctionZones, f, { passed: t.passed, base, zone, core }) as unknown as maplibregl.ExpressionSpecification;
   }
 
   /** Repaints the route's colours (the driven part changes often; the junction stretches with the route). */
@@ -884,10 +895,10 @@ export class MapView {
   }
 
   /**
-   * Junctions on the selected route: the route turns orange from `from` (where the junction view
-   * comes up, 300 m before the split) to `to` (a little past it, onto the branch taken).
+   * Junctions on the selected route: orange from where the junction view comes up (300 m before
+   * the split) and dark orange for the 100 m either side of the split.
    */
-  setJunctionZones(zones: [number, number][]) {
+  setJunctionZones(zones: RouteZone[]) {
     this.junctionZones = [...zones].filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
     this.paintRoute();
     this.paintArrow();

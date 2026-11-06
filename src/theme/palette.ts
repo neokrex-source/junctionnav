@@ -49,10 +49,12 @@ export interface Theme {
   pulse: string;
   pulseGlow: string;
   /**
-   * The route through a junction: orange for the 300 m before the split and a little past it,
-   * the same as the route in the junction views, with its outline and (at night) glow.
+   * The route through a junction: orange from 300 m before the split (the same as the route in
+   * the junction views), dark orange for the 100 m either side of the split itself, with its
+   * outline and (at night) glow.
    */
   junction: string;
+  junctionCore: string;
   junctionCasing: string;
   junctionGlow: string;
   /** The other roads at the split (the ones not to take): a neutral grey, and the outline that lifts them off the map. */
@@ -73,6 +75,7 @@ export const DAY: Theme = {
   pulse: '#ffffff',
   pulseGlow: '#a78bfa',
   junction: '#ea580c',
+  junctionCore: '#9a3412',
   junctionCasing: '#7c2d12',
   junctionGlow: 'rgba(234, 88, 12, 0)',
   fork: '#8a8398',
@@ -117,6 +120,7 @@ export const NIGHT: Theme = {
   pulse: '#faf5ff',
   pulseGlow: '#d8b4fe',
   junction: '#fb923c',
+  junctionCore: '#ea580c',
   junctionCasing: '#431407',
   junctionGlow: 'rgba(251, 146, 60, 0.34)',
   fork: '#7a7190',

@@ -136,6 +136,14 @@ describe('orange through junctions', () => {
     // The outline has no driven part.
     expect(routeGradient(10000, zones, null, c)).toEqual(['step', ['line-progress'], 'purple', 0.27, 'orange', 0.306, 'purple', 0.67, 'orange', 0.706, 'purple']);
   });
+  it('marks the split itself in dark orange, 100 m either side, after the orange approach', () => {
+    const cc = { ...c, core: 'dark' };
+    // Junction at 3 km: orange from 2700 m, dark orange from 2900 m to 3100 m, then the route again.
+    const zones: [number, number, 'approach' | 'core'][] = [[2700, 2900, 'approach'], [2900, 3100, 'core']];
+    expect(routeGradient(10000, zones, 0.1, cc)).toEqual(['step', ['line-progress'], 'grey', 0.1, 'purple', 0.27, 'orange', 0.29, 'dark', 0.31, 'purple']);
+    // Driving through the dark stretch: dark from the car to its end.
+    expect(routeGradient(10000, zones, 0.3, cc)).toEqual(['step', ['line-progress'], 'grey', 0.3, 'purple', 0.3 + 1e-6, 'dark', 0.31, 'purple']);
+  });
   it('is always a valid step expression, also with nothing to mark', () => {
     // MapLibre needs at least one stop: an outline with no junctions is one colour.
     expect(routeGradient(10000, [], null, c)).toEqual(['step', ['line-progress'], 'purple', 0.5, 'purple']);
