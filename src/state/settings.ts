@@ -2,6 +2,7 @@ import type { SignThemeId } from '../junction/signs';
 import type { LangCode, Units } from '../routing/instructions';
 import type { Avoid } from '../routing/types';
 import type { JvMode, JvSize } from '../ui/junctionPanel';
+import type { PlacesUpdate } from '../places/schedule';
 import { isDaylight } from './daylight';
 
 export interface Settings {
@@ -54,6 +55,14 @@ export interface Settings {
   trafficAlerts: boolean;
   /** Traffic headlines from Malaysian news (no key needed). */
   trafficNews: boolean;
+  /** How often the places around you are brought up to date (src/places). */
+  placesUpdate: PlacesUpdate;
+  /** How far around you places are kept (km). */
+  placesRadius: number;
+  /** Automatic places updates only on Wi-Fi. */
+  placesWifiOnly: boolean;
+  /** The places around you as icons on the map. */
+  placesOnMap: boolean;
 }
 
 const env = import.meta.env;
@@ -94,6 +103,10 @@ export const DEFAULTS: Settings = {
   trafficMap: true,
   trafficAlerts: true,
   trafficNews: true,
+  placesUpdate: 'monthly',
+  placesRadius: 100,
+  placesWifiOnly: true,
+  placesOnMap: true,
 };
 
 /** A TomTom key for everyone, set by the site's build (optional); a key in Settings takes its place. */

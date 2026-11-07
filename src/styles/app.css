@@ -1577,3 +1577,17 @@ button { cursor: pointer; }
 .routes-src { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.35; }
 .settings .sub-label { margin-top: 10px; font-size: 13px; }
 .key-state div + div { margin-top: 2px; }
+
+/* The places around you: the kind's icon by the name, and what is known about the place. */
+.place-kind { flex: none; display: flex; }
+.place-kind .place-ico { width: 30px; height: 30px; display: block; }
+.place-details { display: grid; gap: 7px; margin: 2px 0 2px; }
+.pd-row { display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start; font-size: 14.5px; line-height: 1.35; }
+.pd-ico .ico { width: 18px; height: 18px; color: var(--muted); display: block; margin-top: 1px; }
+.pd-text { min-width: 0; overflow-wrap: anywhere; }
+.pd-text a { color: var(--route); text-decoration: none; font-weight: 600; }
+.pd-src { font-size: 12px; color: var(--muted); }
+.settings .pl-status { font-size: 14px; line-height: 1.4; color: var(--ink); }
+.settings .pl-error { margin-top: 4px; color: var(--danger); }
+.places-grp .pl-remove { color: var(--danger); }
+.places-grp select + select { margin-top: 6px; }

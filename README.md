@@ -91,7 +91,8 @@ Purple with white, light grey and black. By day the app is light purple: white p
 ## Search and directions
 
 - **Search bar.** Type to search (Photon, OSM-based) or paste coordinates like `3.139, 101.6869`. With an empty search box you get Home, Work, saved places and recent destinations, kept in this browser.
-- **Categories.** Petrol, EV charging, parking, food, rest areas (R&R, SA/PA) and convenience stores. Results come from OpenStreetMap via Overpass, nearest first, with numbered pins on the map.
+- **Categories.** Petrol, EV charging, parking, food, rest areas (R&R, SA/PA) and convenience stores. Results come from TomTom (or OpenStreetMap via Overpass) plus the places around you (below), nearest first, with numbered pins on the map.
+- **Places around you.** Restaurants, cafés, shops, petrol stations, clinics, mosques, schools, banks and more for the area within 100 km of where you are (see below), as icons on the map, in search and in the category buttons, also without internet.
 - **Place card.** Directions, Start (go straight away on the fastest route), Save, Set as Home / Work, copy coordinates. Long-press or right-click the map to drop a pin.
 - **Directions.** From (your location by default), up to 3 stops, and To, with swap. Toggle **Avoid tolls**, **Avoid highways** and **Avoid ferries**; the choice is remembered.
 - **Route cards.** Fastest / Toll-free / Shorter / Alternative labels, travel time, arrival time, distance, the main roads used, kilometres on toll roads, and how many junction views the route has. When the fastest routes use tolls, a toll-free option is requested alongside.
@@ -104,6 +105,18 @@ Purple with white, light grey and black. By day the app is light purple: white p
 - **Close-up at turns and junctions.** On every scale, the map zooms in to 20 m at every turn, fork, divider, ramp, exit, entrance and junction, and comes back out to 100 m (or the scale picked with the scale button) once past it: it is all the way in within 100 m either side of the junction (the dark orange stretch of the route), eases in over the few seconds before (starting a little earlier at speed, so the camera is really at 20 m by the 100 m mark) and back out over the 80 m after (`closeWeight` and `CLOSE_WITHIN` in `src/map/mapView.ts`). While it is in close, the route line and the turn arrow are drawn thin so the road and its lanes show beside them. The other roads at the split are drawn in grey from the junction's OSM detail (the same geometry as the 3D junction view, `forks` in `src/junction/scene.ts`): solid for a road branching off, dashed for a road joining at a merge. Settings → *Close-up at splits* turns it off.
 - **Orange through junctions.** The junction view comes up 300 m before each split (`JUNCTION_LEAD` in `src/junction/detect.ts`), and from that point the route line on the map turns orange, its outline and night glow too. For the 100 m either side of the split itself (`JUNCTION_CORE`) it is dark orange, so the junction you are about to take stands out from the road leading to it and from the next one; after that it is the usual purple again. The route in the junction views (3D illustration, zoomed map and its 3D roads) is orange as well, so the map and the view match, and the other roads at the split are grey: only the orange line is your way.
 - **While driving.** Tap the banner for the remaining steps. The search button finds categories along the route ahead (within 400 m of it, next 60 km) so you can **Add as stop** or **Go here** instead. The ETA line shows the next stop when you have one.
+
+### Places around you
+
+The map's own points of interest come from OpenStreetMap, which in Malaysia lists far fewer businesses than Google Maps. So the app keeps a much fuller set of places for the area around you on the device, and brings it up to date now and then.
+
+- **Where the places come from.** `.github/workflows/places.yml` runs every week (and when its scripts change, or from **Actions → Places → Run workflow**). `scripts/places/build.sh` downloads the latest [Overture Maps](https://overturemaps.org) places release (businesses and points of interest from Meta, Microsoft and other sources, open data under CDLA Permissive 2.0) for Malaysia, Singapore and Brunei with the `overturemaps` tool, and the day's OpenStreetMap extract from Geofabrik. `scripts/places/build-places.mjs` merges them: a place in both (a similar name within 80 m) is kept once, with OpenStreetMap's position and name and the details of both (address, phone, website, opening hours, cuisine, brand); Overture places below 0.6 confidence, closed ones and ones in other countries are left out, as are duplicates. The first build had 699,367 places (OpenStreetMap alone: 165,124), 104 MB in 558 cells of 0.25° (about 28 km), each listed in `manifest.json` with a hash. The Pages workflow publishes the newest build with the site under `places/`.
+- **On the device.** The places worker (`src/places/places.worker.ts`) downloads the cells within 50, 100 or 150 km of where you are (100 by default), keeps them in browser storage (IndexedDB) and in memory, and answers the map, search and category questions off the main thread. An update reads the manifest and downloads only the cells that are new or changed, a few at a time, each kept as soon as it arrives; cells now out of reach are dropped. Around Kuala Lumpur that is about 30 MB on the device, a few MB over the network (GitHub Pages compresses it).
+- **When it updates** (`src/places/schedule.ts`): on the schedule picked in **Settings → Places around you** (every week, 2 weeks, month (default) or 3 months, or only when you tap **Update now**), as soon as you are half the distance away from where the places were fetched (a new city), and when the distance setting changes. It checks at start, every half hour while the app is open and when it comes back to the front, never while navigating, not on mobile data when *Download only on Wi-Fi* is on (the default), not with the phone's data saver on, and waits six hours after a failed try. The section shows how many places are on the device, around which town, when they were updated and how big they are, with **Update now** and **Remove**.
+- **On the map** (`src/map/placesLayer.ts`). Each place is an icon in its kind's colour (food orange, cafés brown, groceries and shops blue, petrol teal, health red, worship grey, hotels pink and so on), named from street level. The most useful kinds show first as you zoom in (malls, stations and rest areas from zoom 12 or 13, petrol and attractions from 14, food and groceries from 15, small shops and services at street level), prominent places a little earlier, at most 450 at a time, under the route line. While driving, offices, small shops and services are left off. Where the places cover the map, the base map's own points of interest are hidden (they are the OpenStreetMap subset of the same places). The JunctionNav map style shows the tiles' points of interest with the same icons elsewhere. *Show places on the map* in Settings turns the layer off.
+- **A place's card.** Tap an icon: the name with the kind's icon, the kind ("Malaysian restaurant") and the distance, then opening hours, address, phone (tap to call), website and cuisine where known, and where the details come from. While driving it opens over the map with **Add as stop**. Long-pressing right on a place names the dropped pin after it.
+- **Search and categories.** Typing in the search box looks through the places around you at the same time as TomTom or Photon (about 20 ms for 250,000 places): strong matches nearby come first, a place both find is listed once with the local details, and with no connection the local results still come. The category buttons add the places around you to TomTom's or Overpass's results.
+- **Limits.** Overture's businesses come largely from online listings, so a few may have moved or closed; the confidence threshold keeps most of the doubtful ones out. Outside Malaysia, Singapore and Brunei there is no places data yet (the map keeps its own points of interest there).
 
 ### Trip links
 
@@ -276,6 +289,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 | Routing | TomTom (with a key, *TomTom first*), else `routing.openstreetmap.de` (FOSSGIS OSRM) | TomTom: traffic in the times, alternatives, lanes. OSRM: public demo server for light use; self-host for real driving (below). |
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
 | Search | TomTom (with a key, *TomTom first*), else `photon.komoot.io` | Photon is OSM-based and allows search-as-you-type, fair use only. The category buttons use TomTom, else Overpass. |
+| Places around you | Overture Maps places merged with OpenStreetMap, built weekly by a GitHub job | 699k places for Malaysia, Singapore and Brunei, published with the site; the app keeps the area within 100 km. |
 | Terrain | AWS Terrain Tiles (Terrarium) | One or two small images per junction, for hills and valleys in junction views. |
 | Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 350 full downloads). |
 | Live traffic | TomTom Traffic and Routing APIs | Optional, with a free key per user (or one for the site). Congestion tiles, incidents, travel times with traffic. |
@@ -317,6 +331,7 @@ Copy `.env.example` to `.env`. Every value is optional.
 | `VITE_TERRAIN_URL` | AWS Terrain Tiles, `…/terrarium/{z}/{x}/{y}.png` (any Terrarium-encoded source works) |
 | `VITE_TOMTOM_KEY` | empty (each user pastes their own key in Settings) |
 | `VITE_TRAFFIC_NEWS_URL` | set by the Pages and Android builds to the `traffic-news` branch's `news.json` |
+| `VITE_PLACES_URL` | the site's `places/` folder (from `VITE_WEB_APP_URL`); set it to use places data published elsewhere |
 
 Users can also change map style, sign style, language (English, Bahasa Melayu, Japanese), units, voice, junction-view mode and server URLs in **Settings**.
 
@@ -329,6 +344,8 @@ src/
   routing/                OSRM adapter (avoid options, stops, toll distance), instruction text (en/ms/ja)
   search/                 place search (Photon) and category search nearby / along route (Overpass)
   tomtom/                 TomTom first: routing adapter, place and category search, fallback to the OSM services
+  places/                 places around you: data format and categories, worker (storage, updates, index),
+                          update schedule, search and category merging
   traffic/                live traffic (TomTom incidents, travel times, congestion tiles), traffic news feed,
                           matching incidents and news to the route, Malaysian road names, texts (en/ms/ja)
   state/                  settings and saved places
@@ -355,6 +372,7 @@ src/
   lab/lab.ts              Junction View Lab page
 scripts/offline/          offline pack builder (run by the Pages workflow)
 scripts/traffic/          traffic news collector (run every 20 minutes by the Traffic news workflow)
+scripts/places/           places data builder: Overture Maps + OpenStreetMap into cells (run weekly by the Places workflow)
 scripts/android/          emulator check for the Android app (run by the Android workflow)
 android/                  the Android app's native project (Capacitor; web assets are synced in at build)
 src/platform.ts           browser or Android app, and the addresses that differ between them
@@ -370,7 +388,7 @@ tests/                    vitest suites
 ## Tests
 
 ```bash
-npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, toll plazas, scene builder,
+npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, toll plazas, places, scene builder,
                   # offline pack (builds a pack from the demo network with the real scripts, then routes, searches and reads junctions)
 npm run typecheck
 ```

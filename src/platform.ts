@@ -30,3 +30,9 @@ export const APP_VERSION: string = import.meta.env.VITE_APP_VERSION || 'dev';
 
 /** Traffic headlines collected by the Traffic news workflow (set by the Pages and Android builds). */
 export const TRAFFIC_NEWS_URL: string = import.meta.env.VITE_TRAFFIC_NEWS_URL || '';
+
+/**
+ * The places around you (weekly, from the Places workflow): the website's places/ folder, next to
+ * the app on the website and from the website in the Android app. None in a local dev build.
+ */
+export const PLACES_URL: string | undefined = import.meta.env.VITE_PLACES_URL || (WEB_APP_URL ? new URL('places/', WEB_APP_URL).href : undefined);

@@ -101,13 +101,28 @@ export interface PlaceDetails {
   s?: 'o' | 'm' | 'om';
 }
 
+/** What the place card shows for a place from the places data. */
+export interface PlaceInfo {
+  group: PlaceGroup;
+  /** The kind in words ("Malaysian restaurant"). */
+  label: string;
+  address?: string;
+  phone?: string;
+  website?: string;
+  hours?: string;
+  cuisine?: string;
+  brand?: string;
+  source?: 'o' | 'm' | 'om';
+}
+
 /** One place: name, index into the cell's categories, longitude and latitude ×1e5, rank 0 to 100, details. */
 export type PlaceRow = [name: string, cat: number, x: number, y: number, rank: number, details?: PlaceDetails];
 
 export interface CellFile {
   v: number;
   id: string;
-  built: string;
+  /** Not written by the builder (the manifest has it), so unchanged cells keep their hash. */
+  built?: string;
   /** Categories used in this cell: the source's own key ("malaysian_restaurant") and its group. */
   cats: [string, PlaceGroup][];
   /** Highest rank first. */

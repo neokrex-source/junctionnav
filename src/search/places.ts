@@ -1,5 +1,6 @@
 /** Place search with Photon (OSM-based, allows search-as-you-type) plus coordinate input. */
 import type { LngLat } from '../geo/geo';
+import type { PlaceInfo } from '../places/format';
 import { escapeHtml, h } from '../ui/dom';
 
 export interface Place {
@@ -14,6 +15,10 @@ export interface Place {
   note?: string;
   /** Direction of travel through this place (trip links), to pick the right carriageway. */
   bearing?: number;
+  /** Details from the places around you (kind, address, phone, website, hours). */
+  info?: PlaceInfo;
+  /** The place in the places around you, for its details when they are not here yet. */
+  placeId?: string;
 }
 
 interface PhotonFeature {

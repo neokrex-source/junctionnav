@@ -10,6 +10,9 @@ import { runningCopy } from '../native/appMode';
 import { APK_URL, APP_VERSION, NATIVE, TRAFFIC_NEWS_URL } from '../platform';
 import { h } from './dom';
 import { offlinePanel } from './offlinePanel';
+import type { PlacesService } from '../places/service';
+import type { PlacesUpdate } from '../places/schedule';
+import { placesPanel } from './placesPanel';
 
 function select(id: string, value: string, options: [string, string][]) {
   const s = h('select', { id, name: id }) as HTMLSelectElement;
@@ -40,6 +43,8 @@ export interface SettingsOptions {
   onSignIn?: () => void;
   /** Offline maps storage, when this build offers them. */
   pack?: OfflineStore;
+  /** The places around you, when this build has them. */
+  places?: PlacesService;
 }
 
 export function openSettings(current: Settings, opts: SettingsOptions = {}): Promise<Settings | null> {
@@ -94,6 +99,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['always', 'Always use them (saves mobile data)'],
     ]);
     const pack = opts.pack ? offlinePanel(opts.pack, offlineUse) : null;
+    const places = opts.places ? placesPanel(opts.places, current) : null;
     // In the Android app: the built-in copy, or the latest website build downloaded into the app.
     const appMode = select('appMode', current.appMode, [
       ['built-in', 'Built into the app'],
@@ -297,6 +303,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         h('div', { class: 'hint' }, 'Says "Get your Touch n Go card ready" about 1 km before a toll plaza on expressways (400 m in town) and "Prepare your Touch n Go" just before it, with the plaza over the arrival time and on the map. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.'),
       ),
       traffic,
+      places?.el,
       pack?.el,
       androidApp,
       h(
@@ -322,6 +329,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     dlg.addEventListener('close', () => {
       const ok = dlg.returnValue === 'save';
       pack?.dispose();
+      places?.dispose();
       dlg.remove();
       if (!ok) return resolve(null);
       resolve({
@@ -343,6 +351,14 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
         tollAlerts: tolls.checked,
+        ...(places
+          ? {
+              placesUpdate: places.update.value as PlacesUpdate,
+              placesRadius: Number(places.radius.value) || 100,
+              placesWifiOnly: places.wifiOnly.checked,
+              placesOnMap: places.onMap.checked,
+            }
+          : {}),
         tomtomKey: tomtomKey.value.trim(),
         services: services.value as Settings['services'],
         trafficMap: trafficMap.checked,

@@ -49,7 +49,12 @@ import { driveQuery, KL_DRIVES, type TestDrive } from './sim/drives';
 import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
-import { BUILT_IN, NATIVE, TRAFFIC_NEWS_URL } from './platform';
+import { BUILT_IN, NATIVE, PLACES_URL, TRAFFIC_NEWS_URL } from './platform';
+import { PlacesService } from './places/service';
+import { MergedPois, MergedSearch, hitToPlace, hitInfo } from './places/search';
+import { PlacesLayer, PLACES_LIMIT } from './map/placesLayer';
+import { placeSvg } from './ui/placeIcons';
+import type { PlaceInfo } from './places/format';
 import { incidentColor, incidentIconUrl, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
 import { jamSvg } from './ui/trafficIcon';
 import { tollSvg } from './ui/tollIcon';
@@ -124,6 +129,11 @@ const ICON = {
   traffic: jamSvg(),
   news: svg(`<path ${S} d="M5 5h11v14H6a1 1 0 0 1-1-1zM16 9h3v9a1 1 0 0 1-1 1h-2M8 9h5M8 12.5h5M8 16h3"/>`),
   bolt: svg(`<path fill="currentColor" d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/>`),
+  clock: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M12 7.5V12l3 2"/>`),
+  pin: svg(`<path ${S} d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><circle ${S} cx="12" cy="9.5" r="2.5"/>`),
+  phone: svg(`<path ${S} d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>`),
+  globe: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/>`),
+  food: svg(`<path ${S} d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.5 1-3.5 4-3.5 7.5 0 2 1.5 3 3.5 3"/>`),
 };
 
 interface Trip {
@@ -257,6 +267,14 @@ class App {
     },
   });
   trafficLayer!: TrafficLayer;
+  /** The places around you (src/places): kept up to date on the schedule from Settings. */
+  placesSvc = new PlacesService({
+    base: () => (ARTIFACT || this.demo ? null : PLACES_URL ?? null),
+    settings: () => this.settings,
+    position: () => this.myPos ?? lastPosition() ?? (this.map ? [this.map.map.getCenter().lng, this.map.map.getCenter().lat] : null),
+    busy: () => this.view === 'nav',
+  });
+  placesLayer!: PlacesLayer;
   /** Which TomTom congestion tiles answer for this key. */
   private flowVariant: 'classic' | 'orbis' = 'classic';
   /** Incidents already announced on this drive. */
@@ -331,10 +349,11 @@ class App {
     this.tunnels.provider = new HybridTunnels(() => tunnels, sw);
     const tolls = new OverpassTollProvider(overpass);
     this.tolls.provider = new HybridTolls(() => tolls, sw);
-    this.cats = new CategorySearch(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw));
+    const places = () => (this.placesSvc.available ? this.placesSvc.client : null);
+    this.cats = new CategorySearch(new MergedPois(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw), places));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
     const search = new FallbackSearch(new TomTomPlaceSearch(ttKey), () => photon, this.ttGate);
-    this.search = new HybridSearch(() => search, sw);
+    this.search = new MergedSearch(new HybridSearch(() => search, sw), places, () => this.L);
     this.terrain = this.realTerrain();
     this.terrainReady.clear();
     this.surroundReady.clear();
@@ -488,6 +507,16 @@ class App {
     };
     this.traffic.onChange = () => this.onTraffic();
     this.map.map.on('moveend', () => this.browseTraffic());
+    // The places around you on the map (icons and names, tap for details).
+    this.placesLayer = new PlacesLayer(this.map.map, {
+      query: (bbox, zoom, driving) => this.placesSvc.client.box(bbox, zoom, PLACES_LIMIT, driving),
+      onPick: (id) => void this.pickPlace(id),
+      coverage: () => this.placesSvc.coverage,
+      enabled: () => this.settings.placesOnMap && !this.demo && !ARTIFACT,
+      driving: () => this.view === 'nav',
+    });
+    this.placesLayer.setNight(this.nightNow);
+    this.placesSvc.onChange(() => this.placesLayer.refresh(0));
     window.addEventListener('online', () => this.browseTraffic());
 
     this.buildTopbar();
@@ -524,6 +553,7 @@ class App {
       });
 
     void this.initOffline();
+    void this.placesSvc.start();
     this.syncTrafficFlow();
     if (this.settings.trafficNews) void this.traffic.refreshNews(true);
     const tripLink = parseTripLink(location.search);
@@ -767,6 +797,58 @@ class App {
     this.map.setDestination(p.lngLat);
     this.map.flyTo(p.lngLat, Math.max(15, this.map.map.getZoom()));
     this.setView('place');
+    void this.fillPlaceInfo(p, () => this.place === p && this.view === 'place');
+  }
+
+  /** Details for a place found elsewhere (a category button) from the places around you. */
+  private async fillPlaceInfo(p: Place, stillShown: () => boolean) {
+    if (p.info || !p.placeId) return;
+    const hit = await this.placesSvc.client.get(p.placeId).catch(() => null);
+    if (!hit || !stillShown()) return;
+    p.info = hitInfo(hit, this.L);
+    this.renderSheet();
+  }
+
+  /** A place's icon on the map was tapped: its card (while driving, with Add as stop). */
+  private async pickPlace(id: string) {
+    const hit = await this.placesSvc.client.get(id).catch(() => null);
+    if (!hit) return;
+    const p = hitToPlace(hit, this.L);
+    if (this.view === 'nav') {
+      const d = this.myPos ? haversine(this.myPos, p.lngLat) : 0;
+      this.navPlace = { ...p, note: d ? formatDistance(d, this.settings.units) : undefined };
+      this.navOverlay = 'place';
+      this.renderSheet();
+      return;
+    }
+    if (this.view === 'directions') return;
+    this.results = [];
+    this.el.q.value = p.name;
+    this.el.qClear.hidden = false;
+    this.openPlace(p);
+  }
+
+  /** What the places around you know about a place: kind, opening hours, address, phone, website. */
+  private placeDetails(info: PlaceInfo | undefined): HTMLElement | null {
+    if (!info) return null;
+    const row = (icon: string, content: Node | string, cls = '') => h('div', { class: `pd-row ${cls}` }, h('span', { class: 'pd-ico', html: icon }), h('span', { class: 'pd-text' }, content));
+    const rows: HTMLElement[] = [];
+    if (info.hours) rows.push(row(ICON.clock, info.hours.replace(/;\s*/g, '; ')));
+    if (info.address) rows.push(row(ICON.pin, info.address));
+    if (info.phone) rows.push(row(ICON.phone, h('a', { href: `tel:${info.phone.replace(/[^\d+]/g, '')}` }, info.phone)));
+    if (info.website) {
+      let label = info.website;
+      try {
+        const u = new URL(info.website);
+        label = (u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/$/, '')).slice(0, 48);
+      } catch {
+        /* shown as it is */
+      }
+      rows.push(row(ICON.globe, h('a', { href: info.website, target: '_blank', rel: 'noopener' }, label)));
+    }
+    if (info.cuisine) rows.push(row(ICON.food, info.cuisine.split(';').map((c) => c.trim().replace(/_/g, ' ')).filter(Boolean).join(', ')));
+    const src = info.source === 'om' ? 'Overture Maps and OpenStreetMap' : info.source === 'm' ? 'OpenStreetMap' : 'Overture Maps';
+    return h('div', { class: 'place-details' }, ...rows, h('div', { class: 'pd-src' }, `From ${src}`));
   }
 
   private closePlace() {
@@ -781,10 +863,13 @@ class App {
   private renderPlace(s: HTMLElement, p: Place) {
     const fav = this.places.isFavourite(p);
     const dist = this.myPos ? formatDistance(haversine(this.myPos, p.lngLat), this.settings.units) : '';
-    s.append(
-      this.sheetHead(p.name, () => (this.results.length ? this.setView('results') : this.closePlace())),
-      h('p', { class: 'place-sub' }, [p.sub, dist].filter(Boolean).join(' · ')),
-    );
+    const head = this.sheetHead(p.name, () => (this.results.length ? this.setView('results') : this.closePlace()));
+    if (p.info) head.prepend(h('span', { class: 'place-kind', html: placeSvg(p.info.group) }));
+    // The address has its own line in the details.
+    const sub = p.info?.address ? p.sub.replace(` · ${p.info.address}`, '') : p.sub;
+    s.append(head, h('p', { class: 'place-sub' }, [sub, dist].filter(Boolean).join(' · ')));
+    const details = this.placeDetails(p.info);
+    if (details) s.append(details);
     const dirBtn = h('button', { class: 'btn btn-primary', type: 'button', html: `${ICON.directions}<span>${this.tr('directions')}</span>` });
     dirBtn.addEventListener('click', () => this.openDirections(p));
     const go = h('button', { class: 'btn btn-ghost', type: 'button' }, this.tr('start'));
@@ -1385,6 +1470,7 @@ class App {
     this.demo = true;
     this.traffic.clear();
     this.syncTrafficFlow();
+    this.placesLayer?.refresh(0);
     this.router = new DemoRouter();
     this.jdata = new JunctionDataCache(new DemoJunctionProvider());
     this.surr = new SurroundCache(new DemoSurroundProvider());
@@ -1426,6 +1512,7 @@ class App {
   private leaveDemo() {
     this.demo = false;
     this.syncTrafficFlow();
+    this.placesLayer?.refresh(0);
     this.realProviders();
     this.refreshMapSource(true);
     this.trip = { origin: null, stops: [], destination: null };
@@ -1659,7 +1746,11 @@ class App {
         this.navOverlay = 'search';
         this.renderSheet();
       }, true));
-      s.append(h('p', { class: 'place-sub' }, [pl.sub, pl.note].filter(Boolean).join(' · ')));
+      const sub = pl.info?.address ? pl.sub.replace(` · ${pl.info.address}`, '') : pl.sub;
+      s.append(h('p', { class: 'place-sub' }, [sub, pl.note].filter(Boolean).join(' · ')));
+      const details = this.placeDetails(pl.info);
+      if (details) s.append(details);
+      else void this.fillPlaceInfo(pl, () => this.navPlace === pl && this.navOverlay === 'place');
       const add = h('button', { class: 'btn btn-primary', type: 'button' }, this.tr('addAsStop'));
       add.addEventListener('click', () => this.addStopWhileDriving(pl));
       const go = h('button', { class: 'btn btn-ghost', type: 'button' }, this.tr('goHere'));
@@ -1871,6 +1962,7 @@ class App {
       this.refreshMapSource(true);
     }
     this.map.setTheme(themeFor(night));
+    this.placesLayer?.setNight(night);
     this.syncTrafficFlow();
     this.sceneCache.clear();
     const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
@@ -3035,6 +3127,7 @@ class App {
     const next = await openSettings(this.settings, {
       preview: ARTIFACT,
       pack: ARTIFACT ? undefined : this.offline,
+      places: ARTIFACT ? undefined : this.placesSvc,
       account: u
         ? {
             name: u.name,
@@ -3056,6 +3149,8 @@ class App {
     const prev = this.settings;
     this.settings = next;
     saveSettings(next);
+    if (prev.placesOnMap !== next.placesOnMap) this.placesLayer.refresh(0);
+    if (prev.placesRadius !== next.placesRadius || prev.placesUpdate !== next.placesUpdate || prev.placesWifiOnly !== next.placesWifiOnly) this.placesSvc.check();
     this.map.setUnits(next.units);
     this.applyLang();
     this.paintMute();

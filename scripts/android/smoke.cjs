@@ -250,6 +250,21 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   // The feed may be empty in a quiet hour; that it answers is what counts.
   check('traffic news feed answers', app.trafficButton && typeof app.trafficNews === 'object' && !!app.trafficNews.updated, app.trafficNews);
 
+  // Places around you: the real data from the site, into the app's own storage and its worker.
+  try {
+    const t0 = Date.now();
+    const pl = await page.evaluate(async () => {
+      const svc = window.__app.placesSvc;
+      const st = await svc.update(false, true);
+      const hits = await svc.client.search('mcdonald', [101.6869, 3.139], 3).catch(() => []);
+      return { count: st?.count ?? 0, cells: st?.cells, mb: st ? +(st.bytes / 1048576).toFixed(1) : 0, area: st?.area, status: svc.status, search: hits.map((h) => h.name) };
+    });
+    report.info.places = { ...pl, seconds: Math.round((Date.now() - t0) / 1000) };
+    check('places around you download from the site', pl.count > 1000 && pl.search.length > 0, report.info.places);
+  } catch (e) {
+    check('places around you download from the site', false, String(e?.message ?? e).slice(0, 300));
+  }
+
   // The demo drive: guidance, the radar pulse and the 3D junction view, as installed.
   await page.evaluate(() => window.__app.startDemo(true));
   await page.waitForFunction(() => window.__app.sim, null, { timeout: 30_000 });

@@ -24,6 +24,7 @@ import {
   PLACES_LICENSE,
   PLACES_VERSION,
   cellId,
+  cellsInCircle,
   metres,
   normName,
   osmCategory,
@@ -269,7 +270,8 @@ async function main() {
       const d = Object.keys(r.d).length ? r.d : undefined;
       return d ? [r.name, ci, coord(r.lon), coord(r.lat), r.rank, d] : [r.name, ci, coord(r.lon), coord(r.lat), r.rank];
     });
-    const text = JSON.stringify({ v: PLACES_VERSION, id, built, cats, p: rows });
+    // No build time in the cell: a cell whose places did not change keeps its hash, so phones skip it.
+    const text = JSON.stringify({ v: PLACES_VERSION, id, cats, p: rows });
     writeFileSync(join(OUT, 'cells', `${id}.json`), text);
     const h = createHash('sha1').update(text).digest('hex').slice(0, 12);
     manifest.cells[id] = { n: rows.length, b: Buffer.byteLength(text), h };
@@ -277,10 +279,21 @@ async function main() {
     bytes += Buffer.byteLength(text);
   }
   writeFileSync(join(OUT, 'manifest.json'), JSON.stringify(manifest));
+  // What a phone in a few cities downloads with the default 100 km.
+  for (const [city, at] of [['Kuala Lumpur', [101.6869, 3.139]], ['Johor Bahru', [103.7618, 1.4927]], ['George Town', [100.3327, 5.4141]], ['Kota Kinabalu', [116.0735, 5.9804]]]) {
+    const ids = cellsInCircle(at, 100).filter((id) => manifest.cells[id]);
+    const n = ids.reduce((a, id) => a + manifest.cells[id].n, 0);
+    const b = ids.reduce((a, id) => a + manifest.cells[id].b, 0);
+    console.log(`[places] within 100 km of ${city}: ${n} places, ${(b / 1048576).toFixed(1)} MB in ${ids.length} cells`);
+  }
   const groups = {};
   for (const r of kept) groups[r.group] = (groups[r.group] ?? 0) + 1;
   console.log(`[places] ${manifest.count} places in ${cells.size} cells, ${(bytes / 1048576).toFixed(1)} MB`);
   console.log(`[places] by group: ${Object.entries(groups).sort((a, b) => b[1] - a[1]).map(([g, n]) => `${g} ${n}`).join(', ')}`);
+  // The categories that found no group, for tuning the rules in src/places/format.ts.
+  const other = {};
+  for (const r of kept) if (r.group === 'other') other[r.key] = (other[r.key] ?? 0) + 1;
+  console.log(`[places] most common ungrouped categories: ${Object.entries(other).sort((a, b) => b[1] - a[1]).slice(0, 60).map(([k, n]) => `${k} ${n}`).join(', ')}`);
 }
 
 main().catch((e) => {

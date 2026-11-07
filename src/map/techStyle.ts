@@ -3,8 +3,9 @@
  * online tiles (OpenFreeMap, OpenMapTiles schema) and the offline pack (Protomaps).
  *
  * The map is the stage for the route: quiet land, water and parks, roads in three tiers
- * (expressways stand out a little), labels in the palette's ink, no icons. The route line on top
- * (violet by day, glowing lilac by night) is the brightest thing on screen.
+ * (expressways stand out a little), labels in the palette's ink, and small icons for places from
+ * street level. The route line on top (violet by day, glowing lilac by night) is the brightest
+ * thing on screen.
  */
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { namedFlavor, type Flavor } from '@protomaps/basemaps';
@@ -128,6 +129,59 @@ const TIERS = [
   { id: 'major', match: cls('primary', 'secondary', 'tertiary'), w: [8, 0.6, 12, 2.2, 14, 4, 18, 20], min: 7 },
   { id: 'highway', match: cls('motorway', 'trunk'), w: [5, 0.8, 10, 2.4, 14, 5.5, 18, 26], min: 5 },
 ] as const;
+
+/**
+ * The tiles' points of interest (OpenMapTiles classes) as the app's kinds of places, for the same
+ * icons as the downloaded places (`place-<kind>`, drawn by src/map/placesLayer.ts). Where the
+ * downloaded places cover the map, these are hidden in their favour.
+ */
+const POI_GROUP = [
+  'match',
+  ['get', 'class'],
+  ['restaurant', 'fast_food', 'food_court', 'bar', 'beer', 'pub'],
+  'food',
+  ['cafe', 'ice_cream', 'bakery'],
+  'cafe',
+  ['grocery', 'supermarket', 'convenience', 'alcohol_shop', 'butcher', 'marketplace'],
+  'grocery',
+  ['mall', 'department_store'],
+  'mall',
+  ['shop', 'clothing_store', 'jewelry', 'furniture', 'florist', 'books', 'mobile_phone', 'electronics', 'hardware', 'gift', 'optician', 'shoes', 'stationery', 'toys', 'music', 'pet'],
+  'shop',
+  ['fuel'],
+  'fuel',
+  ['charging_station'],
+  'ev',
+  ['parking', 'bicycle_parking', 'motorcycle_parking'],
+  'parking',
+  ['car', 'car_repair', 'car_rental', 'motorcycle', 'bicycle'],
+  'car',
+  ['lodging', 'hotel', 'motel', 'hostel', 'campsite'],
+  'hotel',
+  ['hospital', 'doctors', 'dentist', 'pharmacy', 'clinic', 'veterinary'],
+  'health',
+  ['school', 'college', 'university', 'kindergarten', 'library'],
+  'education',
+  ['place_of_worship'],
+  'worship',
+  ['bank', 'atm'],
+  'bank',
+  ['police', 'post', 'town_hall', 'fire_station', 'embassy', 'courthouse'],
+  'government',
+  ['railway', 'bus', 'aerialway', 'ferry_terminal', 'harbor', 'airport', 'aerodrome'],
+  'transport',
+  ['attraction', 'museum', 'art_gallery', 'castle', 'monument', 'zoo', 'theme_park', 'viewpoint'],
+  'attraction',
+  ['park', 'garden', 'playground'],
+  'park',
+  ['stadium', 'sports', 'golf', 'swimming', 'pitch', 'fitness'],
+  'sport',
+  ['cinema', 'theatre', 'nightclub', 'casino'],
+  'leisure',
+  ['laundry', 'hairdresser', 'beauty'],
+  'service',
+  'other',
+] as unknown as ExpressionSpecification;
 
 /** The JunctionNav map on OpenFreeMap's free vector tiles (no key needed). */
 export function techOnlineStyle(night: boolean, lang = 'en'): StyleSpecification {
@@ -265,6 +319,27 @@ export function techOnlineStyle(night: boolean, lang = 'en'): StyleSpecification
       'text-letter-spacing': 0.04,
     },
     paint: { 'text-color': c.labelMajor, 'text-halo-color': c.labelHalo, 'text-halo-width': 2.4 },
+  });
+  // Points of interest from street level (the more prominent from a little further out).
+  add({
+    id: 'poi',
+    type: 'symbol',
+    'source-layer': 'poi',
+    minzoom: 14,
+    filter: ['all', ['has', 'name'], ['<=', ['get', 'rank'], ['step', ['zoom'], 3, 15, 12, 16, 30, 17, 99]]] as unknown as Expr,
+    layout: {
+      'icon-image': ['concat', 'place-', POI_GROUP],
+      'icon-size': zoomed(14, 0.75, 18, 1),
+      'text-field': ['step', ['zoom'], '', 16, name],
+      'text-font': ['Noto Sans Regular'],
+      'text-size': 11,
+      'text-anchor': 'top',
+      'text-offset': [0, 0.85],
+      'text-max-width': 8,
+      'text-optional': true,
+      'symbol-sort-key': ['get', 'rank'],
+    },
+    paint: { 'text-color': c.label, ...halo },
   });
   add({
     id: 'place-minor',

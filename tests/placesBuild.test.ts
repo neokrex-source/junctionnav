@@ -103,6 +103,17 @@ describe('places data builder', () => {
     expect(manifest.count).toBeGreaterThan(100);
   });
 
+  it('gives a cell whose places did not change the same hash in the next build', () => {
+    const input = [ov(at(100, 100), 'Restoran Sama', 'malaysian_restaurant', 0.9)];
+    const a = build(input, []);
+    const b = build(input, []);
+    const id = cellId(...KL);
+    expect(b.manifest.built >= a.manifest.built).toBe(true);
+    expect(b.manifest.cells[id].h).toBe(a.manifest.cells[id].h);
+    const c = build([...input, ov(at(300, 100), 'Kedai Baru', 'grocery_store', 0.9)], []);
+    expect(c.manifest.cells[id].h).not.toBe(a.manifest.cells[id].h);
+  });
+
   it('knows which cells lie within reach', () => {
     const ids = cellsInCircle(KL, 100);
     expect(ids).toContain(cellId(...KL));

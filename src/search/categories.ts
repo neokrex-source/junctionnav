@@ -113,7 +113,7 @@ function toPlace(p: RawPoi, cat: Category, lang: LangCode): CategoryPlace {
   const sub = [tg.brand && tg.brand !== name ? tg.brand : '', tg['addr:street'], tg['addr:city'] || tg['addr:place']]
     .filter(Boolean)
     .join(', ');
-  return { name, sub: sub || t(lang, cat.label), lngLat: p.lngLat, kind: cat.id };
+  return { name, sub: sub || t(lang, cat.label), lngLat: p.lngLat, kind: cat.id, ...(tg._place ? { placeId: tg._place } : {}) };
 }
 
 export class CategorySearch {
