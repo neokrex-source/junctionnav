@@ -10,6 +10,7 @@
  */
 import type { LngLat } from '../geo/geo';
 import type { Incident, IncidentKind, Magnitude } from './types';
+import { TomTomError, ttEither } from '../tomtom/http';
 
 const BASE = 'https://api.tomtom.com';
 
@@ -132,7 +133,7 @@ export class TomTomTraffic {
       // Descriptions come in the browser's language (Accept-Language), English by default.
       const res = await fetch(`${BASE}/maps/orbis/traffic/incidents/details?apiVersion=2&key=${key}&bbox=${box}&timeValidity=present`, { signal });
       if (res.ok) return ((await res.json()) as { incidents?: RawIncident[] }).incidents?.map(normalizeIncident).filter((i): i is Incident => !!i) ?? [];
-      if (res.status !== 400 && res.status !== 403 && res.status !== 404) throw new Error(`Traffic incidents failed (${res.status}).`);
+      if (res.status !== 400 && res.status !== 403 && res.status !== 404) throw new TomTomError(`Traffic incidents failed (${res.status}).`, res.status);
       this.legacy = true;
     }
     const fields = '{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,events{description,code,iconCategory},from,to,length,delay,roadNumbers}}}';
@@ -140,7 +141,7 @@ export class TomTomTraffic {
       `${BASE}/traffic/services/5/incidentDetails?key=${key}&bbox=${box}&fields=${encodeURIComponent(fields)}&language=${lang}&timeValidityFilter=present`,
       { signal },
     );
-    if (!res.ok) throw new Error(res.status === 403 ? 'The TomTom key was refused. Check it in Settings.' : `Traffic incidents failed (${res.status}).`);
+    if (!res.ok) throw new TomTomError(res.status === 403 ? 'The TomTom key was refused. Check it in Settings.' : `Traffic incidents failed (${res.status}).`, res.status);
     return ((await res.json()) as { incidents?: RawIncident[] }).incidents?.map(normalizeIncident).filter((i): i is Incident => !!i) ?? [];
   }
 
@@ -153,17 +154,22 @@ export class TomTomTraffic {
     const key = encodeURIComponent(this.key().trim());
     const a = points[0];
     const b = points[points.length - 1];
-    const url =
-      `${BASE}/routing/1/calculateRoute/${a[1].toFixed(6)},${a[0].toFixed(6)}:${b[1].toFixed(6)},${b[0].toFixed(6)}/json` +
-      `?key=${key}&traffic=true&travelMode=car&routeType=fastest&routeRepresentation=summaryOnly&computeTravelTimeFor=all`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supportingPoints: points.map((p) => ({ latitude: +p[1].toFixed(6), longitude: +p[0].toFixed(6) })) }),
+    const locs = `${a[1].toFixed(6)},${a[0].toFixed(6)}:${b[1].toFixed(6)},${b[0].toFixed(6)}`;
+    const common = `key=${key}&travelMode=car&routeType=fastest&routeRepresentation=summaryOnly&computeTravelTimeFor=all`;
+    const json = await ttEither<{ routes?: { summary: { travelTimeInSeconds: number; trafficDelayInSeconds?: number } }[] }>(
+      'routing',
+      (f) =>
+        f === 'orbis'
+          ? `${BASE}/maps/orbis/routing/calculateRoute/${locs}/json?apiVersion=2&traffic=live&${common}`
+          : `${BASE}/routing/1/calculateRoute/${locs}/json?traffic=true&${common}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supportingPoints: points.map((p) => ({ latitude: +p[1].toFixed(6), longitude: +p[0].toFixed(6) })) }),
+      },
       signal,
-    });
-    if (!res.ok) throw new Error(`Traffic travel time failed (${res.status}).`);
-    const s = ((await res.json()) as { routes?: { summary: { travelTimeInSeconds: number; trafficDelayInSeconds?: number } }[] }).routes?.[0]?.summary;
+    );
+    const s = json.routes?.[0]?.summary;
     if (!s) throw new Error('No travel time in the answer');
     return { travelTime: s.travelTimeInSeconds, delay: Math.max(0, s.trafficDelayInSeconds ?? 0) };
   }

@@ -55,6 +55,11 @@ import { fasterAlternative, TrafficService } from './traffic/service';
 import { incidentDelayAhead, routeTimeFrom, trafficRemaining } from './traffic/onRoute';
 import { clearSpeech, etaChangeSpeech, fasterSpeech, kindName, minutes, nearSpeech, newsKindName, newsSpeech, summarySpeech, tt, warningSpeech, worthWarning } from './traffic/texts';
 import { roadName } from './traffic/roads';
+import { TomTomGate } from './tomtom/gate';
+import { resetFamilies } from './tomtom/http';
+import { TomTomRouter } from './tomtom/routing';
+import { TomTomPlaceSearch, TomTomPoiProvider } from './tomtom/search';
+import { FallbackPois, FallbackRouter, FallbackSearch } from './tomtom/fallback';
 import type { Incident, NewsItem, RouteIncident } from './traffic/types';
 import type { AppMode, ModeHooks } from './native/appMode';
 
@@ -153,6 +158,11 @@ class App {
     blob: () => this.offline.file('terrain.bin'),
   });
   private osrm: Router = new OsrmRouter(this.settings.routerUrl);
+  /** "TomTom first": whether TomTom is asked right now, or resting after a failure. */
+  ttGate = new TomTomGate(
+    () => tomtomKey(this.settings),
+    () => this.settings.services === 'tomtom' && !this.demo && !ARTIFACT,
+  );
   router!: Router;
   jdata!: JunctionDataCache;
   osmReady = new Map<string, OsmData | null>();
@@ -197,6 +207,8 @@ class App {
   warnings: string[] = [];
   routesLoading = false;
   routeErr = '';
+  /** Where the routes on offer came from, when worth a line under them. */
+  routeNote = '';
   private routeAbort: AbortController | null = null;
   private routeTimer = 0;
 
@@ -233,6 +245,12 @@ class App {
     newsUrl: () => (ARTIFACT ? '' : TRAFFIC_NEWS_URL),
     newsOn: () => this.settings.trafficNews && !this.demo,
     incidentsOn: () => this.settings.trafficMap && !this.demo && !ARTIFACT,
+    resting: () => this.ttGate.keyResting,
+    // A refused key rests the routing and search side too (they share the key).
+    onError: (e) => {
+      const st = (e as { status?: number })?.status;
+      if (st === 401 || st === 403) this.ttGate.fail(e);
+    },
   });
   trafficLayer!: TrafficLayer;
   /** Which TomTom congestion tiles answer for this key. */
@@ -298,14 +316,18 @@ class App {
     const sw = this.offlineSw;
     const overpass = () => overpassList(this.settings);
     this.osrm = new OsrmRouter(this.settings.routerUrl);
-    this.router = new HybridRouter(() => this.osrm, sw);
+    // TomTom first (when chosen and the key works), OSRM when it cannot answer, the offline maps without internet.
+    const ttKey = () => tomtomKey(this.settings);
+    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L), () => this.osrm, this.ttGate);
+    this.router = new HybridRouter(() => online, sw);
     this.jdata = new JunctionDataCache(new HybridJunctionData(new OverpassProvider(overpass()), sw));
     this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
     const tunnels = new OverpassTunnelProvider(overpass);
     this.tunnels.provider = new HybridTunnels(() => tunnels, sw);
-    this.cats = new CategorySearch(new HybridPois(new OverpassPoiProvider(overpass), sw));
+    this.cats = new CategorySearch(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
-    this.search = new HybridSearch(() => photon, sw);
+    const search = new FallbackSearch(new TomTomPlaceSearch(ttKey), () => photon, this.ttGate);
+    this.search = new HybridSearch(() => search, sw);
     this.terrain = this.realTerrain();
     this.terrainReady.clear();
     this.surroundReady.clear();
@@ -1128,6 +1150,7 @@ class App {
       if (ctrl.signal.aborted) return;
       this.routes = res.routes;
       this.warnings = res.warnings;
+      this.routeNote = res.note ?? '';
       this.selected = 0;
       this.planTraffic.clear();
       void this.loadPlanTraffic(this.routes, ctrl.signal);
@@ -1212,7 +1235,8 @@ class App {
     sim.addEventListener('click', () => this.startNav(true));
     const go = h('button', { class: 'btn btn-primary', type: 'button' }, this.tr('start'));
     go.addEventListener('click', () => this.startNav(false));
-    s.append(list, h('div', { class: 'sheet-row' }, steps, sim, go));
+    const src = this.routeSourceText();
+    s.append(list, src ? h('p', { class: 'routes-src' }, src) : '', h('div', { class: 'sheet-row' }, steps, sim, go));
   }
 
   private toggleSteps(on: boolean) {
@@ -2445,6 +2469,12 @@ class App {
       const r = trafficRemaining(eta, p.remainingTime);
       return { ...r, stopTime: stopBase == null ? null : trafficRemaining(eta, stopBase).time };
     }
+    const route = this.engine.route;
+    if (route?.trafficAware) {
+      // TomTom's own route times already count the traffic: the incidents are not added on top.
+      const delay = (route.trafficDelay ?? 0) * (route.duration > 0 ? Math.min(1, p.remainingTime / route.duration) : 0);
+      return delay >= 60 ? { time: p.remainingTime, delay, stopTime: stopBase } : null;
+    }
     if (now - this.traffic.incidentsAt <= TRAFFIC_FRESH) {
       const delay = incidentDelayAhead(this.traffic.onRoute, p.s);
       if (delay >= 60) {
@@ -2820,12 +2850,29 @@ class App {
 
   /** Travel times with traffic for the routes on offer before a drive. */
   private async loadPlanTraffic(routes: Route[], signal?: AbortSignal) {
-    if (!this.traffic.live || this.demo) return;
-    const times = await this.traffic.planTimes(routes, signal);
-    if (this.routes !== routes) return;
+    if (this.demo) return;
     const at = Date.now();
-    times.forEach((t, i) => t && this.planTraffic.set(routes[i], { ...t, at }));
+    // TomTom's routes already count today's traffic: their own times, no extra requests.
+    for (const r of routes) if (r.trafficAware) this.planTraffic.set(r, { travelTime: r.duration, delay: r.trafficDelay ?? 0, at });
+    const others = routes.filter((r) => !r.trafficAware);
+    if (others.length && this.traffic.live) {
+      const times = await this.traffic.planTimes(others, signal);
+      if (this.routes !== routes) return;
+      times.forEach((t, i) => t && this.planTraffic.set(others[i], { ...t, at: Date.now() }));
+    }
     if (this.view === 'directions' && !this.showSteps) this.renderSheet();
+  }
+
+  /** A quiet line under the route options: who planned them, or why not TomTom. */
+  private routeSourceText(): string {
+    if (this.routeNote) return this.routeNote;
+    const provider = this.routes[0]?.provider;
+    if (provider === 'TomTom') return 'Routes by TomTom, with live traffic in the times.';
+    if (provider !== 'OSRM' || this.demo || this.settings.services !== 'tomtom') return '';
+    const st = this.ttGate.status;
+    if (st === 'nokey') return 'Routes by OpenStreetMap. Add a free TomTom key in Settings for routes with live traffic.';
+    if (st !== 'ready') return `Routes by OpenStreetMap for now: ${this.ttGate.reason || 'TomTom is not answering'}.`;
+    return '';
   }
 
   /* ================================================================ layout helpers */
@@ -2956,6 +3003,12 @@ class App {
     }
     if (prev.appearance !== next.appearance) this.applyDayNight();
     else this.applyTheme();
+    // TomTom first or not, or a new key: ask TomTom again at once, and plan again with it.
+    if (tomtomKey(prev) !== tomtomKey(next) || prev.services !== next.services) {
+      resetFamilies();
+      this.ttGate.reset();
+      if (this.view === 'directions' && this.trip.destination) this.computeRoutes();
+    }
     // Live traffic: a new key or traffic turned on or off starts it over.
     if (tomtomKey(prev) !== tomtomKey(next) || prev.trafficMap !== next.trafficMap) {
       this.flowVariant = 'classic';

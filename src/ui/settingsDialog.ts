@@ -3,6 +3,9 @@ import { STYLES } from '../map/styles';
 import type { OfflineStore } from '../offline/store';
 import { BUILT_IN_TOMTOM_KEY, DEFAULTS, type Settings } from '../state/settings';
 import { TomTomTraffic } from '../traffic/tomtom';
+import { TomTomRouter } from '../tomtom/routing';
+import { TomTomPlaceSearch } from '../tomtom/search';
+import { resetFamilies } from '../tomtom/http';
 import { runningCopy } from '../native/appMode';
 import { APK_URL, APP_VERSION, NATIVE, TRAFFIC_NEWS_URL } from '../platform';
 import { h } from './dom';
@@ -154,34 +157,55 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       }
       testKey.disabled = true;
       keyState.dataset.ok = '';
-      keyState.textContent = 'Checking…';
-      try {
-        // A small box in central Kuala Lumpur.
-        const list = await new TomTomTraffic(() => key).incidents([101.66, 3.12, 101.73, 3.18]);
-        keyState.dataset.ok = 'true';
-        keyState.textContent = `The key works: ${list.length} incident${list.length === 1 ? '' : 's'} in central Kuala Lumpur right now.`;
-      } catch (err) {
-        keyState.dataset.ok = 'false';
-        keyState.textContent = (err as Error).message === 'Failed to fetch' ? 'TomTom could not be reached. Check your internet connection.' : (err as Error).message;
-      } finally {
-        testKey.disabled = false;
-      }
+      keyState.textContent = 'Checking routing, search and traffic…';
+      resetFamilies();
+      const k = () => key;
+      // Three small requests around central Kuala Lumpur: a short route, a search, the incidents.
+      const [route, search, incidents] = await Promise.allSettled([
+        new TomTomRouter(k).route({ origin: [101.6869, 3.139], destination: [101.7119, 3.1578] }),
+        new TomTomPlaceSearch(k).search('KLCC', [101.7, 3.15], 'en'),
+        new TomTomTraffic(k).incidents([101.66, 3.12, 101.73, 3.18]),
+      ]);
+      const why = (r: PromiseRejectedResult) => ((r.reason as Error)?.message === 'Failed to fetch' ? 'TomTom could not be reached' : (r.reason as Error)?.message ?? 'failed');
+      const line = (label: string, r: PromiseSettledResult<unknown>, ok: string) => (r.status === 'fulfilled' ? `${label}: works (${ok}).` : `${label}: ${why(r)}`);
+      const lines = [
+        line('Routing', route, route.status === 'fulfilled' ? `${Math.round(route.value.routes[0].duration / 60)} min KL Sentral to KLCC with traffic` : ''),
+        line('Search', search, search.status === 'fulfilled' ? `${search.value.length} places for KLCC` : ''),
+        line('Traffic', incidents, incidents.status === 'fulfilled' ? `${incidents.value.length} incident${incidents.value.length === 1 ? '' : 's'} in central KL` : ''),
+      ];
+      const good = [route, search, incidents].filter((r) => r.status === 'fulfilled').length;
+      keyState.dataset.ok = good === 3 ? 'true' : good === 0 ? 'false' : '';
+      keyState.textContent = '';
+      for (const l of lines) keyState.append(h('div', {}, l));
+      testKey.disabled = false;
     });
+    // Which services plan routes and find places.
+    const services = select('services', current.services, [
+      ['tomtom', 'TomTom first, OpenStreetMap services when TomTom cannot answer'],
+      ['open', 'OpenStreetMap services only (OSRM, Photon, Overpass)'],
+    ]);
     const traffic = opts.preview
       ? null
       : h(
           'div',
           { class: 'grp' },
-          h('label', { for: 'tomtomKey' }, 'Live traffic (TomTom key)'),
+          h('label', { for: 'tomtomKey' }, 'TomTom key'),
           h('div', { class: 'key-row' }, tomtomKey, testKey),
           keyState,
+          h('label', { for: 'services', class: 'sub-label' }, 'Routing and place search'),
+          services,
+          h(
+            'div',
+            { class: 'hint' },
+            'TomTom first: routes and alternatives with live traffic in the times, rerouting, place search and the petrol, EV, parking, food, rest area and store buttons come from TomTom whenever the key works. When TomTom cannot answer (no key, key refused, the day\u2019s free allowance used up, no answer), the OpenStreetMap services below take over on their own, and the offline maps when there is no internet. The map and the junction views always use OpenStreetMap.',
+          ),
           h('label', { class: 'toggle' }, trafficMap, 'Show live traffic on the map and your route'),
           h('label', { class: 'toggle' }, trafficAlerts, 'Voice guide for traffic: warnings ahead, clearing traffic, arrival time changes, faster routes and news'),
           TRAFFIC_NEWS_URL ? h('label', { class: 'toggle' }, trafficNews, 'Traffic news from Malaysian news sites') : null,
           h(
             'div',
             { class: 'hint' },
-            'Live traffic colours slow roads on the map, marks accidents, closures, roadworks and floods, warns you before the ones on your route, gives arrival times with traffic and offers a faster route when one opens up. It needs a free TomTom key (no card): sign up at ',
+            'Live traffic colours slow roads on the map, marks accidents, closures, roadworks and floods, warns you before the ones on your route, gives arrival times with traffic and offers a faster route when one opens up (with either choice above). TomTom needs a free key (no card): sign up at ',
             h('a', { href: 'https://developer.tomtom.com/user/register', target: '_blank', rel: 'noopener' }, 'developer.tomtom.com'),
             ', open your dashboard and copy the API key here. The free allowance covers hours of driving every day.' +
               (TRAFFIC_NEWS_URL ? ' Traffic news needs no key: headlines are collected every 20 minutes, and the ones naming roads on your route are flagged.' : ''),
@@ -310,6 +334,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
         tomtomKey: tomtomKey.value.trim(),
+        services: services.value as Settings['services'],
         trafficMap: trafficMap.checked,
         trafficAlerts: trafficAlerts.checked,
         trafficNews: trafficNews.checked,

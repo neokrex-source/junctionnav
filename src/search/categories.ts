@@ -142,7 +142,9 @@ export class CategorySearch {
     const out: CategoryPlace[] = [];
     for (const p of raw) {
       const pr = line.project(p.lngLat, Math.max(0, fromS - 50), end + 500);
-      if (pr.dist > 450 || pr.s < fromS) continue;
+      // Results that come with their detour (TomTom) were picked for it: keep them a little further off.
+      const reach = p.tags._detour != null ? 2500 : 450;
+      if (pr.dist > reach || pr.s < fromS) continue;
       const pl = toPlace(p, cat, lang);
       out.push({
         ...pl,

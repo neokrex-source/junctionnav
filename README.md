@@ -172,6 +172,20 @@ Before a tunnel the app shows an advance sign under the banner, says it out loud
 
 The demo route starts with a 500 m tunnel through a hill, Terowong Bukit Demo, just before the first junction. The simulator stops sending GPS inside it, so you can watch the estimate carry the position through.
 
+### TomTom first, OpenStreetMap when TomTom cannot answer
+
+Settings → *Routing and place search* has two choices:
+
+- **TomTom first** (the default). With a TomTom key (see below), these come from TomTom:
+  - **routes** with today's traffic already in the times, up to two alternatives and a toll-free option, avoid tolls, highways and ferries, and **rerouting** and the **alternatives kept ready during the drive**, all with traffic. TomTom's lane guidance, toll, motorway, tunnel and ferry stretches, exits and signposts are mapped onto the app's own route shape (`src/tomtom/routing.ts`), so junction views, lane advice, tunnel signs and the voice work on TomTom routes as on OSRM ones;
+  - **place search** (typed search near you, and the address for a point on the map);
+  - the **category buttons** (petrol, EV charging, parking, food, rest areas, convenience stores), nearby and along the route, where along-route results are the ones worth at most a five-minute detour.
+
+  When TomTom cannot answer (no key, key refused, the day's free allowance used up, too busy, no answer), the OpenStreetMap services take over by themselves for that request and TomTom rests for a while: about a minute after an error, twenty minutes after a refused key (traffic requests rest too then). The route options say who planned them: "Routes by TomTom, with live traffic in the times", or "TomTom could not plan this (key refused or daily allowance used up), so these routes come from OpenStreetMap". Without internet the offline maps answer, as before. **Test key** in Settings checks routing, search and traffic at once.
+- **OpenStreetMap services only**: OSRM routing, Photon search and Overpass places, as before. Live traffic still uses TomTom when a key is set and *Show live traffic* is on.
+
+The map itself, the junction views' road detail and tunnel names always come from OpenStreetMap. TomTom's free tier is 2,500 requests a day (routing, search and traffic together) and 50,000 map tiles; a day of normal driving uses a small part of it. TomTom routes already carry traffic, so they need no extra travel-time requests on the route cards or for the prepared alternatives. `scripts/dev/tomtom-check.cjs` checks all of this in a browser with TomTom, OSRM, Photon and Overpass answered by the check itself.
+
 ### Live traffic and traffic news
 
 Two sources, each used when it is there:
@@ -244,9 +258,9 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 | Purpose | Default | Notes |
 | --- | --- | --- |
 | Base map | JunctionNav day and night map on OpenFreeMap vector tiles | No key. OpenFreeMap's own styles (Liberty, Bright, Positron, Dark), MapTiler (key) and any MapLibre style URL can be picked in Settings. |
-| Routing | `routing.openstreetmap.de` (FOSSGIS OSRM) | Public demo server for light use. Self-host for real driving (below). |
+| Routing | TomTom (with a key, *TomTom first*), else `routing.openstreetmap.de` (FOSSGIS OSRM) | TomTom: traffic in the times, alternatives, lanes. OSRM: public demo server for light use; self-host for real driving (below). |
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
-| Search | `photon.komoot.io` | OSM-based, allows search-as-you-type. Fair use only. |
+| Search | TomTom (with a key, *TomTom first*), else `photon.komoot.io` | Photon is OSM-based and allows search-as-you-type, fair use only. The category buttons use TomTom, else Overpass. |
 | Terrain | AWS Terrain Tiles (Terrarium) | One or two small images per junction, for hills and valleys in junction views. |
 | Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 350 full downloads). |
 | Live traffic | TomTom Traffic and Routing APIs | Optional, with a free key per user (or one for the site). Congestion tiles, incidents, travel times with traffic. |
@@ -299,6 +313,7 @@ src/
   geo/geo.ts              distances, bearings, polylines, local metric frames
   routing/                OSRM adapter (avoid options, stops, toll distance), instruction text (en/ms/ja)
   search/                 place search (Photon) and category search nearby / along route (Overpass)
+  tomtom/                 TomTom first: routing adapter, place and category search, fallback to the OSM services
   traffic/                live traffic (TomTom incidents, travel times, congestion tiles), traffic news feed,
                           matching incidents and news to the route, Malaysian road names, texts (en/ms/ja)
   state/                  settings and saved places

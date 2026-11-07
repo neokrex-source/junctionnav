@@ -38,6 +38,10 @@ export interface TrafficOptions {
   incidentsOn: () => boolean;
   now?: () => number;
   online?: () => boolean;
+  /** TomTom refused the key a short while ago (see TomTomGate): skip the traffic requests too. */
+  resting?: () => boolean;
+  /** Every TomTom failure, so a refused key rests the routing and search side as well. */
+  onError?: (e: unknown) => void;
 }
 
 export class TrafficService {
@@ -62,6 +66,8 @@ export class TrafficService {
   /** The roads (HIGHWAYS keys) of the route being driven. */
   roads: string[] = [];
   private alts: Route[] = [];
+  /** When TomTom planned each alternative (its times count the traffic of that moment). */
+  private altFetched = new Map<Route, number>();
   private s = 0;
   private incAt = -Infinity;
   private incToS = 0;
@@ -87,7 +93,7 @@ export class TrafficService {
   }
 
   get live(): boolean {
-    return this.tomtom.enabled && this.o.incidentsOn();
+    return this.tomtom.enabled && this.o.incidentsOn() && !this.o.resting?.();
   }
 
   /** A new route to drive (or none): its traffic is asked for at the next tick. */
@@ -130,6 +136,9 @@ export class TrafficService {
   setAlternatives(routes: Route[]) {
     this.alts = routes;
     this.altEtas = this.altEtas.filter((a) => routes.includes(a.route));
+    const now = this.now();
+    for (const r of routes) if (r.trafficAware && !this.altFetched.has(r)) this.altFetched.set(r, now);
+    for (const r of [...this.altFetched.keys()]) if (!routes.includes(r)) this.altFetched.delete(r);
   }
 
   /** The car is `s` metres along the route: starts whatever is due. */
@@ -287,7 +296,16 @@ export class TrafficService {
       this.incDelayAtEta = incidentDelayAhead(this.onRoute, s);
       const out: AltEta[] = [];
       for (const { alt, pr } of todo) {
-        const r = await this.tomtom.travelTime(pointsAhead(alt, pr.s, 300, 100), signal).catch(() => null);
+        // An alternative TomTom planned a few minutes ago already has its time with traffic.
+        const fetched = this.altFetched.get(alt);
+        const own =
+          alt.trafficAware && fetched != null && this.now() - fetched < 6 * 60_000
+            ? (() => {
+                const t = routeTimeFrom(alt, pr.s);
+                return { travelTime: t, delay: (alt.trafficDelay ?? 0) * (alt.duration > 0 ? Math.min(1, t / alt.duration) : 0) };
+              })()
+            : null;
+        const r = own ?? (await this.tomtom.travelTime(pointsAhead(alt, pr.s, 300, 100), signal).catch(() => null));
         if (signal.aborted || this.route !== route) return;
         if (r) out.push({ route: alt, s: pr.s, travelTime: r.travelTime, delay: r.delay, mainTime: main.travelTime, at: this.now() });
       }
@@ -303,6 +321,7 @@ export class TrafficService {
 
   private fail(err: unknown, signal?: AbortSignal) {
     if (signal?.aborted || (err as Error).name === 'AbortError') return;
+    this.o.onError?.(err);
     const msg = (err as Error).message || String(err);
     console.warn('[traffic]', msg);
     if (msg !== this.error) {

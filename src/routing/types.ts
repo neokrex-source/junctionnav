@@ -108,6 +108,9 @@ export interface Route {
   avoidApplied: (keyof Avoid)[];
   /** Provider label for attribution/debug. */
   provider: string;
+  /** The times already count today's traffic (TomTom routes), and what traffic adds (seconds). */
+  trafficAware?: boolean;
+  trafficDelay?: number;
 }
 
 export interface RouteRequest {
@@ -129,6 +132,8 @@ export interface RouteResult {
   routes: Route[];
   /** Things the user should know, e.g. an avoid option the server could not apply. */
   warnings: string[];
+  /** A quiet line about where the routes came from (e.g. TomTom did not answer, so OSRM did). */
+  note?: string;
 }
 
 export interface Router {

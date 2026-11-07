@@ -41,6 +41,11 @@ export interface Settings {
   appMode: 'built-in' | 'web';
   /** The user's own TomTom key for live traffic ('' = the one built into the site, if any). */
   tomtomKey: string;
+  /**
+   * Routing, alternatives, place search and the category buttons: TomTom first (with the usual
+   * services taking over whenever TomTom cannot answer), or the OpenStreetMap services only.
+   */
+  services: 'tomtom' | 'open';
   /** Live traffic on the map and the route (needs a TomTom key). */
   trafficMap: boolean;
   /** Spoken warnings for accidents, closures and slow traffic ahead on the route. */
@@ -82,6 +87,7 @@ export const DEFAULTS: Settings = {
   closeUp: true,
   appMode: 'built-in',
   tomtomKey: '',
+  services: 'tomtom',
   trafficMap: true,
   trafficAlerts: true,
   trafficNews: true,
