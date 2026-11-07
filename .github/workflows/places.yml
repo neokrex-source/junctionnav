@@ -1,0 +1,70 @@
+# Builds the places data the app downloads for the area around you (restaurants, shops, petrol
+# stations, clinics, mosques and so on): Overture Maps places merged with OpenStreetMap's, for
+# Malaysia, Singapore and Brunei, in cells of 0.25° (scripts/places, src/places/format.ts).
+#
+# It runs once a week with the latest Overture release and the day's OpenStreetMap data, when the
+# builder changes, or by hand (Actions → Places → Run workflow), and keeps the result in the
+# Actions cache. The Pages workflow publishes the newest build with the site under places/; the
+# app checks it on the schedule chosen in Settings (monthly by default).
+# Set the repository variable PLACES to "off" to skip it.
+name: Places
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/places/**'
+      - 'src/places/format.ts'
+      - '.github/workflows/places.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '41 18 * * 0' # Sundays 18:41 UTC (Monday 02:41 in Malaysia)
+
+permissions:
+  contents: read
+  actions: write # to start the Pages deploy when new data is ready
+
+concurrency:
+  group: places
+  cancel-in-progress: false
+
+jobs:
+  places:
+    if: vars.PLACES != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: key
+        # A new build each week (and for each start by hand); the same week reuses the build.
+        run: echo "key=places-v1-$(date -u +%G-W%V)-${{ hashFiles('scripts/places/**', 'src/places/format.ts') }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'auto' }}" >> "$GITHUB_OUTPUT"
+      - id: have
+        uses: actions/cache/restore@v4
+        with:
+          path: places-data
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+      - name: Build the places data
+        if: steps.have.outputs.cache-hit != 'true'
+        env:
+          WORK: ${{ runner.temp }}/places-work
+        run: bash scripts/places/build.sh places-data
+      - name: Summary
+        if: steps.have.outputs.cache-hit != 'true'
+        run: node -e 'const m=require("./places-data/manifest.json");const mb=Object.values(m.cells).reduce((a,c)=>a+c.b,0)/1048576;console.log(`::notice title=Places built::${m.count} places in ${Object.keys(m.cells).length} cells, ${mb.toFixed(1)} MB (Overture ${m.sources.overture}, OSM ${m.sources.osm})`)'
+      - if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: places-data
+          key: ${{ steps.key.outputs.key }}
+      - name: Publish with the site
+        if: steps.have.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"

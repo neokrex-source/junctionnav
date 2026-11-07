@@ -2,7 +2,8 @@
 # One-time setup: repository Settings → Pages → Build and deployment → Source: "GitHub Actions".
 #
 # The offline maps (built by offline-pack.yml and kept in the Actions cache) are published with
-# the site under offline/. When a new pack is ready, that workflow starts this one again.
+# the site under offline/, and the places data (places.yml) under places/. When either has a new
+# build ready, its workflow starts this one again.
 name: Deploy to GitHub Pages
 
 on:
@@ -60,6 +61,23 @@ jobs:
             node -e 'const m=require("./offline-pack/manifest.json");const mb=(n)=>(n/1048576).toFixed(1);const dl=m.files.reduce((a,f)=>a+f.parts.reduce((b,p)=>b+p.size,0),0);console.log(`::notice title=Offline maps published::${m.name}, built ${m.built.slice(0,10)}: ${m.files.map((f)=>`${f.name} ${mb(f.size)} MB`).join(", ")}; download ${mb(dl)} MB`)'
           else
             echo "::notice::No offline maps yet; the site is published without them (see the Offline maps workflow)."
+          fi
+          du -sh dist
+
+      # ---- places around you: the newest build in the cache (see the Places workflow)
+      - uses: actions/cache/restore@v4
+        with:
+          path: places-data
+          key: places-v1-newest
+          restore-keys: places-v1-
+      - name: Add the places data to the site
+        run: |
+          if [ -f places-data/manifest.json ]; then
+            cp -r places-data dist/places
+            du -sh dist/places
+            node -e 'const m=require("./places-data/manifest.json");console.log(`::notice title=Places published::${m.count} places in ${Object.keys(m.cells).length} cells, built ${m.built.slice(0,10)} (Overture ${m.sources.overture}, OSM ${m.sources.osm})`)'
+          else
+            echo "::notice::No places data yet; the site is published without it (see the Places workflow)."
           fi
           du -sh dist
 
