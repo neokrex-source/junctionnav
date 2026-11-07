@@ -83,6 +83,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     ]);
     const tunnels = h('input', { id: 'tunnelAlerts', type: 'checkbox' }) as HTMLInputElement;
     tunnels.checked = current.tunnelAlerts;
+    const tolls = h('input', { id: 'tollAlerts', type: 'checkbox' }) as HTMLInputElement;
+    tolls.checked = current.tollAlerts;
     const surround = h('input', { id: 'jvSurround', type: 'checkbox' }) as HTMLInputElement;
     surround.checked = current.jvSurround;
     const mapGround = h('input', { id: 'jvMapGround', type: 'checkbox' }) as HTMLInputElement;
@@ -275,17 +277,24 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         'div',
         { class: 'grp' },
         h('label', { for: 'closeUp' }, 'Close-up at splits'),
-        h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 50 m at forks, turns, dividers, ramps, exits, entrances and junctions'),
-        h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange from 300 m before the split (as in the junction view) and dark orange for the 100 m either side of the split itself; the other roads at the split are grey, so only the orange line is your way. Works with the automatic map scale.'),
+        h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at turns, forks, dividers, ramps, exits, entrances and junctions'),
+        h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange from 300 m before the split (as in the junction view) and dark orange for the 100 m either side of the split itself; the other roads at the split are grey, so only the orange line is your way. Works at every map scale; between turns the automatic scale shows 100 m.'),
       ),
       h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts')),
-      grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances and junctions. The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.'),
+      grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances, junctions and turns ("Move into the right lane" with the first notice of a turn when the map has no lane detail). The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.'),
       h(
         'div',
         { class: 'grp' },
         h('label', { for: 'tunnelAlerts' }, 'Tunnels'),
         h('label', { class: 'toggle' }, tunnels, 'Tunnel sign and voice warning'),
         h('div', { class: 'hint' }, 'Shows the tunnel name and length before you reach it, then the distance to the exit. Guidance keeps going on an estimated position when GPS drops out inside.'),
+      ),
+      h(
+        'div',
+        { class: 'grp' },
+        h('label', { for: 'tollAlerts' }, 'Toll plazas'),
+        h('label', { class: 'toggle' }, tolls, "Remind me to get Touch 'n Go ready"),
+        h('div', { class: 'hint' }, 'Says "Get your Touch n Go card ready" about 1 km before a toll plaza on expressways (400 m in town) and "Prepare your Touch n Go" just before it, with the plaza over the arrival time and on the map. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.'),
       ),
       traffic,
       pack?.el,
@@ -333,6 +342,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         jvMapGround: mapGround.checked,
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
+        tollAlerts: tolls.checked,
         tomtomKey: tomtomKey.value.trim(),
         services: services.value as Settings['services'],
         trafficMap: trafficMap.checked,

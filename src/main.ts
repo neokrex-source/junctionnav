@@ -2,7 +2,7 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/fonts.css';
 import './styles/app.css';
-import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTunnelProvider } from './demo/providers';
+import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTollProvider, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
 import { hashString, haversine, type LngLat } from './geo/geo';
 import { detectJunctions, JUNCTION_CORE, type JunctionCandidate } from './junction/detect';
@@ -18,14 +18,15 @@ import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
-import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTerrain, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
+import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTerrain, HybridTolls, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
 import { OfflineTerrainProvider, TerrainPackReader } from './offline/offlineTerrain';
 import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { distinctAlternatives, matchAlternative } from './nav/alternatives';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
+import { OverpassTollProvider, TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
-import { arrivalSpeech, describeStep, formatDistance, formatDuration, lanePhrase, LANGS, spokenInstruction, t, tunnelSpeech, type UiKey } from './routing/instructions';
+import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type UiKey } from './routing/instructions';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
@@ -51,6 +52,7 @@ import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedP
 import { BUILT_IN, NATIVE, TRAFFIC_NEWS_URL } from './platform';
 import { incidentColor, incidentIconUrl, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
 import { jamSvg } from './ui/trafficIcon';
+import { tollSvg } from './ui/tollIcon';
 import { fasterAlternative, TrafficService } from './traffic/service';
 import { incidentDelayAhead, routeTimeFrom, trafficRemaining } from './traffic/onRoute';
 import { clearSpeech, etaChangeSpeech, fasterSpeech, kindName, minutes, nearSpeech, newsKindName, newsSpeech, summarySpeech, tt, warningSpeech, worthWarning } from './traffic/texts';
@@ -188,6 +190,8 @@ class App {
   private authScreen: AuthScreen | null = null;
   tunnelCard = new TunnelCard();
   tunnels = new TunnelLoader(new OverpassTunnelProvider(() => overpassList(this.settings)), (spans) => this.onTunnels(spans));
+  /** Toll plazas on the route being driven (TomTom's toll gates, OSM toll booths, the offline maps). */
+  tolls = new TollLoader(new OverpassTollProvider(() => overpassList(this.settings)), (plazas) => this.onTolls(plazas));
   private drTimer = 0;
   voice = new Voice();
   wake = new ScreenWake();
@@ -294,6 +298,7 @@ class App {
     fabs: h('div', { class: 'fabs' }),
     trafficChip: h('button', { class: 'traffic-chip card', type: 'button', hidden: true }) as HTMLButtonElement,
     trafficCard: h('div', { class: 'traffic-card card', hidden: true, role: 'status', 'aria-live': 'polite' }),
+    tollChip: h('div', { class: 'toll-chip card', hidden: true, role: 'status' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -324,6 +329,8 @@ class App {
     this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
     const tunnels = new OverpassTunnelProvider(overpass);
     this.tunnels.provider = new HybridTunnels(() => tunnels, sw);
+    const tolls = new OverpassTollProvider(overpass);
+    this.tolls.provider = new HybridTolls(() => tolls, sw);
     this.cats = new CategorySearch(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
     const search = new FallbackSearch(new TomTomPlaceSearch(ttKey), () => photon, this.ttGate);
@@ -1382,6 +1389,7 @@ class App {
     this.jdata = new JunctionDataCache(new DemoJunctionProvider());
     this.surr = new SurroundCache(new DemoSurroundProvider());
     this.tunnels.provider = new DemoTunnelProvider();
+    this.tolls.provider = new DemoTollProvider();
     this.terrain = new TerrainCache(demoTerrain());
     this.terrainReady.clear();
     this.surroundReady.clear();
@@ -1491,7 +1499,7 @@ class App {
     e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
-      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
       e.speed,
     );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
@@ -1775,11 +1783,23 @@ class App {
         return lanePhrase('late', pr.lane!, this.L, units);
       case 'tunnel':
         return tunnelSpeech(pr.tunnel!, this.L, units);
+      case 'toll':
+      case 'tollNear':
+        return tollSpeech(pr.kind === 'toll' ? 'early' : 'near', pr.toll!, this.tollPay(pr.toll!.plaza), this.L, units);
       default: {
         const base = spokenInstruction(pr.step, pr.distance, this.L, units);
-        return pr.lane && pr.distance != null && pr.lane.status !== 'ok' ? `${base} ${lanePhrase('hint', pr.lane, this.L, units)}` : base;
+        if (pr.distance == null) return base;
+        // The heads-up carries the lane to be in: from the lane data, or the turn's side without it.
+        if (pr.lane && pr.lane.status !== 'ok') return joinSpeech(base, lanePhrase('hint', pr.lane, this.L, units), this.L);
+        if (pr.side) return joinSpeech(base, turnSidePhrase(pr.side, this.L), this.L);
+        return base;
       }
     }
+  }
+
+  /** What to have ready at a plaza: Touch 'n Go in Malaysia (and the demo), ETC in Japan. */
+  private tollPay(plaza: TollPlaza): TollPay {
+    return this.demo ? 'tng' : tollPayment(plaza.at);
   }
 
   private paintMute() {
@@ -1918,8 +1938,10 @@ class App {
     this.engine.setRoute(route, detectJunctions(route));
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
+    this.engine.tollAlerts = this.settings.tollAlerts;
     this.tunnelCard.hide();
     this.tunnels.setRoute(route);
+    this.tolls.setRoute(route);
     this.simLaneStep = -1;
     this.prefetch(0);
     this.voice.unlock();
@@ -1991,6 +2013,9 @@ class App {
     window.clearInterval(this.drTimer);
     this.tunnels.stop();
     this.tunnelCard.hide();
+    this.tolls.stop();
+    this.map.setTolls([]);
+    this.el.tollChip.hidden = true;
     this.wake.off();
     this.voice.stop();
     this.engine.route = null;
@@ -2020,6 +2045,38 @@ class App {
     this.voice.speak(text, LANGS[this.L].speechLang, urgent);
   }
 
+  /** Toll plazas found on the active route: the voice reminder and the icons on the map. */
+  private onTolls(plazas: TollPlaza[]) {
+    this.engine.setTolls(plazas);
+    this.map.setTolls(this.settings.tollAlerts ? plazas.map((p) => p.at) : []);
+  }
+
+  /**
+   * The toll plaza coming up, as a slim line over the arrival time: "Plaza Tol Sungai Besi ·
+   * 800 m · Touch 'n Go", from where the reminder starts until the plaza is passed.
+   */
+  private paintTollChip(p: Progress) {
+    const chip = this.el.tollChip;
+    const t = this.settings.tollAlerts ? p.toll : null;
+    if (!t) {
+      if (!chip.hidden) chip.hidden = true;
+      return;
+    }
+    const pay = tollPayLabel(this.tollPay(t.plaza));
+    const title = tollTitle(t.plaza.name, this.L);
+    const dist = formatDistance(t.dist, this.settings.units);
+    const key = `${t.plaza.id}|${title}|${dist}|${pay}`;
+    if (chip.dataset.key !== key) {
+      chip.dataset.key = key;
+      chip.replaceChildren(
+        h('span', { class: 'toll-ico-wrap', html: tollSvg() }),
+        h('span', { class: 'toll-line' }, h('span', { class: 'toll-title' }, title), h('span', { class: 'toll-dist' }, dist), pay ? h('span', { class: 'toll-pay' }, pay) : ''),
+      );
+      chip.setAttribute('aria-label', `${title}, ${dist}${pay ? `, ${pay}` : ''}`);
+    }
+    if (chip.hidden) chip.hidden = false;
+  }
+
   /** New tunnel detail for the active route: engine, map and the simulator's GPS gaps. */
   private onTunnels(spans: TunnelSpan[]) {
     this.engine.setTunnels(spans);
@@ -2029,7 +2086,7 @@ class App {
 
   /** How the map follows the car: speed, the next turn, the panels, and a close-up at a split. */
   private followOpts(p: Progress): FollowOptions {
-    return { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), wide: this.panel.visible, close: this.closeWeightFor(p) };
+    return { speed: p.speed, distToNext: p.distToNext, padding: this.followPadding(), close: this.closeWeightFor(p) };
   }
 
   /** Along-route positions of the splits and turns the map zooms in on, for one route. */
@@ -2050,7 +2107,7 @@ class App {
 
   /**
    * The close-up at dividers, ramps, exits, entrances, junctions and turns: the map zooms in to
-   * 50 m as one comes up and back out once it is behind (0 = normal, 1 = all the way in).
+   * 20 m as one comes up and back out once it is behind (0 = normal, 1 = all the way in).
    */
   private closeWeightFor(p: Progress): number {
     const route = this.engine.route;
@@ -2145,6 +2202,7 @@ class App {
     this.traffic.tick(p.s);
     if (!prompts.length) this.trafficVoice(p);
     this.paintTrafficChip(p);
+    this.paintTollChip(p);
     if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
@@ -2188,6 +2246,7 @@ class App {
   private prefetch(s: number) {
     this.lastPrefetch = Date.now();
     this.tunnels.ensure(s);
+    this.tolls.ensure(s);
     // Surroundings are heavier: only the next junctions within a few kilometres.
     for (const j of this.engine.junctions.filter((c) => c.s >= s - 50 && c.s - s <= 4000).slice(0, 3)) {
       const redraw = () => {
@@ -2279,7 +2338,9 @@ class App {
     this.engine.setRoute(r, detectJunctions(r), startS);
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
+    this.engine.tollAlerts = this.settings.tollAlerts;
     this.tunnels.setRoute(r);
+    this.tolls.setRoute(r);
     this.traffic.setRoute(r, startS);
     this.hideFaster();
     if (this.sim) {
@@ -2990,6 +3051,8 @@ class App {
     if (!next) return;
     this.engine.laneMode = next.laneAlerts;
     this.engine.tunnelAlerts = next.tunnelAlerts;
+    this.engine.tollAlerts = next.tollAlerts;
+    if (this.view === 'nav') this.map.setTolls(next.tollAlerts ? this.tolls.plazas.map((p) => p.at) : []);
     const prev = this.settings;
     this.settings = next;
     saveSettings(next);

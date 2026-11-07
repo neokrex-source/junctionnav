@@ -9,6 +9,7 @@ import { buildDemo, DEMO_ORIGIN } from './network';
 import { buildDemoSurroundings } from './surroundings';
 import type { SurroundData, SurroundingsProvider } from '../junction/surroundings';
 import type { OsmWay } from '../junction/osmdata';
+import type { TollPoint, TollProvider } from '../nav/tolls';
 import type { TunnelProvider } from '../nav/tunnels';
 import { DemoTerrainProvider } from '../junction/terrain';
 import type { XY } from '../geo/geo';
@@ -32,6 +33,13 @@ export class DemoTunnelProvider implements TunnelProvider {
   readonly name = 'Demo';
   async fetch(): Promise<OsmWay[]> {
     return buildDemo().osm.ways.filter((w) => w.tags.tunnel && w.tags.tunnel !== 'no');
+  }
+}
+
+export class DemoTollProvider implements TollProvider {
+  readonly name = 'Demo';
+  async fetch(): Promise<TollPoint[]> {
+    return buildDemo().tolls;
   }
 }
 

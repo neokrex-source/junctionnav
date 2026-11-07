@@ -111,6 +111,8 @@ export interface Route {
   /** The times already count today's traffic (TomTom routes), and what traffic adds (seconds). */
   trafficAware?: boolean;
   trafficDelay?: number;
+  /** Toll gates the router itself reported on the route (TomTom does), by position along it. */
+  tollGates?: { s: number; at: LngLat; name?: string }[];
 }
 
 export interface RouteRequest {

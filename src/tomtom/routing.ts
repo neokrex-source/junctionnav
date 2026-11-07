@@ -40,6 +40,8 @@ export interface TtInstruction {
   roundaboutExitNumber?: number;
   drivingSide?: 'LEFT' | 'RIGHT';
   message?: string;
+  /** On TOLLGATE instructions (newer guidance): the gate's name. */
+  tollgateName?: { text?: string };
 }
 
 export interface TtSection {
@@ -349,6 +351,18 @@ function toRoute(r: TtRoute, provider: string): Route {
     steps[steps.length - 2].duration += Math.max(0, r.summary.travelTimeInSeconds - used);
   }
 
+  // Toll gates are not maneuvers, but the reminder to get the toll card ready wants them.
+  const tollGates: NonNullable<Route['tollGates']> = [];
+  for (const ins of r.guidance?.instructions ?? []) {
+    const pt = ins.point ?? ins.maneuverPoint;
+    if ((ins.maneuver ?? '').toUpperCase() !== 'TOLLGATE' || !pt) continue;
+    const at = ll(pt);
+    const guess = ins.pointIndex != null ? sAt(ins.pointIndex) : (ins.routeOffsetInMeters ?? 0) * scale;
+    const pr = line.project(at, guess - 300, guess + 300);
+    const name = ins.tollgateName?.text?.trim();
+    tollGates.push({ s: pr.dist < 60 ? pr.s : Math.min(line.length, guess), at: pr.dist < 60 ? pr.point : at, ...(name ? { name } : {}) });
+  }
+
   const legs: Leg[] = r.legs.map((leg, i) => ({ distance: leg.summary.lengthInMeters, duration: leg.summary.travelTimeInSeconds, endS: i === r.legs.length - 1 ? line.length : sAt(legEnds[i]) }));
   const tollDistance = lengthOf('toll');
   const motorwayDistance = lengthOf('motorway');
@@ -378,6 +392,7 @@ function toRoute(r: TtRoute, provider: string): Route {
     provider,
     trafficAware: true,
     trafficDelay: Math.max(0, r.summary.trafficDelayInSeconds ?? 0),
+    ...(tollGates.length ? { tollGates } : {}),
   };
 }
 

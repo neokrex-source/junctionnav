@@ -105,6 +105,8 @@ export interface DemoData {
   start: LngLat;
   end: LngLat;
   bounds: [LngLat, LngLat];
+  /** The toll plaza on the expressway entrance ramp, for the toll reminder. */
+  tolls: { id: string; at: LngLat; name: string }[];
 }
 
 let cached: DemoData | null = null;
@@ -511,7 +513,9 @@ export function buildDemo(): DemoData {
     spot('Terowong Bukit Demo', 'Tunnel on Jalan Demo · 500 m', 0, -400),
     spot('Jalan Demo', 'Demo start', 0, -1900),
   ];
-  cached = { pois, spots, osm, osrm, geojson, start: coords[0], end: coords[coords.length - 1], bounds };
+  // The plaza sits on the E1 entrance ramp, as Malaysian expressway entrances do.
+  const tolls = [{ id: 'demo/toll', at: frame.toLngLat(130, 2160), name: 'Plaza Tol Demo' }];
+  cached = { pois, spots, osm, osrm, geojson, start: coords[0], end: coords[coords.length - 1], bounds, tolls };
   return cached;
 }
 

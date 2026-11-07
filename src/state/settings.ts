@@ -27,6 +27,8 @@ export interface Settings {
   laneAlerts: 'gps' | 'advice' | 'off';
   /** Tunnel sign card and voice warning before tunnels. */
   tunnelAlerts: boolean;
+  /** Voice reminder and a chip before toll plazas (get the Touch 'n Go card ready). */
+  tollAlerts: boolean;
   /** With offline maps downloaded: use them only without internet ('auto') or all the time. */
   offlineUse: 'auto' | 'always';
   /** Version of the app's look the settings were saved with (moves old default map styles on). */
@@ -80,6 +82,7 @@ export const DEFAULTS: Settings = {
   jvMapGround: true,
   laneAlerts: 'gps',
   tunnelAlerts: true,
+  tollAlerts: true,
   offlineUse: 'auto',
   look: 2,
   mapScale: 'auto',

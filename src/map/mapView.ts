@@ -6,6 +6,7 @@ import { angleDiff, haversine, type LngLat } from '../geo/geo';
 import type { Route, Step } from '../routing/types';
 import { fallbackStyle } from './styles';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
+import { tollImage } from '../ui/tollIcon';
 
 /** Puck and pin take their colours from the CSS theme (--route, --pin). */
 
@@ -15,7 +16,7 @@ const PIN_SVG = `<svg viewBox="0 0 30 40" aria-hidden="true"><path class="pin-bo
 /**
  * How much map the follow camera shows, the way a car navigation unit states it: the length the
  * scale bar stands for at the car (SCALE_PX screen pixels), from 100 m (streets close up) to 1 km
- * (the area around), or 'auto' (wider at speed, closing in to 100 m as the next turn comes up).
+ * (the area around), or 'auto' (100 m between turns and junctions; the close-up takes every scale in to 20 m at each one).
  */
 export type FollowScale = 'auto' | number;
 export const SCALE_MIN = 100;
@@ -45,15 +46,16 @@ export function roundScale(m: number): number {
   return step * p;
 }
 
-/** Automatic scale: wider on fast roads, closer in town, and down to 100 m as the next turn comes up. */
-export function autoSpan(speed: number, distToNext: number, wide = false): number {
-  let span = speed > 24 ? 300 : speed > 14 ? 200 : speed > 7 ? 150 : 120;
-  // Close in for the turn: the scale bar about a third of the distance left.
-  if (distToNext < span * 3) span = Math.min(span, distToNext / 3 + 40);
-  // The junction view shows the close-up, so the map steps back to show the area around it.
-  if (wide) span = Math.max(span * 1.5, 200);
-  return clampSpan(span);
+/**
+ * Automatic scale: 100 m between turns and junctions, at any speed and with the junction view
+ * open or not (the close-up takes it in to 20 m at each one, and back out to 100 m after).
+ */
+export function autoSpan(): number {
+  return clampSpan(AUTO_SPAN);
 }
+
+/** The automatic scale between turns and junctions, and what the map comes back to after each. */
+export const AUTO_SPAN = 100;
 
 /** A stretch of the route [from, to] in metres: orange on the way into a junction, dark orange ('core') at the split. */
 export type RouteZone = [number, number, ('approach' | 'core')?];
@@ -94,7 +96,7 @@ export function routeGradient(
 }
 
 /** The scale while passing a split: divider, ramp, exit, entrance, junction or turn. */
-export const CLOSE_SPAN = 50;
+export const CLOSE_SPAN = 20;
 
 /** The map is all the way in (CLOSE_SPAN) from this far before every junction to this far after it (metres). */
 export const CLOSE_WITHIN = 100;
@@ -106,7 +108,7 @@ export const CLOSE_WITHIN = 100;
  * the few seconds before and back out over the 80 m after.
  *
  * The follow camera eases toward the target scale (about 1.5 s behind), so at speed the zoom
- * starts that much earlier: the map really shows 50 m by the time the car is 100 m out.
+ * starts that much earlier: the map really shows 20 m by the time the car is 100 m out.
  */
 export function closeWeight(d: number, speed: number): number {
   const lag = Math.min(60, Math.max(0, speed) * 2.2);
@@ -194,8 +196,6 @@ export interface FollowOptions {
   distToNext: number;
   /** Screen padding so the puck sits below/beside the guidance panels. */
   padding: { top: number; bottom: number; left: number; right: number };
-  /** Zoom out to show the area around a junction (the junction view shows the close-up). */
-  wide?: boolean;
   /** Close-up on a split ahead, 0 to 1 (closeWeight): zooms the automatic scale in to CLOSE_SPAN. */
   close?: number;
 }
@@ -719,6 +719,7 @@ export class MapView {
     m.addSource('route-main', { type: 'geojson', data: this.routesFC(true), lineMetrics: true });
     m.addSource('maneuver', { type: 'geojson', data: this.arrow });
     m.addSource('tunnels', { type: 'geojson', data: this.tunnelFC() });
+    m.addSource('tolls', { type: 'geojson', data: this.tollFC() });
     m.addSource('route-pulse', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     const before = this.beforeId();
     m.addLayer(
@@ -878,6 +879,19 @@ export class MapView {
         'icon-size': this.arrowSize(),
       },
     });
+    // Toll plazas on the route ahead.
+    if (!m.hasImage('toll-plaza')) m.addImage('toll-plaza', tollImage(), { pixelRatio: 2 });
+    m.addLayer({
+      id: 'route-toll',
+      type: 'symbol',
+      source: 'tolls',
+      layout: {
+        'icon-image': 'toll-plaza',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.55, 15, 0.9, 18, 1.1],
+      },
+    });
   }
 
   /** Route stretches through junctions: orange on the way in, dark orange at the split (metres along the route). */
@@ -967,6 +981,18 @@ export class MapView {
   }
 
   private tunnelSpans: TunnelSpan[] = [];
+
+  /** Toll plazas on the route being driven, shown as icons. */
+  private tollPoints: LngLat[] = [];
+
+  setTolls(points: LngLat[]) {
+    this.tollPoints = points;
+    (this.map.getSource('tolls') as GeoJSONSource | undefined)?.setData(this.tollFC());
+  }
+
+  private tollFC(): FeatureCollection {
+    return { type: 'FeatureCollection', features: this.tollPoints.map((p) => ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: p } })) };
+  }
 
   private tunnelFC(): FeatureCollection {
     const r = this.routes[this.selected];
@@ -1266,10 +1292,14 @@ export class MapView {
     // Scale as the scale bar's length at the car, eased so the camera breathes in and out smoothly
     // instead of jumping when the next turn changes. The zoom puts the scale a hair under the bar's
     // full length, so the bar shows the round number itself.
-    let target = this.scale === 'auto' ? autoSpan(o.speed, o.distToNext, o.wide) : this.scale;
-    if (this.scale === 'auto' && o.close) target = closeSpan(target, o.close);
+    let target = this.scale === 'auto' ? autoSpan() : this.scale;
+    // The close-up at turns and junctions works on every scale: in to 20 m, then back out to
+    // the scale it came from (100 m on Auto, or the one picked with the scale button).
+    if (o.close) target = closeSpan(target, o.close);
     const k = Math.min(1, since / 1500);
-    this.spanNow = Math.exp(Math.log(this.spanNow) + (Math.log(target) - Math.log(this.spanNow)) * (this.scale === 'auto' ? k : 1));
+    const eased = this.scale === 'auto' || !!o.close || this.closing;
+    this.closing = !!o.close;
+    this.spanNow = Math.exp(Math.log(this.spanNow) + (Math.log(target) - Math.log(this.spanNow)) * (eased ? k : 1));
     const zoom = zoomForSpan(this.spanNow, p[1], SCALE_PX * 0.98);
     this.setThin(this.spanNow < THIN_BELOW);
     const c = this.map.getCenter();
@@ -1280,6 +1310,8 @@ export class MapView {
   }
   private followTimer = 0;
   private pendingFollow: [LngLat, number, FollowOptions] | null = null;
+  /** The last follow step was in a close-up (so the way back out is eased too). */
+  private closing = false;
 
   fit(bounds: LngLatBoundsLike, padding: { top: number; bottom: number; left: number; right: number }) {
     this.following = false;

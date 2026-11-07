@@ -3,6 +3,7 @@ import { angleDiff, type LngLat } from '../geo/geo';
 import type { JunctionCandidate } from '../junction/detect';
 import type { Route, Step } from '../routing/types';
 import { LaneTracker, laneState, signedOffset, upcomingTarget, type LaneState } from './lanes';
+import { tollAhead, type TollPlaza, type TollState } from './tolls';
 import { TUNNEL_MIN_VOICE, tunnelStateAt, type TunnelSpan, type TunnelState } from './tunnels';
 
 /** "You have reached your destination" is said this far before the end of the route. */
@@ -49,13 +50,15 @@ export interface Progress {
   lane: LaneState | null;
   /** The tunnel we are in, or the next one close ahead. */
   tunnel: TunnelState | null;
+  /** The next toll plaza within about 1.5 km on fast roads (600 m in town). */
+  toll: TollState | null;
   /** Position estimated without GPS. */
   dr: boolean;
   /** Within the arrival radius of the final destination: arrival is announced, voice guidance ends. */
   nearDestination: boolean;
 }
 
-export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel';
+export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollNear';
 
 export interface Prompt {
   key: string;
@@ -66,6 +69,30 @@ export interface Prompt {
   lane?: LaneState;
   /** For tunnel prompts. */
   tunnel?: TunnelState;
+  /** For toll prompts: the plaza and how far it is. */
+  toll?: TollState;
+  /**
+   * On the first heads-up for a turn the router gave no lanes for: the side of the road to move
+   * to ("Move into the left lane").
+   */
+  side?: 'left' | 'right';
+}
+
+/** Where the early toll reminder comes (at the first quiet moment inside it), and the short one before the plaza. */
+export const TOLL_EARLY = { fast: 1000, town: 400 };
+export const TOLL_NEAR = { fast: 300, town: 120 };
+
+/**
+ * The side of the road to be on for a turn without lane data: the turn's own side (the U-turn
+ * lane is by the middle of the road), or none where lane data or lane advice already says it.
+ */
+export function turnSide(step: Step): 'left' | 'right' | undefined {
+  if ((step.intersections[0]?.lanes?.length ?? 0) > 0) return undefined;
+  const m = step.modifier ?? '';
+  const turnLike = step.type === 'turn' || step.type === 'end of road' || ((step.type === 'continue' || step.type === 'new name') && m.startsWith('slight'));
+  if (!turnLike || !m || m === 'straight') return undefined;
+  if (m === 'uturn') return step.drivingSide === 'left' ? 'right' : 'left';
+  return m.includes('left') ? 'left' : 'right';
 }
 
 /** off = no lane alerts; advice = early lane advice only; gps = advice plus a GPS lane check. */
@@ -90,6 +117,12 @@ export class NavEngine {
   tunnels: TunnelSpan[] = [];
   /** Voice prompt before tunnels (signs are the UI's business). */
   tunnelAlerts = true;
+  /** Toll plazas on the route, sorted by position. */
+  tolls: TollPlaza[] = [];
+  /** Voice reminders before toll plazas (get the Touch 'n Go card ready). */
+  tollAlerts = true;
+  /** When each plaza's early reminder was said (the near one is skipped right after it). */
+  private tollSaid = new Map<string, number>();
   /** Last good GPS position on the route, the starting point for dead reckoning. */
   private real: { s: number; speed: number; time: number } | null = null;
   /** The last update used an estimate; the next real fix may correct it backwards. */
@@ -106,12 +139,21 @@ export class NavEngine {
     this.wrongSince = 0;
     this.tracker.reset();
     this.tunnels = [];
+    this.tolls = [];
+    this.tollSaid.clear();
     this.real = null;
     this.estimating = false;
+    // The app says the first instruction itself as guidance starts: no short-leg repeat of it.
+    const first = route.steps.find((st) => st.s > startS + 5 && st.type !== 'depart');
+    if (first) this.announced.add(`${first.index}:short`);
   }
 
   setTunnels(spans: TunnelSpan[]) {
     this.tunnels = [...spans].sort((a, b) => a.fromS - b.fromS);
+  }
+
+  setTolls(plazas: TollPlaza[]) {
+    this.tolls = [...plazas].sort((a, b) => a.s - b.s);
   }
 
   private tunnelNear(s: number, before = 60, after = 30): TunnelSpan | undefined {
@@ -219,6 +261,7 @@ export class NavEngine {
     const fastRoad = Math.max(speed, roadSpeed) > 16;
     const tunnel = tunnelStateAt(this.tunnels, s, fastRoad ? 1000 : 400);
     const inTunnel = !!this.tunnelNear(s, 0, 0);
+    const toll = tollAhead(this.tolls, s, fastRoad ? 1500 : 600);
 
     // Lane advice: smoothed lateral position against the lanes needed for the next decision.
     // No lane check on estimated positions or inside tunnels, where GPS is unreliable.
@@ -256,6 +299,7 @@ export class NavEngine {
       stopsPassed,
       lane,
       tunnel,
+      toll,
       dr: !!fix.dr,
       nearDestination: remaining <= arrivalRadius(route),
     };
@@ -267,15 +311,35 @@ export class NavEngine {
   /** Voice prompts due at this progress. Each threshold fires once per maneuver. */
   prompts(p: Progress): Prompt[] {
     const out: Prompt[] = [];
-    const route = this.route!;
     const step = p.next;
     // In the arrival zone the app says "You have reached your destination" and voice guidance
-    // stops; the final arrival step gets no "in 500 metres" prompts of its own either.
-    if (p.nearDestination || (step.type === 'arrive' && !step.waypoint)) return out;
+    // stops; the final arrival step gets no "in 500 metres" prompts of its own either (tunnels
+    // and toll plazas on the way there still do).
+    if (p.nearDestination) return out;
+    const finalLeg = step.type === 'arrive' && !step.waypoint;
+    if (!finalLeg) out.push(...this.maneuverPrompts(p));
+    if (out.length) this.lastSpeech = this.now;
+    if (!finalLeg) out.push(...this.lanePrompts(p, out));
+    out.push(...this.tunnelPrompts(p, out));
+    out.push(...this.tollPrompts(p, out));
+    return out;
+  }
+
+  /**
+   * "In 500 metres, turn left": at 2 km, 1 km and 400 m on fast roads, 500 m and 180 m in town,
+   * where the leg is long enough; on a leg too short for any of those, one heads-up with the real
+   * distance as the previous maneuver is passed; and "Turn left" a few seconds before. The first
+   * heads-up of a turn with no lane data says which side to move to.
+   */
+  private maneuverPrompts(p: Progress): Prompt[] {
+    const out: Prompt[] = [];
+    const route = this.route!;
+    const step = p.next;
     const prev = route.steps[step.index - 1];
     const legLen = prev ? step.s - prev.s : step.s;
     const fast = p.speed > 17 || (prev?.intersections[0]?.classes ?? []).includes('motorway') || (prev && prev.duration > 0 && prev.distance / prev.duration > 19);
     const thresholds = fast ? [2000, 1000, 400] : [500, 180];
+    const laneFor = p.lane?.target.step === step ? p.lane : undefined;
     for (const t of thresholds) {
       const key = `${step.index}:${t}`;
       if (this.announced.has(key)) continue;
@@ -285,21 +349,74 @@ export class NavEngine {
         continue;
       }
       if (p.distToNext <= t && p.distToNext > t * 0.55) {
-        out.push({ key, step, distance: t, kind: 'maneuver', lane: p.lane?.target.step === step ? p.lane : undefined });
+        out.push({ key, step, distance: t, kind: 'maneuver', lane: laneFor });
         this.announced.add(key);
       } else if (p.distToNext <= t * 0.55) {
         this.announced.add(key);
       }
     }
     const nowDist = Math.max(30, p.speed * 5);
+    const shortKey = `${step.index}:short`;
+    if (!this.announced.has(shortKey) && legLen < thresholds[thresholds.length - 1] + 120) {
+      const d = p.distToNext;
+      if (legLen >= 140 && d <= legLen - 20 && d > nowDist + 60) {
+        out.push({ key: shortKey, step, distance: d, kind: 'maneuver', lane: laneFor });
+        this.announced.add(shortKey);
+      } else if (d <= nowDist + 60) this.announced.add(shortKey);
+    }
+    // Which side to move to, on the first heads-up of a turn without lane data (once per turn).
+    const first = out.find((q) => q.distance != null);
+    const sideKey = `${step.index}:side`;
+    if (first && !this.announced.has(sideKey)) {
+      this.announced.add(sideKey);
+      if (!first.lane && this.laneMode !== 'off') first.side = turnSide(step);
+    }
     const nowKey = `${step.index}:now`;
     if (!this.announced.has(nowKey) && p.distToNext <= nowDist) {
       out.push({ key: nowKey, step, distance: null, kind: 'maneuver' });
       this.announced.add(nowKey);
     }
-    if (out.length) this.lastSpeech = this.now;
-    out.push(...this.lanePrompts(p, out));
-    out.push(...this.tunnelPrompts(p, out));
+    return out;
+  }
+
+  /**
+   * The toll reminder: "Toll plaza in 800 metres. Get your Touch n Go card ready." at the first
+   * quiet moment within about 1 km on fast roads (400 m in town), and "Toll plaza ahead. Prepare
+   * your Touch n Go." shortly before the plaza, unless the first was only just said.
+   */
+  private tollPrompts(p: Progress, already: Prompt[]): Prompt[] {
+    const t = p.toll;
+    if (!this.tollAlerts || !t) return [];
+    const cur = this.route?.steps[p.next.index - 1];
+    const roadSpeed = cur && cur.duration > 0 ? cur.distance / cur.duration : 0;
+    const fast = Math.max(p.speed, roadSpeed) > 16;
+    const earlyAt = fast ? TOLL_EARLY.fast : TOLL_EARLY.town;
+    const nearAt = fast ? TOLL_NEAR.fast : TOLL_NEAR.town;
+    const key = `toll:${t.plaza.id}`;
+    const nearKey = `${key}:near`;
+    const out: Prompt[] = [];
+    if (!this.announced.has(key)) {
+      if (t.dist <= nearAt) this.announced.add(key); // too close now: the short reminder covers it
+      else if (t.dist <= earlyAt) {
+        const quiet = this.now - this.lastSpeech >= 4000;
+        const lastChance = t.dist < nearAt + (earlyAt - nearAt) * 0.4;
+        if (!already.length && (quiet || lastChance)) {
+          this.announced.add(key);
+          this.tollSaid.set(t.plaza.id, this.now);
+          this.lastSpeech = this.now;
+          out.push({ key, step: p.next, distance: t.dist, kind: 'toll', toll: t });
+        }
+      }
+    }
+    if (!this.announced.has(nearKey) && t.dist <= nearAt) {
+      const said = this.tollSaid.get(t.plaza.id);
+      if (t.dist < Math.max(30, p.speed * 2.5) || (said != null && this.now - said < 15000)) this.announced.add(nearKey);
+      else if (!already.length && !out.length) {
+        this.announced.add(nearKey);
+        this.lastSpeech = this.now;
+        out.push({ key: nearKey, step: p.next, distance: t.dist, kind: 'tollNear', toll: t });
+      }
+    }
     return out;
   }
 

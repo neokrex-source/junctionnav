@@ -1,8 +1,10 @@
 /**
  * Browser check of "TomTom first" with TomTom, OSRM, Photon and Overpass all answered by the check
  * itself: place search, route options with traffic and a toll-free choice, guidance on a TomTom
- * route (junction views, lanes), the category buttons, and falling back to the OpenStreetMap
- * services when TomTom refuses the key, then OpenStreetMap only from Settings.
+ * route (junction views, lanes, the 20 m close-up at junctions and 100 m between them, the lane
+ * to move into before a turn, toll plaza reminders from TomTom's toll gate and an OSM toll booth),
+ * the category buttons, and falling back to the OpenStreetMap services when TomTom refuses the
+ * key, then OpenStreetMap only from Settings.
  *
  *   VITE_AUTH_REQUIRED=false npx vite build --outDir dist-traffic
  *   npx vite preview --outDir dist-traffic --port 4180 &
@@ -59,19 +61,22 @@ function ttRoute(corners, opts) {
   };
 }
 
-const MAIN_C = [[0, 0], [0, 2000], [-400, 3500], [-400, 6000], [-700, 6600], [-700, 6900], [-200, 6900]];
+// The toll gate TomTom reports sits on the straight at [-400, 4700]; an OSM toll booth sits on the exit ramp.
+const MAIN_C = [[0, 0], [0, 2000], [-400, 3500], [-400, 4700], [-400, 6000], [-700, 6600], [-700, 6900], [-200, 6900]];
+const RAMP_BOOTH = P(-550, 6300);
 const MAIN = ttRoute(MAIN_C, {
   time: 780,
   delay: 180,
   sections: (at) => [
-    { startPointIndex: at[1], endPointIndex: at[3], sectionType: 'MOTORWAY' },
-    { startPointIndex: at[1], endPointIndex: at[3], sectionType: 'TOLL' },
+    { startPointIndex: at[1], endPointIndex: at[4], sectionType: 'MOTORWAY' },
+    { startPointIndex: at[1], endPointIndex: at[4], sectionType: 'TOLL' },
     { startPointIndex: at[1] - 2, endPointIndex: at[1], sectionType: 'LANES', lanes: [{ directions: ['SLIGHT_LEFT'], follow: 'SLIGHT_LEFT' }, { directions: ['STRAIGHT', 'SLIGHT_LEFT'], follow: 'SLIGHT_LEFT' }, { directions: ['STRAIGHT'] }] },
   ],
   instructions: [
     { instructionType: 'LOCATION_DEPARTURE', maneuver: 'DEPART', street: 'Jalan Ampang' },
     { instructionType: 'TURN', maneuver: 'KEEP_LEFT', junctionType: 'BIFURCATION', turnAngleInDecimalDegrees: -20, street: 'Lebuhraya Utara-Selatan', roadNumbers: ['E1'], signpostText: 'Kuala Lumpur' },
     { instructionType: 'DIRECTION_INFO', maneuver: 'FOLLOW', street: 'Lebuhraya Utara-Selatan', roadNumbers: ['E1'] },
+    { instructionType: 'DIRECTION_INFO', maneuver: 'TOLLGATE', street: 'Lebuhraya Utara-Selatan', tollgateName: { text: 'Plaza Tol Jalan Duta' } },
     { instructionType: 'TURN', maneuver: 'MOTORWAY_EXIT_LEFT', exitNumber: '234', street: 'Jalan Duta', signpostText: 'Jalan Duta' },
     { instructionType: 'TURN', maneuver: 'TURN_RIGHT', turnAngleInDecimalDegrees: 90, street: 'Jalan Kuching', junctionType: 'REGULAR' },
     { instructionType: 'TURN', maneuver: 'TURN_RIGHT', turnAngleInDecimalDegrees: 90, street: 'Jalan Ipoh', junctionType: 'REGULAR' },
@@ -159,6 +164,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }
     if (u.includes('overpass')) {
       calls.overpass++;
+      // Toll booths along the route: one on the exit ramp of the main route.
+      const body = decodeURIComponent(r.request().postData() ?? '');
+      if (body.includes('toll_booth')) {
+        calls.tolls = (calls.tolls ?? 0) + 1;
+        return r.fulfill({ json: { elements: [{ type: 'node', id: 77, lat: RAMP_BOOTH[1], lon: RAMP_BOOTH[0], tags: { barrier: 'toll_booth', name: 'Plaza Tol Jalan Kuching' } }] }, headers: cors });
+      }
       return r.fulfill({ json: { elements: [] }, headers: cors });
     }
     if (u.includes('tiles.openfreemap.org')) {
@@ -174,6 +185,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   await page.addInitScript(() => {
+    window.__said = [];
+    const orig = window.speechSynthesis?.speak?.bind(window.speechSynthesis);
+    if (window.speechSynthesis) window.speechSynthesis.speak = (u) => (window.__said.push(u.text), orig?.(u));
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ tomtomKey: 'TEST-KEY', services: 'tomtom', trafficNews: false, look: 2 }));
@@ -267,6 +281,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('banner reads the TomTom instruction', /Kuala Lumpur/.test(nav.banner) && /Keep left/i.test(nav.banner), nav.banner);
   check("lane advice from TomTom's lanes", nav.lane && nav.lane.known && nav.lane.count === 3 && nav.lane.from === 0 && nav.lane.to === 1, nav.lane);
   check('arrival shows the traffic TomTom counted', /\+\d+ min traffic/.test(nav.etaSub ?? ''), nav.etaSub);
+
+  // ---- toll plazas: TomTom's toll gate on the expressway, an OSM toll booth on the exit ramp
+  const plazas = await page.evaluate(() => window.__app.engine.tolls.map((p) => ({ s: Math.round(p.s), name: p.name })));
+  check('toll plazas from TomTom and OpenStreetMap', plazas.length === 2 && plazas[0].name === 'Plaza Tol Jalan Duta' && Math.abs(plazas[0].s - 4752) < 30 && plazas[1].name === 'Plaza Tol Jalan Kuching', { plazas, overpass: calls.tolls });
+  const mapTolls = await page.evaluate(() => ({ points: window.__app.map.tollPoints.length, layer: !!window.__app.map.map.getLayer('route-toll') }));
+  check('toll plazas on the map', mapTolls.points === 2 && mapTolls.layer, mapTolls);
+
+  // ---- one drive from 4 km on: the plazas, the turn, and the map scale along the way
+  await page.evaluate(() => {
+    const app = window.__app;
+    window.__said.length = 0;
+    window.__spans = [];
+    window.__spanTimer = setInterval(() => {
+      const p = app.engine.progress;
+      if (p) window.__spans.push([Math.round(p.s), Math.round(app.map.followSpan)]);
+    }, 80);
+    app.sim.jumpTo(4000);
+    app.sim.factor = 4;
+    app.sim.paused = false;
+  });
+  await page.waitForSelector('.toll-chip:not([hidden])', { timeout: 20_000 }).catch(() => {});
+  const chip = await page.evaluate(() => document.querySelector('.toll-chip:not([hidden])')?.textContent ?? null);
+  await shot('5a-toll-chip');
+  check("toll chip over the arrival time (name, distance, Touch 'n Go)", /Plaza Tol Jalan Duta/.test(chip ?? '') && /\d+ m/.test(chip ?? '') && /Touch 'n Go/.test(chip ?? ''), chip);
+  await page.waitForFunction(() => window.__said.some((t) => /Plaza Tol Jalan Duta in .*Touch n Go card ready/.test(t)), null, { timeout: 20_000 }).catch(() => {});
+  check('voice: get your Touch n Go card ready before the plaza', (await page.evaluate(() => window.__said)).some((t) => /^Plaza Tol Jalan Duta in .* Get your Touch n Go card ready\.$/.test(t)), await page.evaluate(() => window.__said.slice(-4)));
+  await page.waitForFunction(() => (window.__app.engine.progress?.s ?? 0) > 6040, null, { timeout: 40_000 }).catch(() => {});
+  await sleep(300);
+  await shot('5b-close-up-exit');
+  await page.waitForFunction(() => (window.__app.engine.progress?.s ?? 0) > 6900, null, { timeout: 40_000 }).catch(() => {});
+  const { said, spans } = await page.evaluate(() => {
+    window.__app.sim.paused = true;
+    clearInterval(window.__spanTimer);
+    return { said: window.__said, spans: window.__spans };
+  });
+  check('voice: the second plaza on the exit ramp too', said.some((t) => /Plaza Tol Jalan Kuching|Toll plaza ahead/.test(t) && /Touch n Go/.test(t)), said);
+  check('voice: which lane to move into before the turn', said.some((t) => /turn right onto Jalan Kuching\. Move into the right lane\.$/.test(t)), said);
+  check('voice: plaza reminders are not repeated', said.filter((t) => /Plaza Tol Jalan Duta in/.test(t)).length === 1, said);
+  const spanIn = (a, b) => spans.filter(([x]) => x >= a && x <= b).map(([, v]) => v);
+  const between = spanIn(4300, 5500);
+  const atExit = spanIn(5990, 6110);
+  const afterExit = spanIn(6330, 6420);
+  check('map shows 100 m between turns and junctions', between.length > 3 && between.every((v) => v >= 95 && v <= 105), between);
+  check('map zooms in to 20 m at the exit', atExit.length > 0 && Math.min(...atExit) <= 21, atExit);
+  check('and back out to 100 m once past it', afterExit.length > 0 && Math.max(...afterExit) >= 90, afterExit);
   await page.evaluate(() => window.__app.endNav());
   await page.waitForFunction(() => window.__app.view === 'directions', null, { timeout: 10_000 }).catch(() => {});
   await sleep(800);
@@ -313,7 +372,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('back to TomTom first', t5.providers[0] === 'TomTom', t5);
 
   check('no page errors', !errors.filter((e) => !/Failed to load resource|ERR_|net::|403|503/.test(e)).length, errors.slice(0, 6));
-  console.log('calls', { route: calls.route.length, search: calls.search.length, nearby: calls.nearby, osrm: calls.osrm, photon: calls.photon, overpass: calls.overpass });
+  console.log('calls', { route: calls.route.length, search: calls.search.length, nearby: calls.nearby, osrm: calls.osrm, photon: calls.photon, overpass: calls.overpass, tolls: calls.tolls });
   writeFileSync(join(OUT, 'results.json'), JSON.stringify({ results, errors }, null, 1));
   await browser.close();
   process.exit(results.every((r) => r.ok) ? 0 : 1);

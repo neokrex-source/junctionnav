@@ -1471,7 +1471,7 @@ button { cursor: pointer; }
 .faster .fa-take { flex: none; min-height: 0; height: min(30px, calc(max(36px, 5vh) - 8px)); padding: 0 12px; font-size: 14px; border-radius: 999px; }
 .faster .fa-keep { flex: none; padding: 4px; font-size: 16px; }
 @media (max-width: 480px) {
-  .traffic-chip, .traffic-card, .faster, .nav-stack > .sim { margin-right: 66px; }
+  .traffic-chip, .traffic-card, .toll-chip, .faster, .nav-stack > .sim { margin-right: 66px; }
 }
 
 /* Within 500 m of an incident on the route the chip opens into this slim bar (about 5% of the screen). */
@@ -1548,7 +1548,30 @@ button { cursor: pointer; }
 .key-state[data-ok="true"] { color: var(--ok); }
 .key-state[data-ok="false"] { color: var(--danger); }
 /* A list open over the map while driving covers the traffic cards; they step aside meanwhile. */
-.app:has(.sheet.is-nav:not([hidden])) :is(.traffic-chip, .traffic-card, .faster) { visibility: hidden; }
+.app:has(.sheet.is-nav:not([hidden])) :is(.traffic-chip, .traffic-card, .toll-chip, .faster) { visibility: hidden; }
+
+/* The toll plaza coming up: a slim amber line over the arrival time, like the traffic card. */
+.toll-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: max(36px, 5vh);
+  padding: 0 14px 0 5px;
+  border-radius: 999px;
+  color: var(--ink);
+  box-shadow: var(--shadow), var(--edge), inset 0 0 0 2px #f59e0b;
+  background: color-mix(in srgb, #f59e0b 14%, var(--surface-solid));
+}
+.toll-chip[hidden] { display: none; }
+.toll-ico-wrap { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #f59e0b; color: #2b1d00; }
+.toll-ico { width: 19px; height: 19px; display: block; }
+.toll-line { min-width: 0; display: flex; align-items: baseline; gap: 7px; white-space: nowrap; overflow: hidden; font: 700 15px/1 var(--font-cond); }
+.toll-title { overflow: hidden; text-overflow: ellipsis; }
+.toll-dist { flex: none; font-size: 17px; font-variant-numeric: tabular-nums; color: #b45309; }
+:root[data-theme="dark"] .toll-dist { color: #fbbf24; }
+.toll-pay { flex: none; color: var(--muted); }
 
 /* Who planned the routes on offer (TomTom with traffic, or OpenStreetMap and why). */
 .routes-src { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.35; }

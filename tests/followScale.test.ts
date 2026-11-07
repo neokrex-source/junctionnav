@@ -1,24 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { autoSpan, routeGradient, CLOSE_SPAN, closeSpan, closeWeight, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, THIN_BELOW, widthExpr, zoomForSpan } from '../src/map/mapView';
+import { AUTO_SPAN, autoSpan, routeGradient, CLOSE_SPAN, closeSpan, closeWeight, nearestDetent, pulseFeatures, roundScale, SCALE_DETENTS, SCALE_MAX, SCALE_MIN, SCALE_PX, SCALE_STEPS, spanAtZoom, THIN_BELOW, widthExpr, zoomForSpan } from '../src/map/mapView';
 
 describe('navigation map scale', () => {
-  it('is wider at expressway speed and closes in to 100 m at a turn', () => {
-    expect(autoSpan(30, 5000)).toBe(300);
-    expect(autoSpan(18, 5000)).toBe(200);
-    expect(autoSpan(10, 5000)).toBe(150);
-    expect(autoSpan(4, 5000)).toBe(120);
-    // Approaching the next maneuver: about a third of the distance left.
-    expect(autoSpan(30, 600)).toBe(240);
-    expect(autoSpan(8, 150)).toBe(SCALE_MIN);
-    expect(autoSpan(5, 20)).toBe(SCALE_MIN);
-    // With the junction view open the map steps back to show the area around it.
-    expect(autoSpan(10, 5000, true)).toBe(225);
-    expect(autoSpan(30, 5000, true)).toBe(450);
-    for (const [v, d, w] of [[0, 0, false], [40, 99999, true], [12, 300, false]] as const) {
-      const s = autoSpan(v, d, w);
-      expect(s).toBeGreaterThanOrEqual(SCALE_MIN);
-      expect(s).toBeLessThanOrEqual(SCALE_MAX);
-    }
+  it('is 100 m between turns and junctions, at any speed, junction view open or not', () => {
+    expect(AUTO_SPAN).toBe(100);
+    expect(autoSpan()).toBe(100);
+    expect(autoSpan()).toBeGreaterThanOrEqual(SCALE_MIN);
+    expect(autoSpan()).toBeLessThanOrEqual(SCALE_MAX);
+    // At each turn and junction the close-up takes it in to 20 m, and back to 100 m after.
+    expect(roundScale(closeSpan(autoSpan(), 1))).toBe(CLOSE_SPAN);
+    expect(closeSpan(autoSpan(), 0)).toBe(100);
   });
 
   it('means what the scale bar shows at the car', () => {
@@ -87,7 +78,7 @@ describe('impulses along the route', () => {
 });
 
 describe('close-up at splits', () => {
-  it('is at 50 m within 100 m either side of every junction, easing in before and out after', () => {
+  it('is at 20 m within 100 m either side of every junction, easing in before and out after', () => {
     for (const v of [0, 8, 16, 25, 33]) {
       // All the way in from 100 m before to 100 m after, at every speed.
       for (const d of [100, 60, 0, -60, -100]) expect(closeWeight(d, v), `${d} m at ${v} m/s`).toBe(1);
@@ -105,14 +96,17 @@ describe('close-up at splits', () => {
     expect(closeWeight(280, 25)).toBeGreaterThan(0);
   });
 
-  it('turns the weight into a scale between the normal one and 50 m', () => {
-    expect(CLOSE_SPAN).toBe(50);
-    expect(closeSpan(150, 0)).toBe(150);
-    expect(closeSpan(150, 1)).toBeCloseTo(50, 6);
+  it('turns the weight into a scale between the normal one and 20 m', () => {
+    expect(CLOSE_SPAN).toBe(20);
+    expect(closeSpan(100, 0)).toBe(100);
+    expect(closeSpan(100, 1)).toBeCloseTo(20, 6);
     // Half way in zoom levels, not in metres.
-    expect(closeSpan(200, 0.5)).toBeCloseTo(100, 6);
-    expect(roundScale(closeSpan(200, 1))).toBe(50);
-    // At 50 m the route is drawn thin; at the normal scales it is not.
+    expect(closeSpan(500, 0.5)).toBeCloseTo(100, 6);
+    expect(roundScale(closeSpan(100, 1))).toBe(20);
+    // Back out to the scale it came from: 100 m on Auto, or the one picked.
+    expect(closeSpan(100, 0)).toBe(100);
+    expect(closeSpan(500, 0)).toBe(500);
+    // At 20 m the route is drawn thin; at the normal scales it is not.
     expect(CLOSE_SPAN).toBeLessThan(THIN_BELOW);
     expect(SCALE_MIN).toBeGreaterThan(THIN_BELOW);
   });

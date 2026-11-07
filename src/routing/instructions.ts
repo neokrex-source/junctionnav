@@ -1,4 +1,5 @@
 import type { LaneState } from '../nav/lanes';
+import type { TollPay, TollState } from '../nav/tolls';
 import { tunnelName, type TunnelSpan, type TunnelState } from '../nav/tunnels';
 import { parseDestinations, splitRefs, type Modifier, type Step } from './types';
 
@@ -140,7 +141,10 @@ const en: LangPack = {
       case 'waypoint':
         return `You have reached stop ${p.n ?? 1}`;
       case 'turn':
-        return p.dir === 'straight' ? `Go straight${toward}` : `Turn ${this.dir[p.dir ?? 'straight']}${onto || toward}`;
+        if (p.dir === 'straight') return `Go straight${toward}`;
+        // A slight turn is a bear: "Bear left onto Jalan Ampang".
+        if (p.dir === 'slight left' || p.dir === 'slight right') return `Bear ${p.dir.slice(7)}${onto || toward}`;
+        return `Turn ${this.dir[p.dir ?? 'straight']}${onto || toward}`;
       case 'uturn':
         return `Make a U-turn${onto}`;
       case 'continue':
@@ -168,7 +172,8 @@ const en: LangPack = {
       const v = mi < 1 ? Math.round(mi * 4) / 4 : Math.round(mi * 10) / 10;
       return `${v} ${v === 1 ? 'mile' : 'miles'}`;
     }
-    if (m < 1000) return `${roundNice(m)} metres`;
+    // 960 m rounds to a kilometre, said as one.
+    if (roundNice(m) < 1000) return `${roundNice(m)} metres`;
     const km = Math.round(m / 100) / 10;
     return `${km} ${km === 1 ? 'kilometre' : 'kilometres'}`;
   },
@@ -294,7 +299,7 @@ const ms: LangPack = {
     }
   },
   spokenDistance(m) {
-    if (m < 1000) return `${roundNice(m)} meter`;
+    if (roundNice(m) < 1000) return `${roundNice(m)} meter`;
     return `${(Math.round(m / 100) / 10).toString().replace('.', ' perpuluhan ')} kilometer`;
   },
   inDistance: (d, t) => `Dalam ${d}, ${lowerFirst(t)}`,
@@ -418,7 +423,7 @@ const ja: LangPack = {
     }
   },
   spokenDistance(m) {
-    if (m < 1000) return `${roundNice(m)}メートル`;
+    if (roundNice(m) < 1000) return `${roundNice(m)}メートル`;
     return `${Math.round(m / 100) / 10}キロ`;
   },
   inDistance: (d, t) => `${d}先、${t}`,
@@ -514,7 +519,7 @@ export function formatDistance(m: number, units: Units = 'metric'): string {
     const mi = m / 1609.344;
     return `${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi`;
   }
-  if (m < 1000) return `${roundNice(m)} m`;
+  if (roundNice(m) < 1000) return `${roundNice(m)} m`;
   const km = m / 1000;
   return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
 }
@@ -721,6 +726,61 @@ export function lanePhrase(kind: LanePhraseKind, l: LaneState, lang: LangCode, u
       if (l.status === 'wrong') return `Move ${n === 1 ? 'one lane' : `${n} lanes`} ${dir} · ${cueDist}`;
       return known ? `Use ${group} · ${cueDist}` : `Keep ${dir} · ${cueDist}`;
   }
+}
+
+/** Two spoken sentences as one prompt, with the full stop each language wants between them. */
+export function joinSpeech(a: string, b: string, lang: LangCode): string {
+  if (!b) return a;
+  if (lang === 'ja') return /[。！？]$/.test(a) ? `${a}${b}` : `${a}。${b}`;
+  return /[.!?]$/.test(a) ? `${a} ${b}` : `${a}. ${b}`;
+}
+
+/** Said after the first heads-up of a turn the router gave no lanes for. */
+export function turnSidePhrase(side: 'left' | 'right', lang: LangCode): string {
+  if (lang === 'ms') return `Masuk ke lorong ${side === 'left' ? 'kiri' : 'kanan'}.`;
+  if (lang === 'ja') return `${side === 'left' ? '左' : '右'}車線に寄ってください。`;
+  return `Move into the ${side} lane.`;
+}
+
+/* ------------------------------------------------------------------ toll plazas */
+
+const SAYS_PLAZA = /(^|\s)(tol|toll|plaza)(\s|$)|料金/i;
+
+/** The plaza's name as said and shown ("Plaza Tol Sungai Besi"), or the plain word for one. */
+export function tollTitle(name: string | null, lang: LangCode): string {
+  const n = name?.trim();
+  if (!n) return lang === 'ms' ? 'Plaza tol' : lang === 'ja' ? '料金所' : 'Toll plaza';
+  if (SAYS_PLAZA.test(n)) return n;
+  return lang === 'ms' ? `Plaza Tol ${n}` : lang === 'ja' ? `${n}料金所` : `${n} toll plaza`;
+}
+
+/** What to have ready, for the screen ("Touch 'n Go", "ETC"), or nothing. */
+export function tollPayLabel(pay: TollPay): string {
+  return pay === 'tng' ? "Touch 'n Go" : pay === 'etc' ? 'ETC' : '';
+}
+
+/**
+ * The toll reminders. Early: "Plaza Tol Sungai Besi in 800 metres. Get your Touch n Go card
+ * ready." Near: "Toll plaza ahead. Prepare your Touch n Go." The brand is written the way speech
+ * reads it best.
+ */
+export function tollSpeech(kind: 'early' | 'near', t: TollState, pay: TollPay, lang: LangCode, units: Units): string {
+  const L = LANGS[lang];
+  const d = L.spokenDistance(t.dist, units);
+  const title = tollTitle(t.plaza.name, lang);
+  if (lang === 'ms') {
+    const ready = pay === 'tng' ? 'Sediakan kad Touch n Go anda.' : pay === 'etc' ? 'Pastikan kad ETC anda sedia.' : 'Sediakan bayaran tol anda.';
+    if (kind === 'early') return `${title} dalam ${d}. ${ready}`;
+    return `Plaza tol di hadapan.${pay === 'tng' ? ' Sediakan Touch n Go.' : ''}`;
+  }
+  if (lang === 'ja') {
+    const ready = pay === 'tng' ? 'Touch n Goカードをご用意ください。' : pay === 'etc' ? 'ETCカードをご確認ください。' : '通行料金のお支払いをご準備ください。';
+    if (kind === 'early') return `${d}先、${title}です。${ready}`;
+    return `まもなく${title}です。${pay === 'tng' ? 'Touch n Goをご用意ください。' : ''}`;
+  }
+  const ready = pay === 'tng' ? 'Get your Touch n Go card ready.' : pay === 'etc' ? 'Check your ETC card.' : 'Have your toll payment ready.';
+  if (kind === 'early') return `${title} in ${d}. ${ready}`;
+  return `Toll plaza ahead.${pay === 'tng' ? ' Prepare your Touch n Go.' : ''}`;
 }
 
 /* ------------------------------------------------------------------ arrival */

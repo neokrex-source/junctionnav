@@ -5,6 +5,7 @@
 import type { LngLat } from '../geo/geo';
 import type { JunctionDataProvider, OsmData, OsmWay } from '../junction/osmdata';
 import type { TerrainPatch, TerrainProvider } from '../junction/terrain';
+import { densifyPath, type TollPoint, type TollProvider } from '../nav/tolls';
 import type { TunnelProvider } from '../nav/tunnels';
 import { labelRoutes, normalizeOsrm, sameRoute } from '../routing/osrm';
 import type { RouteRequest, RouteResult, Router } from '../routing/types';
@@ -206,6 +207,34 @@ export class HybridTunnels implements TunnelProvider {
     } catch (e) {
       if (!this.sw.available() || signal?.aborted) throw e;
       return this.sw.client.tunnels(path);
+    }
+  }
+}
+
+/**
+ * Toll booths along the route: Overpass, with the pack's named toll plazas when there is no
+ * connection (or first, when the settings say "always offline").
+ */
+export class HybridTolls implements TollProvider {
+  constructor(
+    private online: () => TollProvider,
+    private sw: OfflineSwitch,
+  ) {}
+  get name() {
+    return 'Hybrid';
+  }
+  private async offline(path: LngLat[]): Promise<TollPoint[]> {
+    // The pack measures to points, so the path gets one every 60 m.
+    const list = await this.sw.client.pois(['barrier=toll_booth'], densifyPath(path, 60), 45);
+    return list.map((p) => ({ id: `offline/${p.lngLat[0].toFixed(6)},${p.lngLat[1].toFixed(6)}`, at: p.lngLat, name: p.name }));
+  }
+  async fetch(path: LngLat[], signal?: AbortSignal): Promise<TollPoint[]> {
+    if (useOfflineFirst(this.sw)) return this.offline(path);
+    try {
+      return await this.online().fetch(path, signal);
+    } catch (e) {
+      if (!this.sw.available() || signal?.aborted) throw e;
+      return this.offline(path);
     }
   }
 }
