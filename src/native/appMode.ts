@@ -80,15 +80,58 @@ function base64(buf: ArrayBuffer): string {
   return btoa(s);
 }
 
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One file from the website, checked against its listed size. A phone network or the site's CDN
+ * drops a single request now and then (an answer cut short, refused, or without its headers), so
+ * each file gets three tries, a moment apart, before the download gives up. A missing file (the
+ * site moved on to a newer build meanwhile) is not tried again.
+ */
+export async function fetchFile(url: string, path: string, size: number, tries = 3, wait = 1500): Promise<ArrayBuffer> {
+  let last = new Error(`Could not download ${path}.`);
+  for (let i = 0; i < tries; i++) {
+    if (i) await pause(wait * i);
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) {
+        last = new Error(`Could not download ${path} (${r.status}).`);
+        if (r.status === 404) break;
+        continue;
+      }
+      const buf = await r.arrayBuffer();
+      if (buf.byteLength === size) return buf;
+      last = new Error(`${path} arrived incomplete. Try again.`);
+    } catch (e) {
+      last = new Error(`Could not download ${path} (${(e as Error).message}).`);
+    }
+  }
+  throw last;
+}
+
+/** The list of the website build's files, with one more try if the first request fails. */
+async function fetchManifest(): Promise<AppFiles> {
+  let last = new Error('The website did not answer.');
+  for (let i = 0; i < 2; i++) {
+    if (i) await pause(1500);
+    try {
+      const res = await fetch(new URL('app-files.json', WEB_APP_URL).href, { cache: 'no-store' });
+      if (res.ok) return (await res.json()) as AppFiles;
+      last = new Error(`The website did not answer (${res.status}).`);
+    } catch (e) {
+      last = new Error(`The website did not answer (${(e as Error).message}).`);
+    }
+  }
+  throw last;
+}
+
 /**
  * Downloads the website's current build into the app, unless that version is already here.
  * Every file is checked against its listed size before the copy counts as installed.
  */
 export async function downloadLatest(onProgress?: (done: number, total: number) => void): Promise<WebCopy> {
   if (!WEB_APP_URL) throw new Error('This build does not know the website address.');
-  const res = await fetch(new URL('app-files.json', WEB_APP_URL).href, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`The website did not answer (${res.status}).`);
-  const m = (await res.json()) as AppFiles;
+  const m = await fetchManifest();
   const have = read();
   if (have && have.version === m.version && (await has(have))) return have;
   const { Filesystem, Directory } = await files();
@@ -98,10 +141,7 @@ export async function downloadLatest(onProgress?: (done: number, total: number) 
   // index.html last: a copy without it is never used.
   const order = [...m.files.filter((f) => f.path !== 'index.html'), ...m.files.filter((f) => f.path === 'index.html')];
   for (const f of order) {
-    const r = await fetch(new URL(f.path, WEB_APP_URL).href, { cache: 'no-store' });
-    if (!r.ok) throw new Error(`Could not download ${f.path} (${r.status}).`);
-    const buf = await r.arrayBuffer();
-    if (buf.byteLength !== f.size) throw new Error(`${f.path} arrived incomplete. Try again.`);
+    const buf = await fetchFile(new URL(f.path, WEB_APP_URL).href, f.path, f.size);
     await Filesystem.writeFile({ path: `${dir}/${f.path}`, data: base64(buf), directory: Directory.Data, recursive: true });
     done += f.size;
     onProgress?.(done, total);
