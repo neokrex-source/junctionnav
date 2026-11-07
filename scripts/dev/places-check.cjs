@@ -189,11 +189,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }));
   await shot('4-settings-places');
   check('Settings shows the places on the device and the schedule', new RegExp(`${manifest.count} places within 100 km of Kuala Lumpur`).test(panel.status.replace(/,/g, '')) && panel.every === 'monthly' && panel.radius === '100' && panel.wifi === true, panel);
-  // Update now: everything again, with progress.
+  // Update now: a newer build where one cell changed brings just that cell.
+  const id = Object.keys(manifest.cells)[0];
+  const cellPath = join(work, 'places', 'cells', `${id}.json`);
+  const changed = JSON.parse(readFileSync(cellPath, 'utf8'));
+  changed.p.push(['Restoran Baru Dibuka', 0, Math.round(KL[0] * 1e5) + 50, Math.round(KL[1] * 1e5) + 50, 40]);
+  const text = JSON.stringify(changed);
+  writeFileSync(cellPath, text);
+  manifest.cells[id] = { n: changed.p.length, b: Buffer.byteLength(text), h: 'abcdef123456' };
+  manifest.count += 1;
+  writeFileSync(join(work, 'places', 'manifest.json'), JSON.stringify(manifest));
   const before2 = calls.cells.length;
   await page.click('.places-grp .off-actions .btn >> text=Update now');
-  await page.waitForFunction(() => window.__app.placesSvc.status.kind === 'idle', null, { timeout: 15_000 }).catch(() => {});
-  check('Update now downloads the places again', calls.cells.length - before2 === Object.keys(manifest.cells).length, calls.cells.length - before2);
+  await page.waitForFunction(() => window.__app.placesSvc.status.kind === 'idle' && window.__app.placesSvc.state?.count > 0, null, { timeout: 15_000 }).catch(() => {});
+  await sleep(300);
+  const after = await page.evaluate(() => ({ count: window.__app.placesSvc.state?.count, status: document.querySelector('.places-grp .pl-status')?.textContent ?? '' }));
+  check('Update now brings just the changed cell', calls.cells.length - before2 === 1 && calls.cells[calls.cells.length - 1].endsWith('h=abcdef123456') && after.count === manifest.count, { got: calls.cells.slice(before2), after });
   // Places off the map, from Settings.
   await page.uncheck('#placesOnMap');
   await page.click('dialog.settings button[value="save"]');

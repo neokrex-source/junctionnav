@@ -48,7 +48,8 @@ export function placesPanel(svc: PlacesService, current: Settings): PlacesContro
   const bar = h('progress', { class: 'off-bar', max: '1', value: '0', hidden: '' }) as HTMLProgressElement;
   const now = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Update now');
   const remove = h('button', { type: 'button', class: 'btn btn-ghost pl-remove' }, 'Remove');
-  now.addEventListener('click', () => void svc.update(true, true));
+  // Only what changed (or is missing) comes down: the manifest's hashes tell.
+  now.addEventListener('click', () => void svc.update(false, true));
   remove.addEventListener('click', () => void svc.clear());
 
   const render = () => {

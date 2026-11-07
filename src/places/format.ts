@@ -220,11 +220,85 @@ const OVERTURE_RULES: [RegExp, PlaceGroup][] = [
   [/office|company|agency|consult|lawyer|legal|attorney|accountant|accounting|insurance|real_estate|property|corporate|business|it_service|information_technology|software|marketing|advertising|engineering|construction|contractor|architect|design|manufactur|factory|industrial|wholesale|supplier|logistics|trading|travel_agen|professional_services/, 'office'],
 ];
 
+/** Overture's broad categories (its newer "basic" taxonomy) that the rules above do not place. */
+const OVERTURE_BASIC: Record<string, PlaceGroup> = {
+  historic_site: 'attraction',
+  place_of_learning: 'education',
+  campus_building: 'education',
+  research_institute: 'education',
+  professional_service: 'office',
+  b2b_service: 'office',
+  b2b_energy_and_utility_service: 'office',
+  b2b_science_and_technology_service: 'office',
+  media_service: 'office',
+  political_organization: 'office',
+  labor_union: 'office',
+  radio_station: 'office',
+  travel_service: 'office',
+  event_or_party_service: 'service',
+  home_service: 'service',
+  wellness_service: 'service',
+  technical_service: 'service',
+  family_service: 'service',
+  rental_service: 'service',
+  agricultural_service: 'service',
+  telecommunications_service: 'service',
+  environmental_or_ecological_service: 'service',
+  recreational_equipment_rental: 'service',
+  social_or_community_service: 'government',
+  civic_organization: 'government',
+  youth_organization: 'government',
+  military_site: 'government',
+  public_utility: 'government',
+  electric_utility_provider: 'government',
+  water_utility_provider: 'government',
+  jail_or_prison: 'government',
+  non_alcoholic_beverage_venue: 'cafe',
+  alcoholic_beverage_venue: 'food',
+  winery: 'food',
+  complementary_and_alternative_medicine: 'health',
+  outpatient_care_facility: 'health',
+  senior_living_facility: 'health',
+  physical_medicine_and_rehabilitation: 'health',
+  reproductive_perinatal_and_womens_care: 'health',
+  emergency_department: 'health',
+  emergency_or_urgent_care_facility: 'health',
+  surgery: 'health',
+  dance_club: 'leisure',
+  gaming_venue: 'leisure',
+  nightlife_venue: 'leisure',
+  skating_rink: 'sport',
+  public_plaza: 'park',
+  land_feature: 'park',
+  pier: 'transport',
+  marina: 'transport',
+  public_fountain: 'attraction',
+  lighthouse: 'attraction',
+  fairgrounds: 'attraction',
+  sculpture_statue: 'attraction',
+};
+
 export function overtureGroup(category: string | undefined | null): PlaceGroup {
   const c = (category ?? '').toLowerCase();
   if (!c) return 'other';
+  if (OVERTURE_BASIC[c]) return OVERTURE_BASIC[c];
   for (const [re, g] of OVERTURE_RULES) if (re.test(c)) return g;
   return 'other';
+}
+
+/**
+ * An Overture place's category for the card (its finest: "malaysian_restaurant") and its group,
+ * from the broad category first, then the finer ones and the taxonomy's path up.
+ */
+export function overtureKind(p: { basic_category?: string | null; categories?: { primary?: string | null } | null; taxonomy?: { primary?: unknown; hierarchy?: unknown } | null }): { key: string; group: PlaceGroup } {
+  const tax = p.taxonomy ?? {};
+  const fine = p.categories?.primary ?? (typeof tax.primary === 'string' ? tax.primary : null) ?? p.basic_category ?? null;
+  const path = Array.isArray(tax.hierarchy) ? (tax.hierarchy as unknown[]).filter((x): x is string => typeof x === 'string').reverse() : [];
+  for (const k of [p.basic_category, fine, ...path]) {
+    const g = overtureGroup(k);
+    if (g !== 'other') return { key: fine ?? 'place', group: g };
+  }
+  return { key: fine ?? 'place', group: 'other' };
 }
 
 const OSM_AMENITY: Record<string, PlaceGroup> = {
@@ -362,6 +436,13 @@ export function osmCategory(t: Record<string, string | undefined>): { key: strin
 
 /** Plain words for a category key: "malaysian_restaurant" -> "Malaysian restaurant". */
 const LABELS: Record<string, string> = {
+  place: 'Place',
+  place_of_learning: 'School or college',
+  non_alcoholic_beverage_venue: 'Drinks',
+  alcoholic_beverage_venue: 'Bar',
+  b2b_service: 'Business services',
+  outpatient_care_facility: 'Clinic',
+  event_or_party_service: 'Events',
   atm: 'ATM',
   atms: 'ATM',
   bank_credit_union: 'Bank',

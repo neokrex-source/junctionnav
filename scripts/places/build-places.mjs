@@ -28,7 +28,7 @@ import {
   metres,
   normName,
   osmCategory,
-  overtureGroup,
+  overtureKind,
   placeRank,
   sameName,
 } from '../../src/places/format.ts';
@@ -113,11 +113,6 @@ function osmDetails(t) {
 
 /* ---------------------------------------------------------------- Overture */
 
-function overtureCategory(p) {
-  const tax = p.taxonomy;
-  return p.basic_category ?? p.categories?.primary ?? (typeof tax?.primary === 'string' ? tax.primary : undefined) ?? null;
-}
-
 function overtureDetails(p) {
   const d = {};
   const common = p.names?.common;
@@ -188,7 +183,8 @@ async function main() {
     const name = clean(p.names?.primary);
     const pt = pointOf(f.geometry);
     if (!name || !pt) continue;
-    const key = overtureCategory(p) ?? 'place';
+    const { key, group } = overtureKind(p);
+    if (ovSeen <= 3) console.log(`[places] Overture sample: ${JSON.stringify({ basic_category: p.basic_category, categories: p.categories, taxonomy: p.taxonomy, keys: Object.keys(p) })}`);
     const d = overtureDetails(p);
     // Already in OpenStreetMap: one place, with OSM's position and name and the details of both.
     const twin = near(osmIndex, pt[0], pt[1]).find((r) => metres([r.lon, r.lat], pt) <= 80 && sameName(r.name, name));
@@ -196,7 +192,7 @@ async function main() {
       for (const k of ['a', 't', 'w', 'b', 'e']) if (d[k] && !twin.d[k]) twin.d[k] = d[k];
       twin.d.s = 'om';
       twin.conf = Math.max(twin.conf ?? 0, conf);
-      if (twin.group === 'other') twin.group = overtureGroup(key);
+      if (twin.group === 'other') twin.group = group;
       ovMerged++;
       continue;
     }
@@ -206,11 +202,11 @@ async function main() {
     const dup = near(ovIndex, pt[0], pt[1]).find((r) => metres([r.lon, r.lat], pt) <= 40 && normName(r.name) === nn);
     if (dup) {
       ovDup++;
-      if (conf > dup.conf) Object.assign(dup, { lon: pt[0], lat: pt[1], conf, key, group: overtureGroup(key), d: { ...d, s: 'o' } });
+      if (conf > dup.conf) Object.assign(dup, { lon: pt[0], lat: pt[1], conf, key, group, d: { ...d, s: 'o' } });
       continue;
     }
     d.s = 'o';
-    const rec = { name: cut(name, 90), key, group: overtureGroup(key), lon: pt[0], lat: pt[1], d, conf };
+    const rec = { name: cut(name, 90), key, group, lon: pt[0], lat: pt[1], d, conf };
     places.push(rec);
     const k = bucket(pt[0], pt[1]);
     (ovIndex.get(k) ?? ovIndex.set(k, []).get(k)).push(rec);

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cellId, cellsInCircle, overtureGroup, type CellFile, type PlacesManifest } from '../src/places/format';
+import { cellId, cellsInCircle, overtureGroup, overtureKind, type CellFile, type PlacesManifest } from '../src/places/format';
 
 const KL: [number, number] = [101.6869, 3.139];
 const at = (dx: number, dy: number): [number, number] => [KL[0] + dx / 111_150, KL[1] + dy / 110_574];
@@ -136,5 +136,19 @@ describe('places data builder', () => {
     expect(overtureGroup('pet_store')).toBe('shop');
     expect(overtureGroup('travel_agents')).toBe('office');
     expect(overtureGroup(undefined)).toBe('other');
+    // Overture's broad categories.
+    expect(overtureGroup('place_of_learning')).toBe('education');
+    expect(overtureGroup('professional_service')).toBe('office');
+    expect(overtureGroup('non_alcoholic_beverage_venue')).toBe('cafe');
+    expect(overtureGroup('outpatient_care_facility')).toBe('health');
+  });
+
+  it('takes the broad category for the group and the finest for the card', () => {
+    expect(overtureKind({ basic_category: 'restaurant', categories: { primary: 'malaysian_restaurant' } })).toEqual({ key: 'malaysian_restaurant', group: 'food' });
+    expect(overtureKind({ basic_category: 'place_of_learning', taxonomy: { primary: 'tuition_center', hierarchy: ['education', 'tuition_center'] } })).toEqual({ key: 'tuition_center', group: 'education' });
+    expect(overtureKind({ basic_category: 'place' })).toEqual({ key: 'place', group: 'other' });
+    // Where neither says, the taxonomy's path up does.
+    expect(overtureKind({ taxonomy: { primary: 'zzz_new_kind', hierarchy: ['eat_and_drink', 'restaurant', 'zzz_new_kind'] } })).toEqual({ key: 'zzz_new_kind', group: 'food' });
+    expect(overtureKind({})).toEqual({ key: 'place', group: 'other' });
   });
 });
