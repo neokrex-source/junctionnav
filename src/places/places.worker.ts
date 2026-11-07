@@ -20,7 +20,8 @@ export type PlacesRequest =
   | { type: 'search'; q: string; near: [number, number] | null; limit: number }
   | { type: 'near'; points: [number, number][]; radius: number; cat: PlaceCategory; limit: number }
   | { type: 'get'; id: string }
-  | { type: 'nearest'; p: [number, number]; maxDist: number };
+  | { type: 'nearest'; p: [number, number]; maxDist: number }
+  | { type: 'area'; street: string | null; postcode: string | null; town: string | null };
 
 const index = new PlacesIndex();
 let state: PlacesState | null = null;
@@ -221,6 +222,8 @@ async function handle(msg: PlacesRequest): Promise<unknown> {
       return index.get(msg.id);
     case 'nearest':
       return index.nearest(msg.p, msg.maxDist);
+    case 'area':
+      return index.addressArea(msg);
   }
 }
 

@@ -45,7 +45,12 @@ export interface SettingsOptions {
   pack?: OfflineStore;
   /** The places around you, when this build has them. */
   places?: PlacesService;
+  /** The tab to open on (else the one last open). */
+  tab?: 'map' | 'drive' | 'traffic' | 'downloads' | 'app';
 }
+
+/** The settings tab last open, to come back to. */
+const TAB_KEY = 'junctionnav.settings.tab';
 
 export function openSettings(current: Settings, opts: SettingsOptions = {}): Promise<Settings | null> {
   return new Promise((resolve) => {
@@ -267,63 +272,122 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       );
     }
 
+    // The groups, gathered into tabs: the map, driving, traffic, downloads and the app itself.
+    const closeUpGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'closeUp' }, 'Close-up at splits'),
+      h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at turns, forks, dividers, ramps, exits, entrances and junctions'),
+      h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange from 300 m before the split (as in the junction view) and dark orange for the 100 m either side of the split itself; the other roads at the split are grey, so only the orange line is your way. Works at every map scale; between turns the automatic scale shows 100 m.'),
+    );
+    const voiceGrp = h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts'));
+    const laneGrp = grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances, junctions and turns ("Move into the right lane" with the first notice of a turn when the map has no lane detail). The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.');
+    const tunnelGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'tunnelAlerts' }, 'Tunnels'),
+      h('label', { class: 'toggle' }, tunnels, 'Tunnel sign and voice warning'),
+      h('div', { class: 'hint' }, 'Shows the tunnel name and length before you reach it, then the distance to the exit. Guidance keeps going on an estimated position when GPS drops out inside.'),
+    );
+    const tollGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'tollAlerts' }, 'Toll plazas'),
+      h('label', { class: 'toggle' }, tolls, "Remind me to get Touch 'n Go ready"),
+      h('div', { class: 'hint' }, 'Says "Get your Touch n Go card ready" about 1 km before a toll plaza on expressways (400 m in town) and "Prepare your Touch n Go" just before it, with the plaza over the arrival time and on the map. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.'),
+    );
+    const surroundGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'jvSurround' }, 'Junction surroundings'),
+      h('label', { class: 'toggle' }, surround, 'Show buildings, land use and place names around junctions'),
+      h('label', { class: 'toggle' }, mapGround, 'Lay the map under the 3D view'),
+      h(
+        'div',
+        { class: 'hint' },
+        'The 3D view shows the streets, parks and water around each junction as on the map, and every flyover, bridge and tunnel within 900 m at its real height.' +
+          (opts.preview ? '' : ' Surroundings download a few hundred KB from Overpass for each upcoming junction.'),
+      ),
+    );
+    const servers = opts.preview
+      ? null
+      : h(
+          'div',
+          { class: 'grp' },
+          h('label', {}, 'Servers'),
+          grp('Routing server (OSRM)', routerUrl, 'Public demo servers are for light use. Run your own for real driving (see README).'),
+          grp('Junction detail (Overpass API)', overpassUrls, 'Comma separated. Tried in order.'),
+          grp('Search (Photon)', photonUrl),
+          h('div', { class: 'off-actions' }, reset),
+        );
+    const tabs = [
+      {
+        id: 'map',
+        label: 'Map',
+        items: [
+          opts.preview ? null : grp('Map style', style),
+          opts.preview ? null : grp('Custom style URL', customStyleUrl),
+          opts.preview ? null : grp('MapTiler key', maptilerKey),
+          h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
+        ],
+      },
+      { id: 'drive', label: 'Drive', items: [voiceGrp, laneGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp, tollGrp] },
+      { id: 'traffic', label: 'Traffic', items: [traffic] },
+      { id: 'downloads', label: 'Downloads', items: [places?.el, pack?.el] },
+      { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers] },
+    ]
+      .map((t) => ({ ...t, items: t.items.filter((x): x is HTMLElement => !!x) }))
+      .filter((t) => t.items.length);
+    const tabList = h('div', { class: 'set-tabs', role: 'tablist', 'aria-label': 'Settings sections' });
+    const panels: HTMLElement[] = [];
+    const buttons: HTMLButtonElement[] = [];
+    const show = (id: string, focus = false) => {
+      const i = Math.max(0, tabs.findIndex((t) => t.id === id));
+      buttons.forEach((b, k) => {
+        b.setAttribute('aria-selected', String(k === i));
+        b.tabIndex = k === i ? 0 : -1;
+      });
+      panels.forEach((p, k) => (p.hidden = k !== i));
+      panels[i].scrollTop = 0;
+      if (focus) buttons[i].focus();
+      buttons[i].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      try {
+        localStorage.setItem(TAB_KEY, tabs[i].id);
+      } catch {
+        /* storage unavailable */
+      }
+    };
+    tabs.forEach((t, k) => {
+      const b = h('button', { type: 'button', class: 'set-tab', role: 'tab', id: `set-tab-${t.id}`, 'aria-controls': `set-panel-${t.id}`, 'data-tab': t.id }, t.label) as HTMLButtonElement;
+      b.addEventListener('click', () => show(t.id));
+      // Arrow keys move between tabs, Home and End to the first and last.
+      b.addEventListener('keydown', (e) => {
+        const next = e.key === 'ArrowRight' ? k + 1 : e.key === 'ArrowLeft' ? k - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
+        if (next == null) return;
+        e.preventDefault();
+        show(tabs[(next + tabs.length) % tabs.length].id, true);
+      });
+      buttons.push(b);
+      tabList.append(b);
+      panels.push(h('div', { class: 'set-panel', role: 'tabpanel', id: `set-panel-${t.id}`, 'aria-labelledby': `set-tab-${t.id}` }, ...t.items));
+    });
+
     const form = h(
       'form',
       { method: 'dialog' },
-      h('h2', {}, 'Settings'),
-      accountEl,
-      appVersion,
-      opts.preview ? null : grp('Map', style),
-      opts.preview ? null : grp('Custom style URL', customStyleUrl),
-      opts.preview ? null : grp('MapTiler key', maptilerKey),
-      h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
-      h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)),
-      h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)),
-      h(
-        'div',
-        { class: 'grp' },
-        h('label', { for: 'closeUp' }, 'Close-up at splits'),
-        h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at turns, forks, dividers, ramps, exits, entrances and junctions'),
-        h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange from 300 m before the split (as in the junction view) and dark orange for the 100 m either side of the split itself; the other roads at the split are grey, so only the orange line is your way. Works at every map scale; between turns the automatic scale shows 100 m.'),
-      ),
-      h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts')),
-      grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances, junctions and turns ("Move into the right lane" with the first notice of a turn when the map has no lane detail). The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.'),
-      h(
-        'div',
-        { class: 'grp' },
-        h('label', { for: 'tunnelAlerts' }, 'Tunnels'),
-        h('label', { class: 'toggle' }, tunnels, 'Tunnel sign and voice warning'),
-        h('div', { class: 'hint' }, 'Shows the tunnel name and length before you reach it, then the distance to the exit. Guidance keeps going on an estimated position when GPS drops out inside.'),
-      ),
-      h(
-        'div',
-        { class: 'grp' },
-        h('label', { for: 'tollAlerts' }, 'Toll plazas'),
-        h('label', { class: 'toggle' }, tolls, "Remind me to get Touch 'n Go ready"),
-        h('div', { class: 'hint' }, 'Says "Get your Touch n Go card ready" about 1 km before a toll plaza on expressways (400 m in town) and "Prepare your Touch n Go" just before it, with the plaza over the arrival time and on the map. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.'),
-      ),
-      traffic,
-      places?.el,
-      pack?.el,
-      androidApp,
-      h(
-        'div',
-        { class: 'grp' },
-        h('label', { for: 'jvSurround' }, 'Junction surroundings'),
-        h('label', { class: 'toggle' }, surround, 'Show buildings, land use and place names around junctions'),
-        h('label', { class: 'toggle' }, mapGround, 'Lay the map under the 3D view'),
-        h(
-          'div',
-          { class: 'hint' },
-          'The 3D view shows the streets, parks and water around each junction as on the map, and every flyover, bridge and tunnel within 900 m at its real height.' +
-            (opts.preview ? '' : ' Surroundings download a few hundred KB from Overpass for each upcoming junction.'),
-        ),
-      ),
-      opts.preview ? null : grp('Routing server (OSRM)', routerUrl, 'Public demo servers are for light use. Run your own for real driving (see README).'),
-      opts.preview ? null : grp('Junction detail (Overpass API)', overpassUrls, 'Comma separated. Tried in order.'),
-      opts.preview ? null : grp('Search (Photon)', photonUrl),
-      h('menu', {}, opts.preview ? null : reset, h('button', { value: 'cancel', class: 'btn btn-ghost' }, 'Cancel'), h('button', { value: 'save', class: 'btn btn-primary', style: 'flex:0' }, 'Save')),
+      h('div', { class: 'set-head' }, h('h2', {}, 'Settings'), tabList),
+      ...panels,
+      h('menu', {}, h('button', { value: 'cancel', class: 'btn btn-ghost' }, 'Cancel'), h('button', { value: 'save', class: 'btn btn-primary', style: 'flex:0' }, 'Save')),
     );
+    let first: string | undefined = opts.tab;
+    if (!first) {
+      try {
+        first = localStorage.getItem(TAB_KEY) ?? undefined;
+      } catch {
+        first = undefined;
+      }
+    }
+    show(first ?? tabs[0].id);
     const dlg = h('dialog', { class: 'settings', 'aria-label': 'Settings' }, form) as HTMLDialogElement;
     document.body.append(dlg);
     dlg.addEventListener('close', () => {

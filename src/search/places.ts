@@ -1,6 +1,7 @@
 /** Place search with Photon (OSM-based, allows search-as-you-type) plus coordinate input. */
 import type { LngLat } from '../geo/geo';
 import type { PlaceInfo } from '../places/format';
+import { parseCoordinates } from './coords';
 import { escapeHtml, h } from '../ui/dom';
 
 export interface Place {
@@ -35,14 +36,8 @@ function label(p: Record<string, string | undefined>): { name: string; sub: stri
   return { name, sub };
 }
 
-export function parseCoordinates(q: string): LngLat | null {
-  const m = q.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
-  if (!m) return null;
-  const lat = Number(m[1]);
-  const lng = Number(m[2]);
-  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-  return [lng, lat];
-}
+/** Coordinates in any of the usual forms (src/search/coords.ts). */
+export { parseCoordinates };
 
 /** Anything that can look places up by text and name a point on the map. */
 export interface PlaceSearchEngine {
@@ -102,6 +97,11 @@ export function attachSearch(
     list.innerHTML = '';
     list.hidden = places.length === 0;
     for (const p of places) {
+      // A note (a link that cannot be read here, a hint) explains rather than goes somewhere.
+      if (!Number.isFinite(p.lngLat[0])) {
+        list.append(h('li', { class: 's-note-row', role: 'note' }, h('span', { class: 's-name' }, p.name), h('span', { class: 's-sub' }, p.sub)));
+        continue;
+      }
       const b = h('button', {
         type: 'button',
         html:

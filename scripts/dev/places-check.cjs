@@ -4,7 +4,9 @@
  * as the website would, and the app downloads them by itself, shows them on the map (hiding the
  * base map's own points of interest), opens a place's card with its details, finds them in
  * search and the category buttons, skips unchanged cells on the next update, and shows all of it
- * in Settings.
+ * in Settings. Search also takes coordinates, plus codes, Google Maps links and rough addresses
+ * (falling back to the area, and to where the places around you say a street or postcode is), and
+ * Settings is in tabs.
  *
  *   VITE_AUTH_REQUIRED=false VITE_PLACES_URL=https://places.test/places/ npx vite build --outDir dist-traffic
  *   npx vite preview --outDir dist-traffic --port 4180 &
@@ -63,7 +65,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const ctx = await browser.newContext({ viewport: { width: 412, height: 860 }, geolocation: { latitude: KL[1], longitude: KL[0] }, permissions: ['geolocation'] });
-  const calls = { manifest: 0, cells: [], photon: 0, overpass: 0 };
+  const calls = { manifest: 0, cells: [], photon: 0, photonQ: [], overpass: 0 };
+  const TAMAN = at(300, -900);
   const cors = { 'Access-Control-Allow-Origin': '*' };
   await ctx.route('**/*', async (r) => {
     const u = r.request().url();
@@ -80,6 +83,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }
     if (u.includes('photon.komoot.io')) {
       calls.photon++;
+      const q = new URL(u).searchParams.get('q') ?? '';
+      calls.photonQ.push(q);
+      // An address the service does not know, and the area it is in.
+      if (/Tiada/.test(q)) return r.fulfill({ json: { features: [] }, headers: cors });
+      if (/^Taman Ujian/.test(q)) return r.fulfill({ json: { features: [{ geometry: { coordinates: TAMAN }, properties: { name: 'Taman Ujian (Photon)', city: 'Kuala Lumpur' } }] }, headers: cors });
       return r.fulfill({ json: { features: [{ geometry: { coordinates: [101.7037, 3.1528] }, properties: { name: 'Menara Kuala Lumpur (Photon)', city: 'Kuala Lumpur' } }] }, headers: cors });
     }
     if (u.includes('overpass')) {
@@ -164,6 +172,61 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.fill('#q', '');
   await page.keyboard.press('Escape');
 
+  // ---- search by coordinates, plus codes, Google Maps links and rough addresses
+  const rows = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.suggest:not([hidden]) li')].map((li) => {
+        const tag = li.querySelector('.s-tag')?.textContent ?? '';
+        return { note: li.classList.contains('s-note-row'), tag, name: (li.querySelector('.s-name')?.textContent ?? '').slice(tag.length), sub: li.querySelector('.s-sub')?.textContent ?? '' };
+      }),
+    );
+  const ask = async (q) => {
+    await page.evaluate(() => document.querySelectorAll('.suggest').forEach((l) => (l.innerHTML = '')));
+    await page.fill('#q', q);
+    await page.waitForFunction(() => document.querySelectorAll('.suggest:not([hidden]) li').length > 0, null, { timeout: 10_000 }).catch(() => {});
+    await sleep(120);
+    return rows();
+  };
+  const coordsIn = (text) => (text.match(/(-?\d+\.\d{5}), (-?\d+\.\d{5})/) ?? []).slice(1).map(Number);
+  const near = (text, [lon, lat], tol = 0.0002) => {
+    const [a, b] = coordsIn(text);
+    return Math.abs(a - lat) < tol && Math.abs(b - lon) < tol;
+  };
+  let r = await ask('3.139, 101.6869');
+  check('coordinates typed into search', r[0]?.name === '3.13900, 101.68690' && /^Coordinates · 3°08'20\.4"N 101°41'12\.8"E/.test(r[0].sub), r);
+  await shot('3a-search-coordinates');
+  await page.click('.suggest:not([hidden]) li >> nth=0');
+  await page.waitForFunction(() => /near/.test(document.querySelector('.sheet .place-sub')?.textContent ?? ''), null, { timeout: 8000 }).catch(() => {});
+  const picked = await page.evaluate(() => ({ title: document.querySelector('.sheet .sheet-head h2')?.textContent, sub: document.querySelector('.sheet .place-sub')?.textContent, at: window.__app.place?.lngLat }));
+  await shot('3b-coordinates-picked');
+  check('picking them opens the point, with what is there', picked.title === '3.13900, 101.68690' && Math.abs(picked.at[0] - 101.6869) < 1e-6 && /^Coordinates · near [^·]+( · [\d.,]+ k?m)?$/.test(picked.sub ?? ''), picked);
+  await page.evaluate(() => window.__app.closePlace());
+  r = await ask(`3°08'20.4"N 101°41'12.8"E`);
+  check('degrees, minutes and seconds as Google Maps writes them', near(r[0]?.name ?? '', KL, 0.0001), r);
+  r = await ask('N 3.139 E 101.6869');
+  check('with the hemisphere letters in front', r[0]?.name === '3.13900, 101.68690', r);
+  r = await ask('Suria KLCC https://www.google.com/maps/place/Suria+KLCC/@3.1579,101.7095,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d3.1578!4d101.7123!16s');
+  check("a Google Maps link to a place: the place's own position", r[0]?.name === 'Suria KLCC' && /^From the Google Maps link · 3\.15780, 101\.71230/.test(r[0].sub), r);
+  r = await ask('https://www.google.com/maps/@3.1528,101.7037,16z');
+  check('a link to a map view', near(r[0]?.name ?? '', [101.7037, 3.1528], 0.00001), r);
+  r = await ask('https://maps.app.goo.gl/AbCdEfGh123');
+  await shot('3c-search-short-link');
+  check('a short link on the website: a note on what to do instead', r.length === 1 && r[0].note && /Android app/.test(r[0].name), r);
+  r = await ask('6PM35P56+4W');
+  check('a full plus code', r[0]?.name === '6PM35P56+4W' && near(r[0].sub, [101.7123, 3.1578]), r);
+  r = await ask('5P56+4W Kuala Lumpur');
+  check('a short plus code with its town', r[0]?.name === '5P56+4W Kuala Lumpur' && near(r[0].sub, [101.7123, 3.1578]), r);
+  const photonBefore = calls.photonQ.length;
+  r = await ask('No 12, Jln Tiada, Tmn Ujian, 50450 KL');
+  await shot('3d-search-rough-address');
+  const asked = calls.photonQ.slice(photonBefore);
+  check('an address the services do not know: the area it is in, marked approximate', r.some((x) => x.tag === 'Approx.' && x.name === 'Taman Ujian (Photon)' && /^Approximate \(Taman Ujian, 50450 Kuala Lumpur\)/.test(x.sub)) && asked[0] === '12, Jalan Tiada, Taman Ujian, 50450 Kuala Lumpur', { r, asked });
+  check('and where the places around you say its postcode is', r.some((x) => x.tag === 'Approx.' && x.name === 'Postcode 50450 Kuala Lumpur' && /middle of \d+ places with this postcode/.test(x.sub)), r);
+  r = await ask('99 Jalan Ujian, 50450 Kuala Lumpur');
+  check('a street the places around you know: its middle', r.some((x) => x.tag === 'Approx.' && x.name === 'Jalan Ujian, Kuala Lumpur' && /middle of 1\d\d places on this street/.test(x.sub)), r);
+  await page.fill('#q', '');
+  await page.keyboard.press('Escape');
+
   // ---- category buttons
   await page.click('.chips .cat-chip >> nth=0');
   await page.waitForFunction(() => window.__app.results?.length > 0, null, { timeout: 10_000 }).catch(() => {});
@@ -176,8 +239,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.evaluate(() => window.__app.placesSvc.update(false, true));
   check('an update downloads only what changed (nothing here)', calls.cells.length === before && calls.manifest === 2, { cells: calls.cells.length - before, manifest: calls.manifest });
 
-  // ---- Settings
+  // ---- Settings, in tabs
   await page.click('button[aria-label="Settings"]');
+  await page.waitForSelector('dialog.settings[open] [role="tab"]');
+  const tabs = await page.$$eval('dialog.settings [role="tab"]', (els) => els.map((e) => e.dataset.tab));
+  const seen = [];
+  for (const t of tabs) {
+    await page.click(`dialog.settings [role="tab"][data-tab="${t}"]`);
+    await sleep(150);
+    seen.push(
+      await page.evaluate((t) => {
+        const dlg = document.querySelector('dialog.settings');
+        const shown = [...dlg.querySelectorAll('[role="tabpanel"]')].filter((p) => !p.hidden);
+        const box = dlg.getBoundingClientRect();
+        const menu = dlg.querySelector('menu').getBoundingClientRect();
+        return { t, shown: shown.map((p) => p.id), selected: dlg.querySelector('[aria-selected="true"]')?.dataset.tab, fits: box.bottom <= innerHeight + 1 && menu.bottom <= box.bottom + 1, items: shown[0]?.children.length };
+      }, t),
+    );
+    await shot(`5-settings-${t}`);
+  }
+  check('Settings is in tabs, one section at a time, Save always in reach', tabs.join() === 'map,drive,traffic,downloads,app' && seen.every((x) => x.shown.length === 1 && x.shown[0] === `set-panel-${x.t}` && x.selected === x.t && x.fits && x.items > 0), seen);
+  await page.focus('dialog.settings [role="tab"][data-tab="map"]');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  const keyed = await page.evaluate(() => `${document.activeElement?.dataset?.tab}|${document.querySelector('dialog.settings [aria-selected="true"]')?.dataset.tab}`);
+  check('arrow keys move between the tabs', keyed === 'traffic|traffic', keyed);
+  await page.click('dialog.settings button[value="cancel"]');
+  await sleep(300);
+  await page.click('button[aria-label="Settings"]');
+  await page.waitForSelector('dialog.settings[open] [role="tab"]');
+  const reopened = await page.evaluate(() => document.querySelector('dialog.settings [aria-selected="true"]')?.dataset.tab);
+  check('Settings opens on the tab you were on', reopened === 'traffic', reopened);
+  await page.click('dialog.settings [role="tab"][data-tab="downloads"]');
   await page.waitForSelector('dialog.settings .places-grp');
   await page.$eval('dialog.settings .places-grp', (el) => el.scrollIntoView({ block: 'center' }));
   await sleep(500);

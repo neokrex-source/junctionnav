@@ -847,20 +847,45 @@ button { cursor: pointer; }
 .dest-pin .pin-body { fill: var(--pin); stroke: #ffffff; }
 .dest-pin .pin-dot { fill: #ffffff; }
 
-/* settings */
+/* settings: a title and tabs on top, the tab's groups scrolling below, Cancel and Save at the foot */
 .settings {
   border: 0;
   border-radius: 18px;
   padding: 0;
   width: min(440px, calc(100vw - 24px));
-  max-height: calc(100vh - 40px);
+  /* One height for every tab, so switching tabs never makes the dialog jump. */
+  height: min(760px, calc(100vh - 32px));
+  height: min(760px, calc(100dvh - 32px));
+  max-height: calc(100vh - 32px);
   background: var(--surface-solid);
   color: var(--ink);
   box-shadow: var(--shadow), var(--edge);
+  overflow: hidden;
 }
+.settings[open] { display: flex; flex-direction: column; }
 .settings::backdrop { background: var(--scrim); }
-.settings form { display: grid; gap: 14px; padding: 18px; }
+.settings form { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .settings h2 { margin: 0; font: 700 26px/1.1 var(--font-cond); }
+.set-head { display: grid; gap: 8px; padding: 16px 18px 0; border-bottom: 1px solid var(--line); }
+.set-tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin: 0 -8px; }
+.set-tabs::-webkit-scrollbar { display: none; }
+.set-tab {
+  flex: 1 0 auto;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 9px 10px 10px;
+  font: 700 15.5px/1 var(--font-cond);
+  letter-spacing: 0.02em;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+}
+.set-tab:hover { color: var(--ink); background: color-mix(in srgb, var(--route) 7%, transparent); }
+.set-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--route); }
+.set-tab:focus-visible { outline: 2px solid var(--route); outline-offset: -2px; }
+.set-panel { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 14px; align-content: start; padding: 16px 18px 20px; }
+.set-panel[hidden] { display: none; }
 .settings .grp { display: grid; gap: 6px; }
 .settings label { font-size: 13px; font-weight: 600; color: var(--muted); }
 .settings select, .settings input[type="text"], .settings input[type="url"] {
@@ -872,7 +897,7 @@ button { cursor: pointer; }
 }
 .settings .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .settings .hint { font-size: 12px; color: var(--muted); }
-.settings menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; }
+.settings menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); }
 
 .toast {
   position: fixed;
@@ -1591,3 +1616,8 @@ button { cursor: pointer; }
 .settings .pl-error { margin-top: 4px; color: var(--danger); }
 .places-grp .pl-remove { color: var(--danger); }
 .places-grp select + select { margin-top: 6px; }
+
+/* A note in the search results (a link that cannot be read here, a hint): not a place to pick. */
+.suggest .s-note-row { display: grid; gap: 2px; margin: 2px 0; padding: 9px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 11%, transparent); }
+.suggest .s-note-row .s-name { font-weight: 700; }
+.suggest .s-note-row .s-sub { color: var(--muted); font-size: 13px; line-height: 1.35; white-space: normal; }

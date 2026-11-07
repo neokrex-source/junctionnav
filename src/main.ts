@@ -51,6 +51,7 @@ import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 import { BUILT_IN, NATIVE, PLACES_URL, TRAFFIC_NEWS_URL } from './platform';
 import { PlacesService } from './places/service';
+import { SmartSearch } from './search/smartSearch';
 import { MergedPois, MergedSearch, hitToPlace, hitInfo } from './places/search';
 import { PlacesLayer, PLACES_LIMIT } from './map/placesLayer';
 import { placeSvg } from './ui/placeIcons';
@@ -184,9 +185,17 @@ class App {
   terrain = new TerrainCache(new TerrariumProvider());
   terrainReady = new Map<string, TerrainPatch | null>();
   search!: PlaceSearchEngine;
-  /** Stable engine handed to search boxes; forwards to whichever search is active (real or demo). */
+  /**
+   * The search boxes also take coordinates, plus codes, Google Maps links (short share links in the
+   * Android app) and rough addresses, on top of whichever place search is active (real or demo).
+   */
+  private smart = new SmartSearch(() => this.search, {
+    resolveLink: NATIVE ? (u) => import('./native/links').then((m) => m.resolveMapsLink(u)) : null,
+    area: (street, postcode, town) => (this.placesSvc.available ? this.placesSvc.client.area(street, postcode, town) : Promise.resolve([])),
+  });
+  /** Stable engine handed to search boxes. */
   private searchProxy: PlaceSearchEngine = {
-    search: (q, near, lang, signal) => this.search.search(q, near, lang, signal),
+    search: (q, near, lang, signal) => this.smart.search(q, near, lang, signal),
     reverse: (p, signal) => this.search.reverse(p, signal),
   };
   private simNoticeShown = false;
@@ -798,6 +807,18 @@ class App {
     this.map.flyTo(p.lngLat, Math.max(15, this.map.map.getZoom()));
     this.setView('place');
     void this.fillPlaceInfo(p, () => this.place === p && this.view === 'place');
+    // Coordinates (typed, or from a link): what is there, under them.
+    if (p.kind === 'coords')
+      void this.search
+        .reverse(p.lngLat)
+        .then((named) => {
+          if (!named || this.place !== p) return;
+          // The name, and the area when it is a plain address (not a place's own line of details).
+          const area = named.sub && !named.sub.includes(' · ') ? `, ${named.sub}` : '';
+          p.sub = `${p.sub.split(' · ')[0]} · near ${named.name}${area}`;
+          if (this.view === 'place') this.renderSheet();
+        })
+        .catch(() => {});
   }
 
   /** Details for a place found elsewhere (a category button) from the places around you. */

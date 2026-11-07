@@ -105,13 +105,14 @@ export class OfflineStore {
   /** The pack published with the site. */
   async remote(): Promise<PackManifest> {
     const res = await fetch(this.manifestUrl, { cache: 'no-cache' });
-    if (!res.ok)
-      throw new Error(
-        res.status === 404
-          ? 'The offline maps are still being prepared on the server (this takes about 20 minutes after an update). Tap Download again in a few minutes.'
-          : `Could not get the offline map list (${res.status}). Tap Download to try again.`,
-      );
-    return (await res.json()) as PackManifest;
+    const notYet = 'The offline maps are still being prepared on the server (this takes about 20 minutes after an update). Tap Download again in a few minutes.';
+    if (!res.ok) throw new Error(res.status === 404 ? notYet : `Could not get the offline map list (${res.status}). Tap Download to try again.`);
+    // A page instead of the list (a host that answers every address with its home page): not there yet.
+    try {
+      return JSON.parse(await res.text()) as PackManifest;
+    } catch {
+      throw new Error(notYet);
+    }
   }
 
   /** Is the published pack newer than the installed one? */

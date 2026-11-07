@@ -24,6 +24,66 @@ export interface PlaceHit {
 /** What the map layer needs per place. */
 export type MapPlace = [id: string, lon: number, lat: number, name: string, group: PlaceGroup, rank: number];
 
+/** Roughly where an address is (src/places/placesIndex.ts addressArea). */
+export interface AreaHit {
+  by: 'street' | 'postcode';
+  lon: number;
+  lat: number;
+  /** Places it is the middle of. */
+  n: number;
+}
+
+/**
+ * The middle of some points (the median each way, so a few strays do not pull it), or null when
+ * most of them lie further than `spread` metres from it.
+ */
+export function middle(all: [number, number][], spread: number): [number, number] | null {
+  if (!all.length) return null;
+  // A few thousand are plenty to find the middle of.
+  const step = Math.ceil(all.length / 4000);
+  const pts = step > 1 ? all.filter((_, i) => i % step === 0) : all;
+  const med = (v: number[]) => {
+    const s = [...v].sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+  const mid: [number, number] = [med(pts.map((p) => p[0])), med(pts.map((p) => p[1]))];
+  const d = pts.map((p) => metres(mid, p)).sort((a, b) => a - b);
+  return d[Math.floor(d.length * 0.8)] <= spread ? mid : null;
+}
+
+/** Address shorthand, written out, so "Jln SS2/24" and "Jalan SS 2/24" read the same. */
+const ADDRESS_ABBR: Record<string, string> = {
+  jln: 'jalan',
+  jl: 'jalan',
+  lrg: 'lorong',
+  psn: 'persiaran',
+  lbh: 'lebuh',
+  tmn: 'taman',
+  kg: 'kampung',
+  kpg: 'kampung',
+  bdr: 'bandar',
+  bkt: 'bukit',
+  sg: 'sungai',
+  bt: 'batu',
+  sek: 'seksyen',
+};
+
+/** Words that do not tell one street from another. */
+const GENERIC_STREET = new Set(['jalan', 'lorong', 'persiaran', 'lebuh', 'lebuhraya', 'lingkaran', 'lengkok', 'medan', 'taman', 'kampung', 'bandar', 'bukit', 'sungai', 'batu', 'seksyen', 'besar']);
+
+/** An address as plain words: lower case, letters apart from numbers ("ss2" is "ss 2"), shorthand written out. */
+export function addressWords(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/([a-z])(?=\d)/g, '$1 ')
+    .replace(/(\d)(?=[a-z])/g, '$1 ')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((w) => ADDRESS_ABBR[w] ?? w)
+    .join(' ');
+}
+
 /** The app's category buttons, in terms of groups and category keys. */
 export type PlaceCategory = 'fuel' | 'ev' | 'parking' | 'food' | 'rest' | 'store';
 
@@ -257,6 +317,50 @@ export class PlacesIndex {
       }
     }
     return best ? this.hit(best.c, best.i, best.d) : null;
+  }
+
+  /**
+   * Roughly where an address is, from the addresses of the places around you: the middle of the
+   * places on that street (in that postcode or town, when given), and of the places in that
+   * postcode. Matches spread too wide to mean one place (a "Jalan 1" in every town) are left out.
+   */
+  addressArea(o: { street?: string | null; postcode?: string | null; town?: string | null }): AreaHit[] {
+    const st = o.street ? addressWords(o.street) : '';
+    const pc = o.postcode && /^\d{5}$/.test(o.postcode) ? o.postcode : '';
+    const town = o.town ? ` ${addressWords(o.town)} ` : '';
+    const pcRe = pc ? new RegExp(`(^|\\D)${pc}(\\D|$)`) : null;
+    // A street needs a word of its own ("Jalan 14" is too common alone, but the postcode narrows it).
+    const own = st.split(' ').filter((w) => !GENERIC_STREET.has(w));
+    const useStreet = own.length > 0 && st.includes(' ');
+    // A quick look for its most telling word comes before the full comparison.
+    const key = useStreet ? new RegExp([...own].sort((a, b) => b.length - a.length)[0], 'i') : null;
+    const stPad = ` ${st} `;
+    const onStreet: { p: [number, number]; pc: boolean; town: boolean }[] = [];
+    const inPostcode: [number, number][] = [];
+    for (const c of this.cells.values()) {
+      for (let i = 0; i < c.names.length; i++) {
+        const a = c.details[i]?.a;
+        if (!a) continue;
+        const inPc = !!pcRe && pcRe.test(a);
+        if (inPc) inPostcode.push([c.lon[i], c.lat[i]]);
+        if (key?.test(a)) {
+          const aw = ` ${addressWords(a)} `;
+          if (aw.includes(stPad)) onStreet.push({ p: [c.lon[i], c.lat[i]], pc: inPc, town: !!town && aw.includes(town) });
+        }
+      }
+    }
+    const out: AreaHit[] = [];
+    if (onStreet.length) {
+      // The ones in the right postcode or town, when the address says.
+      const narrow = onStreet.filter((h) => h.pc).length ? onStreet.filter((h) => h.pc) : onStreet.filter((h) => h.town).length ? onStreet.filter((h) => h.town) : onStreet;
+      const mid = middle(narrow.map((h) => h.p), 3000);
+      if (mid) out.push({ by: 'street', lon: mid[0], lat: mid[1], n: narrow.length });
+    }
+    if (inPostcode.length) {
+      const mid = middle(inPostcode, 9000);
+      if (mid) out.push({ by: 'postcode', lon: mid[0], lat: mid[1], n: inPostcode.length });
+    }
+    return out;
   }
 
   /** The town an area is around: a city or town close to the point, else the nearest suburb or village. */

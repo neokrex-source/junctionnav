@@ -1,6 +1,6 @@
 /** Talks to the places worker (src/places/places.worker.ts). */
 import PlacesWorker from './places.worker?worker&inline';
-import type { PlaceCategory, PlaceHit, MapPlace } from './placesIndex';
+import type { AreaHit, PlaceCategory, PlaceHit, MapPlace } from './placesIndex';
 import type { PlacesRequest } from './places.worker';
 import type { PlacesState } from './schedule';
 
@@ -65,5 +65,9 @@ export class PlacesClient {
   }
   nearest(p: [number, number], maxDist = 30): Promise<PlaceHit | null> {
     return this.call({ type: 'nearest', p, maxDist });
+  }
+  /** Roughly where a street or postcode is, from the places' addresses. */
+  area(street: string | null, postcode: string | null, town: string | null): Promise<AreaHit[]> {
+    return this.call({ type: 'area', street, postcode, town });
   }
 }

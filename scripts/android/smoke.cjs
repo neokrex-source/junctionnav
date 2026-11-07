@@ -182,6 +182,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
 
   // Settings, scrolled to the offline maps, then the Android back button closes it.
   await page.click('button[aria-label="Settings"]');
+  await page.click('dialog.settings [role="tab"][data-tab="downloads"]');
   await page.waitForSelector('dialog.settings .off');
   await page.$eval('dialog.settings .off', (el) => el.scrollIntoView({ block: 'center' }));
   await sleep(2500);
@@ -265,6 +266,31 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     check('places around you download from the site', false, String(e?.message ?? e).slice(0, 300));
   }
 
+  // Search: a Google Maps share link, followed by the app itself (a web page cannot), and a rough
+  // address placed by the places around you. Real share links of places in Kuala Lumpur; one is enough.
+  try {
+    const sr = await page.evaluate(async () => {
+      const links = ['https://maps.app.goo.gl/jp5v5NVdPH9gjGpD9', 'https://maps.app.goo.gl/9JuMioce8MazLrfE6', 'https://maps.app.goo.gl/rt3kgFSsZXm5NvnD9'];
+      const links_out = [];
+      for (const l of links) {
+        try {
+          const r = await window.__app.smart.search(`Look at this place ${l}`, null, 'en');
+          links_out.push({ l, name: r[0]?.name, sub: r[0]?.sub, at: r[0]?.lngLat, kind: r[0]?.kind });
+        } catch (e) {
+          links_out.push({ l, error: String(e?.message ?? e) });
+        }
+      }
+      const area = await window.__app.placesSvc.client.area('Jalan Bukit Bintang', '55100', 'Kuala Lumpur').catch((e) => String(e));
+      return { links: links_out, area };
+    });
+    report.info.search = sr;
+    const nearKL = (p) => Array.isArray(p) && Math.abs(p[0] - 101.69) < 0.4 && Math.abs(p[1] - 3.14) < 0.4;
+    check('a Google Maps share link opens in search', sr.links.some((x) => x.kind === 'coords' && nearKL(x.at)), sr.links);
+    check('a rough address finds its street from the places around you', Array.isArray(sr.area) && sr.area.some((a) => a.by === 'street' && nearKL([a.lon, a.lat])), sr.area);
+  } catch (e) {
+    check('a Google Maps share link opens in search', false, String(e?.message ?? e).slice(0, 300));
+  }
+
   // The demo drive: guidance, the radar pulse and the 3D junction view, as installed.
   await page.evaluate(() => window.__app.startDemo(true));
   await page.waitForFunction(() => window.__app.sim, null, { timeout: 30_000 });
@@ -333,6 +359,7 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     check('website mode runs the latest website build in the app', web.copy === 'web' && web.mode === 'web' && !!web.downloaded, web.downloaded);
     check('website mode keeps the account, the Android features and the offline maps address', web.signedIn && web.plugins.length === 0 && /offline\/manifest\.json$/.test(web.packUrl), web);
     await page.click('button[aria-label="Settings"]');
+    await page.click('dialog.settings [role="tab"][data-tab="app"]');
     await page.waitForSelector('dialog.settings #appMode');
     await page.$eval('dialog.settings #appMode', (el) => el.scrollIntoView({ block: 'center' }));
     await sleep(1200);
