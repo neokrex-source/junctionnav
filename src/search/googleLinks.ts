@@ -141,7 +141,11 @@ export async function resolveShortLink(
       if (parseMapsLink(cur)) return cur;
       continue;
     }
-    if (r.status >= 400) throw new Error(r.status === 404 ? 'The link was not found. It may have expired.' : `The link could not be opened (${r.status}).`);
+    if (r.status >= 400) {
+      const e = new Error(r.status === 404 || r.status === 410 ? 'The link was not found. It may have expired.' : `The link could not be opened (${r.status}).`);
+      if (r.status === 404 || r.status === 410) e.name = 'LinkGone';
+      throw e;
+    }
     if (r.url && parseMapsLink(r.url)) return r.url;
     // Some answers are a page that sends the browser on with a script; the link is in it.
     const inPage = r.body ? linkInPage(r.body) : null;

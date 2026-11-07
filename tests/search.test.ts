@@ -7,7 +7,7 @@ import { coordText, dmsText, parseCoordinates } from '../src/search/coords';
 import { findLink, isMapsLink, isShortMapsLink, linkInPage, parseMapsLink, resolveShortLink } from '../src/search/googleLinks';
 import type { Place, PlaceSearchEngine } from '../src/search/places';
 import { decodePlusCode, encodePlusCode, isFullPlusCode, parsePlusCode, recoverPlusCode } from '../src/search/pluscode';
-import { APPROX, SmartSearch } from '../src/search/smartSearch';
+import { APPROX, SmartSearch, splitPlaceName } from '../src/search/smartSearch';
 
 const KL: LngLat = [101.6869, 3.139];
 const close = (a: LngLat | null, b: LngLat, metres = 2) => {
@@ -346,8 +346,21 @@ describe('the search box', () => {
     close(r.lngLat, [101.7123, 3.1578]);
     expect(resolveLink).toHaveBeenCalledWith('https://maps.app.goo.gl/AbCd');
     const failing = new SmartSearch(() => base, { resolveLink: async () => Promise.reject(new Error('offline')) });
-    expect((await failing.search('https://maps.app.goo.gl/AbCd', null, 'en'))[0]).toMatchObject({ kind: 'note', sub: 'offline' });
+    expect((await failing.search('https://maps.app.goo.gl/AbCd', null, 'en'))[0]).toMatchObject({ kind: 'note', name: 'The link could not be opened', sub: 'Check the internet connection and try again.' });
+    const gone = new SmartSearch(() => base, { resolveLink: (u) => resolveShortLink(u, async () => ({ status: 404, headers: {} })) });
+    expect((await gone.search('https://maps.app.goo.gl/AbCd', null, 'en'))[0].sub).toMatch(/expired/);
     expect((await web.search('https://www.google.com/maps?cid=1', null, 'en'))[0].name).toBe('The link does not say where');
+  });
+
+  it('splits the address off a place name in a link', async () => {
+    expect(splitPlaceName('Chinatown Kuala Lumpur, Kuala Lumpur City Centre, Kuala Lumpur, Malaysia')).toEqual(['Chinatown Kuala Lumpur', 'Kuala Lumpur City Centre, Kuala Lumpur, Malaysia']);
+    expect(splitPlaceName('No 12, Jalan SS 2/24, 47300 Petaling Jaya')).toEqual(['No 12, Jalan SS 2/24', '47300 Petaling Jaya']);
+    expect(splitPlaceName('KLCC, Kuala Lumpur')).toEqual(['KLCC', 'Kuala Lumpur']);
+    expect(splitPlaceName('Suria KLCC')).toEqual(['Suria KLCC', '']);
+    const { base } = engine({});
+    const s = new SmartSearch(() => base);
+    const [r] = await s.search('https://www.google.com/maps/place/Chinatown+Kuala+Lumpur,+Kuala+Lumpur+City+Centre,+Kuala+Lumpur/data=!3d3.1428443!4d101.6968667', null, 'en');
+    expect(r).toMatchObject({ name: 'Chinatown Kuala Lumpur', sub: 'From the Google Maps link · Kuala Lumpur City Centre, Kuala Lumpur', kind: 'coords' });
   });
 
   it('looks a named link up on the map it was shown on', async () => {
@@ -400,6 +413,18 @@ describe('the search box', () => {
     expect(r).toHaveLength(1);
     expect(r[0].tag).toBe(APPROX);
     await expect(new SmartSearch(() => base).search('Jalan Alor', null, 'en')).rejects.toThrow('503');
+  });
+
+  it('speaks Malay and Japanese too', async () => {
+    const { base } = engine({});
+    const s = new SmartSearch(() => base, { resolveLink: null, area: async () => [{ by: 'postcode' as const, lon: 101.62, lat: 3.11, n: 3 }] });
+    expect((await s.search('3.139, 101.6869', null, 'ms'))[0].sub).toMatch(/^Koordinat · /);
+    expect((await s.search('3.139, 101.6869', null, 'ja'))[0].sub).toMatch(/^座標 · /);
+    expect((await s.search('https://maps.app.goo.gl/x', null, 'ms'))[0].name).toBe('Pautan pendek dibuka dalam aplikasi Android');
+    const [ms] = await s.search('47300 Petaling Jaya', null, 'ms');
+    expect(ms).toMatchObject({ name: 'Poskod 47300 Petaling Jaya', tag: 'Anggaran' });
+    const [ja] = await s.search('47300 Petaling Jaya', null, 'ja');
+    expect(ja).toMatchObject({ name: '郵便番号 47300 Petaling Jaya', tag: '付近' });
   });
 
   it('passes everything else straight on', async () => {

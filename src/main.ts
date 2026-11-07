@@ -30,7 +30,8 @@ import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
-import { attachSearch, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
+import { attachSearch, parseCoordinates, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
+import { parsePlusCode } from './search/pluscode';
 import { PlaceStore } from './state/places';
 import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
 import { themeFor } from './theme/palette';
@@ -51,7 +52,7 @@ import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
 import { BUILT_IN, NATIVE, PLACES_URL, TRAFFIC_NEWS_URL } from './platform';
 import { PlacesService } from './places/service';
-import { SmartSearch } from './search/smartSearch';
+import { SmartSearch, searchTexts } from './search/smartSearch';
 import { MergedPois, MergedSearch, hitToPlace, hitInfo } from './places/search';
 import { PlacesLayer, PLACES_LIMIT } from './map/placesLayer';
 import { placeSvg } from './ui/placeIcons';
@@ -807,15 +808,15 @@ class App {
     this.map.flyTo(p.lngLat, Math.max(15, this.map.map.getZoom()));
     this.setView('place');
     void this.fillPlaceInfo(p, () => this.place === p && this.view === 'place');
-    // Coordinates (typed, or from a link): what is there, under them.
-    if (p.kind === 'coords')
+    // A bare point (coordinates or a plus code, typed or from a link): what is there, under it.
+    if (p.kind === 'coords' && (parseCoordinates(p.name) || parsePlusCode(p.name)))
       void this.search
         .reverse(p.lngLat)
         .then((named) => {
           if (!named || this.place !== p) return;
           // The name, and the area when it is a plain address (not a place's own line of details).
           const area = named.sub && !named.sub.includes(' · ') ? `, ${named.sub}` : '';
-          p.sub = `${p.sub.split(' · ')[0]} · near ${named.name}${area}`;
+          p.sub = `${p.sub.split(' · ')[0]} · ${searchTexts(this.L).near(`${named.name}${area}`)}`;
           if (this.view === 'place') this.renderSheet();
         })
         .catch(() => {});
