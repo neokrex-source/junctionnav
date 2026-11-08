@@ -8,6 +8,7 @@ import { TomTomPlaceSearch } from '../tomtom/search';
 import { resetFamilies } from '../tomtom/http';
 import { runningCopy } from '../native/appMode';
 import { APK_URL, APP_VERSION, NATIVE, TRAFFIC_NEWS_URL } from '../platform';
+import { DEVELOPER, INSTITUTION } from '../credit';
 import { h } from './dom';
 import { offlinePanel } from './offlinePanel';
 import type { PlacesService } from '../places/service';
@@ -47,6 +48,8 @@ export interface SettingsOptions {
   places?: PlacesService;
   /** The tab to open on (else the one last open). */
   tab?: 'map' | 'drive' | 'traffic' | 'downloads' | 'app';
+  /** Your pins on the map: how many, and removing them all. */
+  pins?: { count: number; clear: () => void };
 }
 
 /** The settings tab last open, to come back to. */
@@ -320,6 +323,47 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           grp('Search (Photon)', photonUrl),
           h('div', { class: 'off-actions' }, reset),
         );
+    let pinsGrp: HTMLElement | null = null;
+    if (opts.pins) {
+      const pins = opts.pins;
+      const status = h('div', { class: 'pins-status' });
+      const clearBtn = h('button', { type: 'button', class: 'btn btn-ghost danger-text' }, 'Remove all pins') as HTMLButtonElement;
+      const show = (n: number) => {
+        status.textContent = n ? `${n} pin${n === 1 ? '' : 's'} on the map.` : 'No pins on the map. Drop one with the pin button or a long-press on the map.';
+        clearBtn.hidden = !n;
+      };
+      show(pins.count);
+      let armed = false;
+      clearBtn.addEventListener('click', () => {
+        // Twice to be sure: the first tap asks.
+        if (!armed) {
+          armed = true;
+          clearBtn.textContent = `Tap again to remove ${pins.count === 1 ? 'the pin' : `all ${pins.count}`}`;
+          window.setTimeout(() => {
+            armed = false;
+            clearBtn.textContent = 'Remove all pins';
+          }, 4000);
+          return;
+        }
+        pins.clear();
+        show(0);
+      });
+      pinsGrp = h(
+        'div',
+        { class: 'grp pins-grp' },
+        h('label', {}, 'Pins'),
+        status,
+        h('div', { class: 'hint' }, 'Each pin can have a direction of travel, so a route to it arrives on the right side of a divided road. Pins are kept in this browser with your account.'),
+        h('div', { class: 'off-actions' }, clearBtn),
+      );
+    }
+    const about = h(
+      'div',
+      { class: 'grp about' },
+      h('label', {}, 'About'),
+      h('div', { class: 'about-name' }, 'JunctionNav', h('span', { class: 'about-ver' }, APP_VERSION === 'dev' ? 'development build' : `version ${APP_VERSION}`)),
+      h('div', { class: 'about-credit' }, 'Developed by ', h('strong', {}, DEVELOPER), h('br'), INSTITUTION),
+    );
     const tabs = [
       {
         id: 'map',
@@ -329,12 +373,13 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           opts.preview ? null : grp('Custom style URL', customStyleUrl),
           opts.preview ? null : grp('MapTiler key', maptilerKey),
           h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
+          pinsGrp,
         ],
       },
       { id: 'drive', label: 'Drive', items: [voiceGrp, laneGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp, tollGrp] },
       { id: 'traffic', label: 'Traffic', items: [traffic] },
       { id: 'downloads', label: 'Downloads', items: [places?.el, pack?.el] },
-      { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers] },
+      { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers, about] },
     ]
       .map((t) => ({ ...t, items: t.items.filter((x): x is HTMLElement => !!x) }))
       .filter((t) => t.items.length);

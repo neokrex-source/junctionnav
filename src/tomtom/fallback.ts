@@ -30,6 +30,12 @@ export class FallbackRouter implements Router {
       return r;
     } catch (e) {
       if (aborted(e, signal)) throw e;
+      // Not a TomTom failure: it cannot arrive in the pin's direction, which OpenStreetMap can.
+      if ((e as Error).name === 'HeadingNotMet') {
+        const r = await this.secondary().route(req, signal);
+        r.note = 'To arrive in the direction set on the destination, these routes come from OpenStreetMap, without live traffic.';
+        return r;
+      }
       console.warn('[tomtom] routing:', (e as Error).message);
       this.gate.fail(e);
       const r = await this.secondary().route(req, signal);

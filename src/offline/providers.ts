@@ -41,7 +41,7 @@ export class OfflineRouter implements Router {
 
   async route(req: RouteRequest): Promise<RouteResult> {
     const coords = [req.origin, ...(req.via ?? []), req.destination];
-    const bearings = [req.bearing ?? null, ...(req.via ?? []).map((_, i) => req.viaBearings?.[i] ?? null), null];
+    const bearings = [req.bearing ?? null, ...(req.via ?? []).map((_, i) => req.viaBearings?.[i] ?? null), req.destinationBearing ?? null];
     const res = await this.client.route({ coords, bearings, avoid: { tolls: req.avoid?.tolls, motorways: req.avoid?.motorways } });
     if (res.code !== 'Ok') throw new Error(res.message ?? 'No route found in the offline data.');
     const routes = normalizeOsrm(res, 'Offline');

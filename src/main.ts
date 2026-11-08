@@ -4,7 +4,7 @@ import './styles/fonts.css';
 import './styles/app.css';
 import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTollProvider, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
-import { hashString, haversine, type LngLat } from './geo/geo';
+import { angleDiff, hashString, haversine, type LngLat } from './geo/geo';
 import { detectJunctions, JUNCTION_CORE, type JunctionCandidate } from './junction/detect';
 import { JunctionDataCache, OverpassProvider, type OsmData } from './junction/osmdata';
 import { GroundMapper, type GroundMap, type GroundSource } from './junction/groundMap';
@@ -36,7 +36,7 @@ import { PlaceStore } from './state/places';
 import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
 import { themeFor } from './theme/palette';
 import { Banner } from './ui/banner';
-import { h, toast } from './ui/dom';
+import { escapeHtml, h, toast } from './ui/dom';
 import { JunctionPanel } from './ui/junctionPanel';
 import { JvPreview } from './ui/jvPreview';
 import { openSettings } from './ui/settingsDialog';
@@ -53,6 +53,9 @@ import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedP
 import { BUILT_IN, NATIVE, PLACES_URL, TRAFFIC_NEWS_URL } from './platform';
 import { PlacesService } from './places/service';
 import { SmartSearch, searchTexts } from './search/smartSearch';
+import { PinStore, pinPlace, type Pin } from './pins/pins';
+import { PinsLayer, USER_PIN_SVG } from './map/pinsLayer';
+import { ARROW_SVG, compass, headingText, normHeading } from './pins/heading';
 import { MergedPois, MergedSearch, hitToPlace, hitInfo } from './places/search';
 import { PlacesLayer, PLACES_LIMIT } from './map/placesLayer';
 import { placeSvg } from './ui/placeIcons';
@@ -103,7 +106,9 @@ function clearsAfter(i: RouteIncident): boolean {
   return i.kind !== 'closure' && (i.delay >= 60 || i.magnitude === 'major' || i.magnitude === 'moderate') && i.endS - i.s >= 150;
 }
 const MAX_STOPS = 3;
-type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic';
+type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic' | 'pin';
+/** What the crosshair is placing: a new pin, one of your pins, or a point for the directions. */
+type PinTarget = { kind: 'new' } | { kind: 'pin'; id: string } | { kind: 'field'; field: 'origin' | 'destination' | number };
 type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
 
 const svg = (body: string) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
@@ -133,6 +138,8 @@ const ICON = {
   bolt: svg(`<path fill="currentColor" d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/>`),
   clock: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M12 7.5V12l3 2"/>`),
   pin: svg(`<path ${S} d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><circle ${S} cx="12" cy="9.5" r="2.5"/>`),
+  pinAdd: svg(`<path ${S} d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><path ${S} d="M12 6.6v5.8M9.1 9.5h5.8"/>`),
+  trash: svg(`<path ${S} d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"/>`),
   phone: svg(`<path ${S} d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>`),
   globe: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/>`),
   food: svg(`<path ${S} d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.5 1-3.5 4-3.5 7.5 0 2 1.5 3 3.5 3"/>`),
@@ -148,6 +155,20 @@ interface Trip {
 class App {
   settings: Settings = loadSettings();
   places = new PlaceStore();
+  pins = new PinStore();
+  private pinsLayer: PinsLayer | null = null;
+  /** Placing a pin, moving one, or choosing a point for the directions, with the crosshair. */
+  private pinEdit: {
+    target: PinTarget;
+    heading: number | null;
+    roads: { bearing: number; name: string | null }[];
+    address: Place | null;
+    back: View;
+    backPlace: Place | null;
+    seq: number;
+  } | null = null;
+  private pinUi: { addr: HTMLElement; chips: HTMLElement; readout: HTMLElement } | null = null;
+  private pinTimer = 0;
   view: View = 'browse';
   showSteps = false;
   navOverlay: NavOverlay = null;
@@ -324,6 +345,7 @@ class App {
     simPlay: h('button', { type: 'button' }, 'Pause') as HTMLButtonElement,
     simSpeed: h('button', { type: 'button' }, '×1') as HTMLButtonElement,
     fabs: h('div', { class: 'fabs' }),
+    pinCross: h('div', { class: 'pin-cross', hidden: true }),
     trafficChip: h('button', { class: 'traffic-chip card', type: 'button', hidden: true }) as HTMLButtonElement,
     trafficCard: h('div', { class: 'traffic-card card', hidden: true, role: 'status', 'aria-live': 'polite' }),
     tollChip: h('div', { class: 'toll-chip card', hidden: true, role: 'status' }),
@@ -526,6 +548,22 @@ class App {
       driving: () => this.view === 'nav',
     });
     this.placesLayer.setNight(this.nightNow);
+    // Your pins: tap for the card, drag to move.
+    this.pinsLayer = new PinsLayer(this.map.map, {
+      click: (id) => this.openPin(id),
+      moved: (id, at) => void this.movePin(id, at),
+    });
+    this.pins.onChange = () => this.renderPins();
+    this.renderPins();
+    // Placing a pin: the map moves under the crosshair; a tap brings that spot under it.
+    this.map.map.on('move', () => this.view === 'pin' && this.pinMoving());
+    this.map.map.on('moveend', () => this.view === 'pin' && this.pinSettled());
+    this.map.map.on('click', (ev) => {
+      if (this.view !== 'pin') return;
+      const pt = this.pinPoint();
+      this.map.map.panBy([ev.point.x - pt.x, ev.point.y - pt.y], { duration: 300 });
+    });
+    window.addEventListener('resize', () => this.view === 'pin' && this.placeCross());
     this.placesSvc.onChange(() => this.placesLayer.refresh(0));
     window.addEventListener('online', () => this.browseTraffic());
 
@@ -626,8 +664,13 @@ class App {
     const traffic = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Traffic', html: ICON.traffic, id: 'btn-traffic' });
     traffic.addEventListener('click', () => (this.view === 'traffic' ? this.setView('browse') : this.openTraffic()));
     if (!ARTIFACT) e.fabs.append(traffic);
-    e.fabs.append(locate);
+    // A pin: placed with the crosshair, kept on the map, with a direction of travel if you like.
+    const pinBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': this.tr('pinNew'), title: this.tr('pinNew'), html: ICON.pinAdd, id: 'btn-pin' });
+    pinBtn.addEventListener('click', () => this.openPinMode({ kind: 'new' }, null, null));
+    e.fabs.append(pinBtn, locate);
     e.app.append(e.fabs);
+    this.buildPinCross();
+    e.app.append(e.pinCross);
   }
 
   /** One-line note in the hosted preview explaining what is simulated. */
@@ -701,6 +744,7 @@ class App {
     if (d.home) out.push({ ...d.home, tag: this.tr('home') });
     if (d.work) out.push({ ...d.work, tag: this.tr('work') });
     for (const f of d.favourites.slice(0, 5)) out.push({ ...f, tag: '★' });
+    for (const pin of this.pins.list().slice(0, 5)) out.push({ ...pinPlace(pin), tag: this.tr('pin') });
     for (const r of d.recents.slice(0, 6)) out.push({ ...r, tag: this.tr('recent') });
     return out.map((p) => this.withDistance(p));
   }
@@ -711,11 +755,13 @@ class App {
     this.view = v;
     const e = this.el;
     const nav = v === 'nav';
-    e.topbar.hidden = nav;
+    const pinning = v === 'pin';
+    e.topbar.hidden = nav || pinning;
+    e.pinCross.hidden = !pinning;
     e.searchCard.hidden = v === 'directions';
     e.chips.hidden = v === 'directions' || v === 'place' || v === 'traffic';
     e.dir.hidden = v !== 'directions';
-    e.fabs.hidden = nav;
+    e.fabs.hidden = nav || pinning;
     e.guide.hidden = !nav;
     e.foot.hidden = !nav;
     e.sim.hidden = !(nav && this.sim);
@@ -728,6 +774,7 @@ class App {
     }
     if (v !== 'results' && !(nav && this.navOverlay === 'search')) this.map.setResultMarkers([], () => {});
     this.renderSheet();
+    this.renderPins();
   }
 
   private renderSheet() {
@@ -740,6 +787,7 @@ class App {
     else if (this.view === 'directions') this.showSteps ? this.renderStepsSheet(s) : this.renderRoutes(s);
     else if (this.view === 'nav' && this.navOverlay) this.renderNavOverlay(s);
     else if (this.view === 'traffic') this.renderTraffic(s, false);
+    else if (this.view === 'pin' && this.pinEdit) this.renderPinBar(s);
     else show = false;
     s.hidden = !show;
     s.scrollTop = 0;
@@ -804,7 +852,7 @@ class App {
 
   private openPlace(p: Place) {
     this.place = p;
-    this.map.setDestination(p.lngLat);
+    this.map.setDestination(p.pinId ? null : p.lngLat);
     this.map.flyTo(p.lngLat, Math.max(15, this.map.map.getZoom()));
     this.setView('place');
     void this.fillPlaceInfo(p, () => this.place === p && this.view === 'place');
@@ -833,6 +881,7 @@ class App {
 
   /** A place's icon on the map was tapped: its card (while driving, with Add as stop). */
   private async pickPlace(id: string) {
+    if (this.view === 'pin') return;
     const hit = await this.placesSvc.client.get(id).catch(() => null);
     if (!hit) return;
     const p = hitToPlace(hit, this.L);
@@ -902,6 +951,33 @@ class App {
       b.addEventListener('click', fn);
       return b;
     };
+    const pin = p.pinId ? this.pins.get(p.pinId) : undefined;
+    if (pin) {
+      // Your pin: its direction of travel, and moving or removing it.
+      const turn = h('button', { class: 'pill', type: 'button', html: `${ICON.directions}<span>${this.tr('editHeading')}</span>` });
+      turn.addEventListener('click', () => this.openPinMode({ kind: 'pin', id: pin.id }, pin.lngLat, pin.heading));
+      s.append(
+        h(
+          'div',
+          { class: 'pin-heading-row' },
+          h('span', { class: `phr-arrow${pin.heading == null ? ' is-any' : ''}`, html: ARROW_SVG, style: pin.heading == null ? '' : `transform: rotate(${pin.heading}deg)` }),
+          h('span', { class: 'phr-text' }, h('strong', {}, this.tr('heading')), h('span', {}, pin.heading == null ? this.tr('anyDirection') : headingText(pin.heading, this.L))),
+          turn,
+        ),
+      );
+      s.append(
+        h(
+          'div',
+          { class: 'pills' },
+          small(ICON.pin, this.tr('movePin'), () => this.openPinMode({ kind: 'pin', id: pin.id }, pin.lngLat, pin.heading)),
+          small(ICON.trash, this.tr('removePin'), () => {
+            this.pins.remove(pin.id);
+            toast(this.tr('pinRemoved'));
+            this.closePlace();
+          }),
+        ),
+      );
+    }
     s.append(
       h(
         'div',
@@ -932,24 +1008,347 @@ class App {
 
   private async pickOnMap(p: LngLat) {
     if (this.view === 'nav') return;
+    if (this.view === 'pin') {
+      // Placing a pin: bring the spot under the crosshair.
+      const at = this.map.map.project(p);
+      const pt = this.pinPoint();
+      this.map.map.panBy([at.x - pt.x, at.y - pt.y], { duration: 300 });
+      return;
+    }
     const pin: Place = { name: `${p[1].toFixed(5)}, ${p[0].toFixed(5)}`, sub: this.tr('droppedPin'), lngLat: p };
     if (this.view === 'directions') {
       this.trip.destination = pin;
       this.renderDirEditor();
       this.computeRoutes();
     } else {
-      this.openPlace(pin);
+      // A long-press drops one of your pins, kept on the map until you remove it.
+      this.openPlace(pinPlace(this.dropPin(p)));
+      return;
     }
     const named = await this.search.reverse(p);
     if (!named) return;
     const better = { ...named, lngLat: p };
-    if (this.place?.lngLat === p) {
-      this.place = better;
-      if (this.view === 'place') this.renderSheet();
-    }
     if (this.trip.destination?.lngLat === p) {
       this.trip.destination = better;
       if (this.view === 'directions') this.renderDirEditor();
+    }
+  }
+
+  /* ================================================================ pins */
+
+  private renderPins() {
+    if (!this.pinsLayer) return;
+    const editing = this.view === 'pin' && this.pinEdit?.target.kind === 'pin' ? this.pinEdit.target.id : null;
+    this.pinsLayer.render(editing ? this.pins.pins.filter((p) => p.id !== editing) : this.pins.pins, {
+      draggable: this.view === 'browse' || this.view === 'place' || this.view === 'results',
+      selected: this.view === 'place' ? (this.place?.pinId ?? null) : null,
+    });
+  }
+
+  /** A tap on one of your pins: its card, or in the directions, the destination. */
+  private openPin(id: string) {
+    const pin = this.pins.get(id);
+    if (!pin || this.view === 'nav' || this.view === 'pin') return;
+    if (this.view === 'directions') {
+      this.trip.destination = pinPlace(pin);
+      this.renderDirEditor();
+      this.computeRoutes();
+      return;
+    }
+    this.openPlace(pinPlace(pin));
+  }
+
+  /** A new pin, named once the address there is known. */
+  private dropPin(at: LngLat, heading: number | null = null, known: { name: string; sub: string } | null = null): Pin {
+    const pin = this.pins.add(at, known?.name ?? this.tr('droppedPin'), known?.sub ?? `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`, heading);
+    if (!known) void this.namePin(pin.id);
+    return pin;
+  }
+
+  private async namePin(id: string) {
+    const pin = this.pins.get(id);
+    if (!pin) return;
+    const [lng, lat] = pin.lngLat;
+    const named = await this.search.reverse([lng, lat]).catch(() => null);
+    const now = this.pins.get(id);
+    if (!named || !now || now.lngLat[0] !== lng || now.lngLat[1] !== lat) return;
+    this.pins.update(id, { name: named.name, sub: named.sub });
+    this.refreshPinCard(id);
+  }
+
+  private refreshPinCard(id: string) {
+    const pin = this.pins.get(id);
+    if (!pin || this.place?.pinId !== id) return;
+    this.place = pinPlace(pin);
+    if (this.view === 'place') this.renderSheet();
+  }
+
+  /** Dragged to a new spot: what is there now. */
+  private async movePin(id: string, at: LngLat) {
+    this.pins.update(id, { lngLat: at, name: this.tr('droppedPin'), sub: `${at[1].toFixed(5)}, ${at[0].toFixed(5)}` });
+    this.refreshPinCard(id);
+    await this.namePin(id);
+  }
+
+  /** The crosshair's spot on the map: the middle of what the pin sheet leaves free. */
+  private pinPoint(): { x: number; y: number } {
+    const box = this.el.map.getBoundingClientRect();
+    const sheet = this.el.sheet.hidden ? null : this.el.sheet.getBoundingClientRect();
+    if (sheet && this.wide()) {
+      const left = Math.max(0, sheet.right - box.left);
+      return { x: left + (box.width - left) / 2, y: box.height / 2 };
+    }
+    const free = sheet ? Math.max(120, Math.min(box.height, sheet.top - box.top)) : box.height;
+    return { x: box.width / 2, y: Math.max(70, free / 2 + 16) };
+  }
+
+  private placeCross() {
+    const pt = this.pinPoint();
+    const map = this.el.map.getBoundingClientRect();
+    const app = this.el.app.getBoundingClientRect();
+    this.el.pinCross.style.left = `${map.left - app.left + pt.x}px`;
+    this.el.pinCross.style.top = `${map.top - app.top + pt.y}px`;
+  }
+
+  /** The point under the crosshair. */
+  private pinAt(): LngLat {
+    const pt = this.pinPoint();
+    const ll = this.map.map.unproject([pt.x, pt.y]);
+    return [ll.lng, ll.lat];
+  }
+
+  /** The crosshair: the pin, and a ring around it to turn the direction of travel. */
+  private buildPinCross() {
+    const ring = h('div', { class: 'pc-ring', role: 'slider', tabindex: '0', 'aria-label': this.tr('heading'), 'aria-valuemin': '0', 'aria-valuemax': '359' });
+    ring.innerHTML =
+      '<svg viewBox="-80 -80 160 160" aria-hidden="true"><circle class="pc-band" r="60"/><circle class="pc-line" r="60"/>' +
+      '<g class="pc-handle"><circle class="pc-knob" cy="-60" r="15"/><path class="pc-tip" d="M0 -72 L8.5 -54 L0 -58.5 L-8.5 -54 Z"/></g></svg>';
+    this.el.pinCross.append(ring, h('div', { class: 'pc-pin', html: USER_PIN_SVG }), h('div', { class: 'pc-dot' }));
+    const angleAt = (ev: PointerEvent) => {
+      const r = ring.getBoundingClientRect();
+      const a = (Math.atan2(ev.clientX - (r.left + r.width / 2), r.top + r.height / 2 - ev.clientY) * 180) / Math.PI;
+      return a + this.map.map.getBearing();
+    };
+    let dragging = false;
+    const band = ring.querySelector('svg')!;
+    band.addEventListener('pointerdown', (ev) => {
+      if (!this.pinEdit || this.pinEdit.heading == null) return;
+      dragging = true;
+      band.setPointerCapture(ev.pointerId);
+      this.setPinHeading(angleAt(ev));
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    band.addEventListener('pointermove', (ev) => dragging && this.setPinHeading(angleAt(ev)));
+    const end = () => (dragging = false);
+    band.addEventListener('pointerup', end);
+    band.addEventListener('pointercancel', end);
+    ring.addEventListener('keydown', (ev) => {
+      const st = this.pinEdit;
+      if (!st) return;
+      const step = ev.shiftKey ? 15 : 5;
+      if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') this.setPinHeading((st.heading ?? this.map.map.getBearing()) - step);
+      else if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') this.setPinHeading((st.heading ?? this.map.map.getBearing()) + step);
+      else return;
+      ev.preventDefault();
+    });
+  }
+
+  /**
+   * Places a pin with the crosshair: a new one, one of yours (to move it or set its direction), or
+   * a point for the directions. The map moves under the crosshair; the sheet offers the direction
+   * of travel along the road there (both ways), any direction, or turning it by hand.
+   */
+  private openPinMode(target: PinTarget, start: LngLat | null, heading: number | null) {
+    if (this.view === 'nav') return;
+    this.pinEdit = { target, heading: heading == null ? null : normHeading(heading), roads: [], address: null, back: this.view === 'pin' ? 'browse' : this.view, backPlace: this.place, seq: 0 };
+    this.setView('pin');
+    this.placeCross();
+    const m = this.map.map;
+    const pt = this.pinPoint();
+    if (start) {
+      m.jumpTo({ center: start, zoom: Math.max(m.getZoom(), 17) });
+      const at = m.project(start);
+      m.panBy([at.x - pt.x, at.y - pt.y], { duration: 0 });
+    } else if (m.getZoom() < 15) {
+      m.easeTo({ zoom: 16, around: m.unproject([pt.x, pt.y]), duration: 400 });
+    }
+    this.paintPinArrow();
+    this.pinSettled();
+  }
+
+  private pinMoving() {
+    this.paintPinArrow();
+    if (this.pinUi && this.pinEdit && !this.pinEdit.address) {
+      const at = this.pinAt();
+      this.pinUi.addr.textContent = `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`;
+    }
+    if (this.pinEdit) this.pinEdit.address = null;
+  }
+
+  /** The map has stopped: the roads under the crosshair, and (a moment later) what is there. */
+  private pinSettled() {
+    const st = this.pinEdit;
+    if (!st) return;
+    const seq = ++st.seq;
+    this.refreshPinBar();
+    // The roads are read from the map's drawing: once it has drawn the spot.
+    const roads = () => {
+      if (!this.pinEdit || this.pinEdit.seq !== seq) return;
+      this.pinEdit.roads = this.map.roadDirections(this.pinPoint());
+      this.refreshPinBar();
+    };
+    this.map.map.once('idle', roads);
+    window.setTimeout(roads, 700);
+    const at = this.pinAt();
+    clearTimeout(this.pinTimer);
+    this.pinTimer = window.setTimeout(async () => {
+      const named = await this.search.reverse(at).catch(() => null);
+      if (!this.pinEdit || this.pinEdit.seq !== seq) return;
+      this.pinEdit.address = named ? { ...named, lngLat: at } : null;
+      this.refreshPinBar();
+    }, 450);
+  }
+
+  private setPinHeading(hd: number | null) {
+    if (!this.pinEdit) return;
+    this.pinEdit.heading = hd == null ? null : normHeading(hd);
+    this.paintPinArrow();
+    this.refreshPinBar();
+  }
+
+  private paintPinArrow() {
+    const st = this.pinEdit;
+    const cross = this.el.pinCross;
+    const on = st?.heading != null;
+    cross.classList.toggle('has-heading', on);
+    const ring = cross.querySelector('.pc-ring');
+    if (on && st) {
+      cross.style.setProperty('--pin-rot', `${st.heading! - this.map.map.getBearing()}deg`);
+      ring?.setAttribute('aria-valuenow', String(st.heading));
+      ring?.setAttribute('aria-valuetext', headingText(st.heading!, this.L));
+    } else {
+      ring?.removeAttribute('aria-valuenow');
+      ring?.setAttribute('aria-valuetext', this.tr('anyDirection'));
+    }
+  }
+
+  private renderPinBar(s: HTMLElement) {
+    const st = this.pinEdit!;
+    const tgt = st.target;
+    const title = tgt.kind === 'new' ? this.tr('pinNew') : tgt.kind === 'pin' ? this.tr('movePin') : this.tr('chooseOnMap');
+    s.append(this.sheetHead(title, () => this.closePinMode(false)));
+    const addr = h('p', { class: 'pin-addr', 'aria-live': 'polite' });
+    const chips = h('div', { class: 'pills pin-headings', role: 'group', 'aria-label': this.tr('heading') });
+    const readout = h('p', { class: 'pin-readout' });
+    const confirm =
+      tgt.kind === 'new'
+        ? this.tr('placePin')
+        : tgt.kind === 'pin'
+          ? this.tr('savePin')
+          : tgt.field === 'origin'
+            ? this.tr('setStart')
+            : tgt.field === 'destination'
+              ? this.tr('setDest')
+              : this.tr('setStop', { n: String(tgt.field + 1) });
+    const ok = h('button', { class: 'btn btn-primary', type: 'button', id: 'pin-confirm', html: `${ICON.pin}<span>${confirm}</span>` });
+    ok.addEventListener('click', () => this.closePinMode(true));
+    const cancel = h('button', { class: 'btn btn-ghost', type: 'button' }, this.tr('cancel'));
+    cancel.addEventListener('click', () => this.closePinMode(false));
+    s.append(h('p', { class: 'pin-hint' }, this.tr('pinHint')), addr, h('div', { class: 'pin-hd-label' }, this.tr('heading')), chips, readout, h('div', { class: 'sheet-row' }, ok, cancel));
+    this.pinUi = { addr, chips, readout };
+    this.refreshPinBar();
+  }
+
+  private refreshPinBar() {
+    const st = this.pinEdit;
+    const ui = this.pinUi;
+    if (!st || !ui || this.view !== 'pin') return;
+    const at = this.pinAt();
+    const coords = `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`;
+    ui.addr.textContent = st.address ? `${st.address.name} · ${coords}` : coords;
+    ui.chips.innerHTML = '';
+    const bearingNow = this.map.map.getBearing();
+    const chip = (label: string, pressed: boolean, fn: () => void, arrow: number | null, cls = '') => {
+      const b = h('button', {
+        class: `pill toggle-pill ${cls}`.trim(),
+        type: 'button',
+        'aria-pressed': String(pressed),
+        html: (arrow == null ? '' : `<span class="ph-chip-arrow" style="transform: rotate(${arrow - bearingNow}deg)">${ARROW_SVG}</span>`) + `<span>${escapeHtml(label)}</span>`,
+      });
+      b.addEventListener('click', fn);
+      ui.chips.append(b);
+    };
+    chip(this.tr('anyDirection'), st.heading == null, () => this.setPinHeading(null), null);
+    let onRoad = false;
+    for (const r of st.roads) {
+      const match = st.heading != null && Math.abs(angleDiff(st.heading, r.bearing)) < 4;
+      onRoad ||= match;
+      chip(`${compass(r.bearing, this.L)}${r.name ? ` · ${r.name}` : ''}`, match, () => this.setPinHeading(r.bearing), r.bearing, 'is-road');
+    }
+    chip(
+      this.tr('turnByHand'),
+      st.heading != null && !onRoad,
+      () => {
+        if (this.pinEdit?.heading == null) this.setPinHeading(this.map.map.getBearing());
+        (this.el.pinCross.querySelector('.pc-ring') as HTMLElement | null)?.focus();
+      },
+      null,
+    );
+    ui.readout.textContent = st.heading == null ? '' : `${this.tr('headingTo', { dir: headingText(st.heading, this.L) })}. ${this.tr('headingHint')}.`;
+  }
+
+  /** Done (or cancelled): the pin, the pin moved, or the point in the directions. */
+  private closePinMode(confirm: boolean) {
+    const st = this.pinEdit;
+    if (!st) return;
+    const at = this.pinAt();
+    clearTimeout(this.pinTimer);
+    this.pinEdit = null;
+    this.pinUi = null;
+    if (!confirm) {
+      if (st.back === 'place' && st.backPlace) {
+        this.place = st.backPlace.pinId && this.pins.get(st.backPlace.pinId) ? pinPlace(this.pins.get(st.backPlace.pinId)!) : st.backPlace;
+        this.setView('place');
+      } else this.setView(st.back);
+      if (st.back === 'directions') this.renderDirEditor();
+      return;
+    }
+    const coords = `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`;
+    const known = st.address ? { name: st.address.name, sub: st.address.sub } : null;
+    const tgt = st.target;
+    if (tgt.kind === 'new') {
+      this.openPlace(pinPlace(this.dropPin(at, st.heading, known)));
+    } else if (tgt.kind === 'pin') {
+      const before = this.pins.get(tgt.id);
+      const moved = !!before && haversine(before.lngLat, at) > 3;
+      this.pins.update(tgt.id, { heading: st.heading, ...(moved ? { lngLat: at, ...(known ?? { name: this.tr('droppedPin'), sub: coords }) } : {}) });
+      if (moved && !known) void this.namePin(tgt.id);
+      const pin = this.pins.get(tgt.id);
+      if (pin) this.openPlace(pinPlace(pin));
+      else this.setView('browse');
+    } else {
+      const place: Place = { name: known?.name ?? coords, sub: known?.sub ?? this.tr('droppedPin'), lngLat: at, ...(st.heading != null ? { bearing: st.heading } : {}) };
+      const set = (p: Place) => {
+        if (tgt.field === 'origin') this.trip.origin = p;
+        else if (tgt.field === 'destination') this.trip.destination = p;
+        else this.trip.stops[tgt.field] = p;
+      };
+      set(place);
+      this.setView('directions');
+      this.renderDirEditor();
+      this.computeRoutes();
+      // Named once the address there is known (the route stays as it is).
+      if (!known)
+        void this.search
+          .reverse(at)
+          .then((named) => {
+            const now = tgt.field === 'origin' ? this.trip.origin : tgt.field === 'destination' ? this.trip.destination : this.trip.stops[tgt.field];
+            if (!named || now !== place) return;
+            set({ ...place, name: named.name, sub: named.sub });
+            if (this.view === 'directions') this.renderDirEditor();
+          })
+          .catch(() => {});
     }
   }
 
@@ -997,6 +1396,7 @@ class App {
   private setUser(user: User | null, fresh: boolean) {
     this.user = user;
     this.places.useScope(user?.id ?? null);
+    this.pins.useScope(user?.id ?? null);
     this.signedIn = true;
     if (fresh && user) toast(`Welcome, ${user.name.split(/\s+/)[0]}`, 2500);
     const todo = this.afterSignIn.splice(0);
@@ -1016,6 +1416,7 @@ class App {
     this.user = null;
     this.signedIn = false;
     this.places.useScope(null);
+    this.pins.useScope(null);
     const screen = (this.authScreen ??= new AuthScreen(this.auth, { allowGuest: !AUTH_REQUIRED }));
     this.setUser(await screen.open(), true);
   }
@@ -1149,10 +1550,24 @@ class App {
       this.computeRoutes();
     });
     const fields = h('div', { class: 'dir-fields' });
-    const field = (id: string, value: Place | null, placeholder: string, marker: string, onPick: (p: Place | null) => void, onRemove?: () => void) => {
+    const field = (
+      id: string,
+      key: 'origin' | 'destination' | number,
+      value: Place | null,
+      placeholder: string,
+      marker: string,
+      onPick: (p: Place | null) => void,
+      onRemove?: () => void,
+    ) => {
       const input = h('input', { id, type: 'text', autocomplete: 'off', placeholder, value: value?.name ?? '' }) as HTMLInputElement;
       const list = h('ul', { class: 'suggest', hidden: true });
       const row = h('div', { class: 'dir-field' }, h('span', { class: `dir-mark ${marker}`, 'aria-hidden': 'true' }), input);
+      // The direction of travel there, when set (a pin's heading).
+      if (value?.bearing != null)
+        row.append(h('span', { class: 'dir-heading', role: 'img', title: headingText(value.bearing, this.L), 'aria-label': this.tr('headingTo', { dir: headingText(value.bearing, this.L) }), html: ARROW_SVG, style: `transform: rotate(${value.bearing}deg)` }));
+      const onMap = h('button', { class: 'mini dir-onmap', type: 'button', html: ICON.pin, 'aria-label': this.tr('chooseOnMap'), title: this.tr('chooseOnMap') });
+      onMap.addEventListener('click', () => this.openPinMode({ kind: 'field', field: key }, value?.lngLat ?? null, value?.bearing ?? null));
+      row.append(onMap);
       if (onRemove) {
         const rm = h('button', { class: 'mini', type: 'button', html: ICON.close, 'aria-label': 'Remove stop' });
         rm.addEventListener('click', onRemove);
@@ -1169,13 +1584,13 @@ class App {
       fields.append(row, list);
       return input;
     };
-    field('from', this.trip.origin, this.tr('myLocation'), 'is-origin', (p) => {
+    field('from', 'origin', this.trip.origin, this.tr('myLocation'), 'is-origin', (p) => {
       this.trip.origin = p;
       if (!p) (document.getElementById('from') as HTMLInputElement).value = '';
       this.computeRoutes();
     });
     this.trip.stops.forEach((st, i) => {
-      field(`stop${i}`, st, `${this.tr('stop')} ${i + 1}`, 'is-stop', (p) => {
+      field(`stop${i}`, i, st, `${this.tr('stop')} ${i + 1}`, 'is-stop', (p) => {
         this.trip.stops[i] = p;
         this.computeRoutes();
       }, () => {
@@ -1184,7 +1599,7 @@ class App {
         this.computeRoutes();
       });
     });
-    field('to', this.trip.destination, this.tr('search'), 'is-dest', (p) => {
+    field('to', 'destination', this.trip.destination, this.tr('search'), 'is-dest', (p) => {
       this.trip.destination = p;
       this.computeRoutes();
     });
@@ -1245,8 +1660,8 @@ class App {
     const ctrl = new AbortController();
     this.routeAbort = ctrl;
     this.routesLoading = true;
-    this.renderSheet();
-    this.map.setDestination(dest.lngLat);
+    if (this.view === 'directions') this.renderSheet();
+    this.map.setDestination(dest.lngLat, dest.bearing ?? null);
     try {
       const res = await this.router.route(
         {
@@ -1255,6 +1670,7 @@ class App {
           via: this.trip.stops.filter((p): p is Place => !!p).map((p) => p.lngLat),
           viaBearings: this.trip.stops.filter((p): p is Place => !!p).map((p) => p.bearing ?? null),
           bearing: this.trip.origin?.bearing ?? null,
+          destinationBearing: dest.bearing ?? null,
           alternatives: true,
           avoid: this.settings.avoid,
           offerTollFree: !this.settings.avoid.tolls,
@@ -1269,7 +1685,8 @@ class App {
       this.planTraffic.clear();
       void this.loadPlanTraffic(this.routes, ctrl.signal);
       this.map.showRoutes(this.routes, 0);
-      this.map.fit(routeBounds(this.routes), this.overviewPadding());
+      // Not while a point is being placed on the map: the map stays where it is.
+      if ((this.view as View) === 'directions') this.map.fit(routeBounds(this.routes), this.overviewPadding());
       if (!this.demo) this.places.addRecent(dest);
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
@@ -1279,7 +1696,8 @@ class App {
     } finally {
       if (this.routeAbort === ctrl) this.routesLoading = false;
     }
-    this.renderSheet();
+    // Placing a point meanwhile: its sheet stays.
+    if ((this.view as View) !== 'pin') this.renderSheet();
   }
 
   private selectRoute(idx: number) {
@@ -1350,7 +1768,9 @@ class App {
     const go = h('button', { class: 'btn btn-primary', type: 'button' }, this.tr('start'));
     go.addEventListener('click', () => this.startNav(false));
     const src = this.routeSourceText();
-    s.append(list, src ? h('p', { class: 'routes-src' }, src) : '', h('div', { class: 'sheet-row' }, steps, sim, go));
+    const hd = this.trip.destination?.bearing;
+    const arrive = hd != null ? h('p', { class: 'routes-src routes-heading', html: `<span class="ph-chip-arrow" style="transform: rotate(${hd}deg)">${ARROW_SVG}</span><span>${escapeHtml(this.tr('arriveHeading', { dir: headingText(hd, this.L) }))}</span>` }) : '';
+    s.append(list, arrive, src ? h('p', { class: 'routes-src' }, src) : '', h('div', { class: 'sheet-row' }, steps, sim, go));
   }
 
   private toggleSteps(on: boolean) {
@@ -2084,7 +2504,7 @@ class App {
     if (planned && Date.now() - planned.at < 5 * 60_000 && !simulate) this.traffic.seed({ travelTime: planned.travelTime, delay: planned.delay, fromS: 0, at: planned.at, base: routeTimeFrom(route, 0) });
     this.map.showRoutes([route], 0);
     this.paintJunctions();
-    this.map.setDestination(this.navDest);
+    this.map.setDestination(this.navDest, this.trip.destination?.bearing ?? null);
     this.source?.stop();
     if (simulate) {
       this.sim = new Simulator(route, this.settings.simSpeed);
@@ -2464,7 +2884,7 @@ class App {
     this.map.showRoutes([r], 0);
     this.paintJunctions();
     this.map.setProgress(startS);
-    if (this.navDest) this.map.setDestination(this.navDest);
+    if (this.navDest) this.map.setDestination(this.navDest, this.trip.destination?.bearing ?? null);
     this.activeJ = null;
     this.lastStepIdx = -1;
     this.prefetch(startS);
@@ -2514,7 +2934,7 @@ class App {
     this.altsAt = Date.now();
     this.altsFromS = p.s;
     this.router
-      .route({ origin: fix.lngLat, destination: this.navDest, bearing: fix.heading, alternatives: true, avoid: this.settings.avoid })
+      .route({ origin: fix.lngLat, destination: this.navDest, bearing: fix.heading, destinationBearing: this.trip.destination?.bearing ?? null, alternatives: true, avoid: this.settings.avoid })
       .then((res) => {
         if (this.engine.route === route) this.setAlts(distinctAlternatives(route, res.routes));
       })
@@ -2568,7 +2988,9 @@ class App {
         origin: fix.lngLat,
         destination: this.navDest,
         via: this.remainingStops().map((p) => p.lngLat),
+        viaBearings: this.remainingStops().map((p) => p.bearing ?? null),
         bearing: fix.heading,
+        destinationBearing: this.trip.destination?.bearing ?? null,
         avoid: this.settings.avoid,
       });
       const r = res.routes[0];
@@ -3150,6 +3572,7 @@ class App {
       preview: ARTIFACT,
       pack: ARTIFACT ? undefined : this.offline,
       places: ARTIFACT ? undefined : this.placesSvc,
+      pins: { count: this.pins.pins.length, clear: () => this.pins.clear() },
       account: u
         ? {
             name: u.name,

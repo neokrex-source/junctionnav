@@ -9,7 +9,7 @@
  * each maneuver on the line, works out its OSRM-style type and direction, and puts the section
  * information where the rest of the app looks for it (intersection classes and lanes).
  */
-import { angleDiff, Polyline, type LngLat } from '../geo/geo';
+import { angleDiff, destination, Polyline, type LngLat } from '../geo/geo';
 import { avoidList, labelRoutes, sameRoute } from '../routing/osrm';
 import type { Avoid, Intersection, Lane, Leg, ManeuverType, Modifier, Route, RouteRequest, RouteResult, Router, Step } from '../routing/types';
 import { TomTomError, ttEither, TT_BASE } from './http';
@@ -396,6 +396,49 @@ function toRoute(r: TtRoute, provider: string): Route {
   };
 }
 
+/* ------------------------------------------------------------------ arriving in a direction */
+
+/** The direction a route arrives in, over its last 25 m. */
+export function arrivalBearing(r: Route): number {
+  const len = r.line.length;
+  return r.line.bearingAt(Math.max(0, len - 25), Math.min(25, Math.max(len, 1)));
+}
+
+/** The route arrives travelling roughly in that direction (a pin's heading). */
+export function arrivesHeading(r: Route, heading: number): boolean {
+  return Math.abs(angleDiff(arrivalBearing(r), heading)) < 75;
+}
+
+/** TomTom cannot plan an arrival in this direction: the OpenStreetMap router can (bearings). */
+export class HeadingNotMet extends Error {
+  constructor(readonly heading: number) {
+    super('TomTom could not plan an arrival in that direction.');
+    this.name = 'HeadingNotMet';
+  }
+}
+
+/**
+ * Folds the approach point (an extra stop just before the destination, behind it along the
+ * heading) back into the route: no "stop reached" there, one leg to the destination.
+ */
+export function dropApproach(r: Route): Route {
+  let k = -1;
+  r.steps.forEach((st, i) => {
+    if (st.waypoint != null && (k < 0 || st.waypoint > r.steps[k].waypoint!)) k = i;
+  });
+  if (k > 0) {
+    r.steps[k - 1].distance += r.steps[k].distance;
+    r.steps[k - 1].duration += r.steps[k].duration;
+    r.steps.splice(k, 1);
+  }
+  if (r.legs.length >= 2) {
+    const a = r.legs[r.legs.length - 2];
+    const b = r.legs[r.legs.length - 1];
+    r.legs.splice(r.legs.length - 2, 2, { distance: a.distance + b.distance, duration: a.duration + b.duration, endS: b.endS });
+  }
+  return r;
+}
+
 /* ------------------------------------------------------------------ the router */
 
 const AVOID_TT: Record<keyof Avoid, string> = { tolls: 'tollRoads', motorways: 'motorways', ferries: 'ferries' };
@@ -441,20 +484,43 @@ export class TomTomRouter implements Router {
   async route(req: RouteRequest, signal?: AbortSignal): Promise<RouteResult> {
     const wanted = avoidList(req.avoid);
     const warnings: string[] = [];
+    const heading = req.destinationBearing != null && Number.isFinite(req.destinationBearing) ? req.destinationBearing : null;
     // A toll-free option alongside, when tolls are allowed, so it can be offered.
     const tollFree =
       req.offerTollFree && !wanted.includes('tolls') ? this.fetch(req, ['tolls', ...wanted], 0, signal).catch(() => null) : null;
-    const routes = await this.fetch(req, wanted, req.alternatives ? 2 : 0, signal);
+    let routes = await this.fetch(req, wanted, req.alternatives ? 2 : 0, signal);
+    if (heading != null) routes = await this.arriving(req, routes, heading, wanted, signal);
     // TomTom avoids where it can; say so when a route still has to use what was to be avoided.
     for (const r of routes) r.avoidApplied = wanted.filter((k) => (k === 'tolls' ? !r.hasToll : k === 'motorways' ? !r.hasMotorway : !r.hasFerry));
     const missed = wanted.filter((k) => routes.every((r) => !r.avoidApplied.includes(k)));
     if (missed.length) warnings.push(`No route avoids ${missed.map((k) => AVOID_NAME[k]).join(' and ')}. Showing routes that use them.`);
-    const tf = tollFree ? await tollFree : null;
+    const tf = (tollFree ? await tollFree : null)?.filter((r) => heading == null || arrivesHeading(r, heading)) ?? null;
     if (tf?.[0] && !tf[0].hasToll && routes.every((r) => r.hasToll) && !routes.some((r) => sameRoute(r, tf[0]))) {
       tf[0].avoidApplied = ['tolls', ...wanted.filter((k) => k !== 'tolls')];
       routes.push(tf[0]);
     }
     labelRoutes(routes);
     return { routes, warnings };
+  }
+
+  /**
+   * Routes that arrive in the pin's direction. TomTom has no setting for it, so: the routes that
+   * already do; else one through an approach point 45 m before the pin along the heading (folded
+   * back into one leg), if that arrives right without a long detour; else HeadingNotMet, and the
+   * OpenStreetMap router, which takes the direction itself, plans it.
+   */
+  private async arriving(req: RouteRequest, routes: Route[], heading: number, wanted: (keyof Avoid)[], signal?: AbortSignal): Promise<Route[]> {
+    const good = routes.filter((r) => arrivesHeading(r, heading));
+    if (good.length) return good;
+    const approach = destination(req.destination, (heading + 180) % 360, 45);
+    const via = [...(req.via ?? []), approach];
+    const viaBearings = [...(req.via ?? []).map((_, i) => req.viaBearings?.[i] ?? null), heading];
+    const [r] = await this.fetch({ ...req, via, viaBearings, alternatives: false }, wanted, 0, signal).catch((e) => {
+      if ((e as Error).name === 'AbortError') throw e;
+      return [] as Route[];
+    });
+    const plain = routes[0];
+    if (r && arrivesHeading(dropApproach(r), heading) && (!plain || r.distance < plain.distance * 1.3 + 3000)) return [r];
+    throw new HeadingNotMet(heading);
   }
 }

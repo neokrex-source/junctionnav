@@ -20,6 +20,8 @@ export interface Place {
   info?: PlaceInfo;
   /** The place in the places around you, for its details when they are not here yet. */
   placeId?: string;
+  /** One of your pins on the map (src/pins/pins.ts). */
+  pinId?: string;
 }
 
 interface PhotonFeature {

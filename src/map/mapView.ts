@@ -2,7 +2,8 @@
 import { DAY, type Theme } from '../theme/palette';
 import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type StyleSpecification } from 'maplibre-gl';
 import type { Feature, FeatureCollection, LineString } from 'geojson';
-import { angleDiff, haversine, type LngLat } from '../geo/geo';
+import { angleDiff, bearing, haversine, type LngLat } from '../geo/geo';
+import { headingArrow } from './pinsLayer';
 import type { Route, Step } from '../routing/types';
 import { fallbackStyle } from './styles';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
@@ -207,6 +208,7 @@ export class MapView {
   readonly map: maplibregl.Map;
   private puck: maplibregl.Marker;
   private dest: maplibregl.Marker;
+  private destArrow: maplibregl.Marker | null = null;
   private routes: Route[] = [];
   private selected = 0;
   private progressFrac = 0;
@@ -1143,13 +1145,76 @@ export class MapView {
     return 'inside';
   }
 
-  setDestination(p: LngLat | null) {
+  setDestination(p: LngLat | null, heading: number | null = null) {
     if (!p) {
       this.dest.remove();
+      this.destArrow?.remove();
+      this.destArrow = null;
       return;
     }
     this.dest.setLngLat(p);
     if (!this.dest.getElement().isConnected) this.dest.addTo(this.map);
+    // The direction of arrival, as an arrow on the ground beside the pin.
+    if (heading == null) {
+      this.destArrow?.remove();
+      this.destArrow = null;
+    } else {
+      if (!this.destArrow) this.destArrow = headingArrow(heading, 'pin-heading is-dest').setLngLat(p).addTo(this.map);
+      this.destArrow.setLngLat(p).setRotation(heading);
+    }
+  }
+
+  /**
+   * The roads at a point on screen, from the map's own drawing: the direction of the nearest one
+   * both ways (or the one way a one-way street allows), with its name when the map has it.
+   */
+  roadDirections(pt: { x: number; y: number }, radius = 26): { bearing: number; name: string | null }[] {
+    let feats: maplibregl.MapGeoJSONFeature[] = [];
+    try {
+      feats = this.map.queryRenderedFeatures([
+        [pt.x - radius, pt.y - radius],
+        [pt.x + radius, pt.y + radius],
+      ]);
+    } catch {
+      return [];
+    }
+    const ROAD = /^(transportation|roads|road|street|streets)$/;
+    const SKIP = /^(rail|transit|path|pedestrian|footway|cycleway|track|bridleway|steps|ferry|aerialway|other)$/;
+    let best: { d: number; a: LngLat; b: LngLat; name: string | null; oneway: number } | null = null;
+    for (const f of feats) {
+      const src = f.sourceLayer ?? '';
+      // Vector tiles name their road layer; GeoJSON roads (the demo map) are known by the style layer.
+      const road = src ? ROAD.test(src) : /road|street|highway|motorway|trunk|link/.test(f.layer?.id ?? '');
+      if (!road || (f.geometry.type !== 'LineString' && f.geometry.type !== 'MultiLineString')) continue;
+      const cls = String(f.properties?.class ?? f.properties?.kind ?? '');
+      if (SKIP.test(cls)) continue;
+      const lines = f.geometry.type === 'LineString' ? [f.geometry.coordinates as LngLat[]] : (f.geometry.coordinates as LngLat[][]);
+      for (const line of lines) {
+        for (let i = 0; i < line.length - 1; i++) {
+          const a = this.map.project(line[i] as [number, number]);
+          const b = this.map.project(line[i + 1] as [number, number]);
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const len2 = dx * dx + dy * dy;
+          if (len2 < 1) continue;
+          const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2));
+          const d = Math.hypot(a.x + t * dx - pt.x, a.y + t * dy - pt.y);
+          if (d > radius || (best && d >= best.d)) continue;
+          const ow = Number(f.properties?.oneway ?? 0);
+          const nm = f.properties?.name ?? f.properties?.['name:latin'] ?? f.properties?.name_en ?? null;
+          best = { d, a: line[i], b: line[i + 1], name: nm ? String(nm) : null, oneway: ow === 1 || ow === -1 ? ow : 0 };
+        }
+      }
+    }
+    if (!best) return [];
+    const fwd = bearing(best.a, best.b);
+    const back = (fwd + 180) % 360;
+    if (best.oneway === 1) return [{ bearing: fwd, name: best.name }];
+    if (best.oneway === -1) return [{ bearing: back, name: best.name }];
+    return [
+      { bearing: fwd, name: best.name },
+      { bearing: back, name: best.name },
+    ];
   }
 
   /** Numbered pins for search results. */

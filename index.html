@@ -6,6 +6,7 @@
     <title>JunctionNav</title>
     <meta name="description" content="Turn-by-turn navigation with junction views for ramps, forks, exits and divider splits." />
     <meta name="theme-color" content="#7c3aed" />
+    <meta name="author" content="Dr. Mohd Anuaruddin Ahmadon, Universiti Teknologi PETRONAS" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -29,6 +30,11 @@
       #splash .sp-head { fill: #c084fc; opacity: 0; transform-origin: 360px 160px; animation: sp-pop 0.3s 0.95s ease-out forwards; }
       #splash .sp-name { font: 700 48px/1 "Saira Condensed", "Arial Narrow", system-ui, sans-serif; letter-spacing: 0.02em; margin-top: 6px; }
       #splash .sp-tag { font-size: 16px; font-weight: 500; opacity: 0.86; max-width: 30ch; }
+      #splash .sp-credit {
+        position: absolute; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+        font-size: 13px; line-height: 1.45; opacity: 0.72; letter-spacing: 0.01em;
+      }
+      #splash .sp-credit b { font-weight: 600; opacity: 1; }
       /* Lane markings sliding past while the app loads. */
       #splash .sp-lane {
         width: 132px; height: 6px; margin-top: 18px; border-radius: 3px;
@@ -57,6 +63,7 @@
       <div class="sp-name">JunctionNav</div>
       <div class="sp-tag">See every split before you reach it.</div>
       <div class="sp-lane" aria-hidden="true"></div>
+      <div class="sp-credit">Developed by <b>Dr. Mohd Anuaruddin Ahmadon</b><br />Universiti Teknologi PETRONAS</div>
     </div>
     <noscript>JunctionNav needs JavaScript.</noscript>
     <script type="module" src="/src/main.ts"></script>

@@ -83,9 +83,9 @@ export class OsrmRouter implements Router {
     });
     const ok = (b: number | null | undefined): b is number => b != null && Number.isFinite(b);
     const viaB = (req.via ?? []).map((_, i) => req.viaBearings?.[i]);
-    if (ok(req.bearing) || viaB.some(ok)) {
+    if (ok(req.bearing) || viaB.some(ok) || ok(req.destinationBearing)) {
       const b = (v: number | null | undefined, range: number) => (ok(v) ? `${((Math.round(v) % 360) + 360) % 360},${range}` : '');
-      params.set('bearings', [b(req.bearing, 60), ...viaB.map((v) => b(v, 60)), ''].join(';'));
+      params.set('bearings', [b(req.bearing, 60), ...viaB.map((v) => b(v, 60)), b(req.destinationBearing, 60)].join(';'));
       if (ok(req.bearing)) params.set('radiuses', '40' + ';'.repeat(pts.length - 1));
     }
     if (exclude.length) params.set('exclude', exclude.map((k) => EXCLUDE[k]).join(','));

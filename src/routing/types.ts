@@ -124,6 +124,8 @@ export interface RouteRequest {
   bearing?: number | null;
   /** Direction of travel through each stop, when known (trip links), for the right carriageway. */
   viaBearings?: (number | null)[];
+  /** Direction of travel on arrival (a pin's heading), so the route arrives on the right carriageway. */
+  destinationBearing?: number | null;
   alternatives?: boolean;
   avoid?: Partial<Avoid>;
   /** Also look for a toll-free option when the best routes use tolls. */

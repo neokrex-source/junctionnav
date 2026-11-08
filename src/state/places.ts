@@ -12,7 +12,10 @@ const KEY = 'junctionnav.places.v1';
 const MAX_RECENTS = 10;
 
 function clean(p: Place): Place {
-  return { name: p.name, sub: p.sub, lngLat: [Math.round(p.lngLat[0] * 1e6) / 1e6, Math.round(p.lngLat[1] * 1e6) / 1e6] };
+  const out: Place = { name: p.name, sub: p.sub, lngLat: [Math.round(p.lngLat[0] * 1e6) / 1e6, Math.round(p.lngLat[1] * 1e6) / 1e6] };
+  // A direction of travel (a pin's heading) stays with the place: Home on a divided road, say.
+  if (p.bearing != null && Number.isFinite(p.bearing)) out.bearing = Math.round(p.bearing);
+  return out;
 }
 
 export function samePlace(a: Place, b: Place): boolean {

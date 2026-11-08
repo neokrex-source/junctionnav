@@ -34,6 +34,7 @@
   --amber: #f59e0b;
   --danger: #e11d48;
   --pin: #f43f5e;
+  --user-pin: #0891b2;
   --down: #1d1924;
   --down-ink: #ffffff;
   --scrim: rgba(12, 8, 20, 0.5);
@@ -69,6 +70,7 @@
     --amber: #fbbf24;
     --danger: #fb7185;
     --pin: #fb7185;
+    --user-pin: #22d3ee;
     --down: #e9e5f0;
     --down-ink: #121016;
     --scrim: rgba(4, 2, 8, 0.68);
@@ -102,6 +104,7 @@
   --amber: #fbbf24;
   --danger: #fb7185;
   --pin: #fb7185;
+  --user-pin: #22d3ee;
   --down: #e9e5f0;
   --down-ink: #121016;
   --scrim: rgba(4, 2, 8, 0.68);
@@ -239,7 +242,9 @@ button { cursor: pointer; }
 .dir-fields { display: grid; gap: 4px; }
 .dir-field {
   display: grid;
-  grid-template-columns: 20px 1fr auto;
+  grid-template-columns: 20px 1fr;
+  grid-auto-flow: column;
+  grid-auto-columns: auto;
   align-items: center;
   gap: 6px;
   background: var(--surface-2);
@@ -1159,7 +1164,9 @@ button { cursor: pointer; }
 .auth-way[aria-selected="true"] { opacity: 1; background: color-mix(in srgb, var(--hud) 12%, transparent); box-shadow: 0 0 0 2px var(--hud), 0 0 18px color-mix(in srgb, var(--hud) 35%, transparent); }
 .auth-way:hover { opacity: 1; }
 .auth-way:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
-.auth-main { flex: 1; display: flex; justify-content: center; padding: 24px 16px calc(env(safe-area-inset-bottom, 0px) + 28px); }
+.auth-main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 24px 16px calc(env(safe-area-inset-bottom, 0px) + 20px); }
+.auth-credit { margin-top: auto; padding-top: 28px; text-align: center; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.auth-credit strong { color: var(--ink); font-weight: 600; }
 .auth-body { width: min(440px, 100%); }
 .auth-form { display: grid; gap: 16px; }
 .auth-title { font: 700 26px/1.1 var(--font-cond); margin: 0; }
@@ -1621,3 +1628,64 @@ button { cursor: pointer; }
 .suggest .s-note-row { display: grid; gap: 2px; margin: 2px 0; padding: 9px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 11%, transparent); }
 .suggest .s-note-row .s-name { font-weight: 700; }
 .suggest .s-note-row .s-sub { color: var(--muted); font-size: 13px; line-height: 1.35; white-space: normal; }
+
+/* Settings → App → About. */
+.settings .about-name { font: 700 19px/1.2 var(--font-cond); display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.settings .about-ver { font: 500 13px var(--font-ui); color: var(--muted); }
+.settings .about-credit { font-size: 14px; line-height: 1.5; color: var(--muted); }
+.settings .about-credit strong { color: var(--ink); font-weight: 600; }
+
+/* ---------------------------------------------------------------- your pins */
+.user-pin { width: 30px; height: 40px; padding: 0; border: 0; background: none; cursor: grab; touch-action: none; }
+.user-pin svg { width: 30px; height: 40px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35)); transition: transform 0.15s; transform-origin: 50% 100%; }
+.user-pin .up-body { fill: var(--user-pin); stroke: #ffffff; }
+.user-pin .up-dot { fill: #ffffff; }
+.user-pin.is-selected svg { transform: scale(1.22); }
+.user-pin.is-dragging { cursor: grabbing; }
+.user-pin.is-dragging svg { transform: scale(1.3) translateY(-6px); filter: drop-shadow(0 8px 8px rgba(0, 0, 0, 0.35)); }
+.user-pin:focus-visible { outline: 3px solid var(--route); outline-offset: 2px; border-radius: 8px; }
+/* The direction of travel, on the ground beside a pin (and the destination). */
+.pin-heading { width: 76px; height: 76px; pointer-events: none; }
+.pin-heading .ph-arrow { position: absolute; left: 50%; top: 0; width: 24px; height: 24px; margin-left: -12px; color: var(--user-pin); filter: drop-shadow(0 0 2px #fff) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)); }
+.pin-heading.is-dest .ph-arrow { color: var(--pin); }
+.pin-heading .ph-arrow svg { width: 24px; height: 24px; display: block; }
+
+/* The crosshair while placing a pin: the pin's tip on the spot, a ring to turn its direction. */
+.pin-cross { position: absolute; z-index: 4; width: 0; height: 0; pointer-events: none; }
+.pin-cross[hidden] { display: none; }
+.pin-cross .pc-pin { position: absolute; left: -17px; top: -46px; width: 34px; height: 46px; }
+.pin-cross .pc-pin svg { width: 34px; height: 46px; filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.3)); }
+.pin-cross .pc-pin .up-body { fill: var(--user-pin); stroke: #ffffff; }
+.pin-cross .pc-pin .up-dot { fill: #ffffff; }
+.pin-cross .pc-dot { position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%; background: var(--user-pin); box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0, 0, 0, 0.4); }
+.pin-cross .pc-ring { position: absolute; left: -80px; top: -80px; width: 160px; height: 160px; border-radius: 50%; display: none; }
+.pin-cross.has-heading .pc-ring { display: block; }
+.pin-cross .pc-ring:focus-visible { outline: 3px solid var(--route); outline-offset: -8px; }
+.pin-cross .pc-ring svg { width: 160px; height: 160px; overflow: visible; pointer-events: none; }
+.pin-cross .pc-band { fill: none; stroke: transparent; stroke-width: 34; pointer-events: stroke; cursor: grab; touch-action: none; }
+.pin-cross .pc-line { fill: none; stroke: var(--user-pin); stroke-width: 2.5; stroke-dasharray: 5 6; opacity: 0.85; filter: drop-shadow(0 0 1.5px #fff); }
+.pin-cross .pc-handle { transform: rotate(var(--pin-rot, 0deg)); transform-origin: 0 0; transform-box: view-box; pointer-events: all; cursor: grab; touch-action: none; }
+.pin-cross .pc-knob { fill: #ffffff; stroke: var(--user-pin); stroke-width: 3; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4)); }
+.pin-cross .pc-tip { fill: var(--user-pin); }
+
+/* The pin sheet. */
+.sheet .pin-hint { margin: -2px 0 0; color: var(--muted); font-size: 14px; }
+.sheet .pin-addr { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; min-height: 1.4em; }
+.sheet .pin-hd-label { font: 700 13px var(--font-ui); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-top: 4px; }
+.sheet .pin-headings { flex-wrap: wrap; overflow: visible; }
+.sheet .pin-readout { margin: 0; font-size: 14px; color: var(--muted); min-height: 1.3em; }
+.ph-chip-arrow { display: inline-grid; width: 16px; height: 16px; color: var(--user-pin); flex: 0 0 auto; }
+.ph-chip-arrow svg { width: 16px; height: 16px; }
+.pill[aria-pressed="true"] .ph-chip-arrow { color: currentColor; }
+.pin-heading-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.pin-heading-row .phr-arrow { display: grid; width: 26px; height: 26px; color: var(--user-pin); flex: 0 0 auto; }
+.pin-heading-row .phr-arrow svg { width: 26px; height: 26px; }
+.pin-heading-row .phr-arrow.is-any { opacity: 0.35; }
+.pin-heading-row .phr-text { display: grid; gap: 1px; flex: 1; min-width: 0; font-size: 14px; }
+.pin-heading-row .phr-text strong { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.routes-heading { display: flex; align-items: center; gap: 6px; }
+.dir-field .dir-heading { display: grid; width: 20px; height: 20px; color: var(--user-pin); flex: 0 0 auto; }
+.dir-field .dir-heading svg { width: 20px; height: 20px; }
+.dir-field .dir-onmap { color: var(--user-pin); }
+.danger-text { color: var(--danger); }
+.settings .pins-status { font-size: 14px; }

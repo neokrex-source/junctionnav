@@ -96,7 +96,27 @@ export type UiKey =
   | 'offRoute'
   | 'searching'
   | 'remaining'
-  | 'options';
+  | 'options'
+  | 'pin'
+  | 'pinNew'
+  | 'placePin'
+  | 'pinHint'
+  | 'chooseOnMap'
+  | 'heading'
+  | 'anyDirection'
+  | 'turnByHand'
+  | 'headingTo'
+  | 'headingHint'
+  | 'movePin'
+  | 'editHeading'
+  | 'removePin'
+  | 'pinRemoved'
+  | 'setStart'
+  | 'setDest'
+  | 'setStop'
+  | 'savePin'
+  | 'cancel'
+  | 'arriveHeading';
 
 interface LangPack {
   speechLang: string;
@@ -244,6 +264,26 @@ const en: LangPack = {
     searching: "Searching…",
     remaining: "Remaining steps",
     options: "Options",
+    pin: "Pin",
+    pinNew: "Drop a pin",
+    placePin: "Place pin",
+    pinHint: "Move the map or tap where it goes",
+    chooseOnMap: "Choose on map",
+    heading: "Direction of travel",
+    anyDirection: "Any direction",
+    turnByHand: "Turn by hand",
+    headingTo: "Heading {dir}",
+    headingHint: "Drag the ring to turn the arrow",
+    movePin: "Move",
+    editHeading: "Direction",
+    removePin: "Remove pin",
+    pinRemoved: "Pin removed",
+    setStart: "Set as start",
+    setDest: "Set as destination",
+    setStop: "Set as stop {n}",
+    savePin: "Save pin",
+    cancel: "Cancel",
+    arriveHeading: "Arriving heading {dir}",
   },
 };
 
@@ -369,6 +409,26 @@ const ms: LangPack = {
     searching: "Mencari…",
     remaining: "Langkah seterusnya",
     options: "Pilihan",
+    pin: "Pin",
+    pinNew: "Letak pin",
+    placePin: "Letak pin",
+    pinHint: "Gerakkan peta atau ketik di lokasinya",
+    chooseOnMap: "Pilih pada peta",
+    heading: "Arah perjalanan",
+    anyDirection: "Mana-mana arah",
+    turnByHand: "Pusing sendiri",
+    headingTo: "Menghala ke {dir}",
+    headingHint: "Seret gelang untuk memusing anak panah",
+    movePin: "Alih",
+    editHeading: "Arah",
+    removePin: "Buang pin",
+    pinRemoved: "Pin dibuang",
+    setStart: "Jadikan titik mula",
+    setDest: "Jadikan destinasi",
+    setStop: "Jadikan hentian {n}",
+    savePin: "Simpan pin",
+    cancel: "Batal",
+    arriveHeading: "Tiba menghala ke {dir}",
   },
 };
 
@@ -493,6 +553,26 @@ const ja: LangPack = {
     searching: "検索中…",
     remaining: "この先の案内",
     options: "条件",
+    pin: "ピン",
+    pinNew: "ピンを置く",
+    placePin: "ピンを置く",
+    pinHint: "地図を動かすか、置く場所をタップ",
+    chooseOnMap: "地図で選ぶ",
+    heading: "進行方向",
+    anyDirection: "指定なし",
+    turnByHand: "手動で回す",
+    headingTo: "{dir}向き",
+    headingHint: "リングをドラッグして矢印を回す",
+    movePin: "移動",
+    editHeading: "方向",
+    removePin: "ピンを削除",
+    pinRemoved: "ピンを削除しました",
+    setStart: "出発地に設定",
+    setDest: "目的地に設定",
+    setStop: "経由地{n}に設定",
+    savePin: "ピンを保存",
+    cancel: "キャンセル",
+    arriveHeading: "{dir}向きで到着",
   },
 };
 

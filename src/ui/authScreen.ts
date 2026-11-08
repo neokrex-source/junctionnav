@@ -3,6 +3,7 @@
  * "Sign in" and "Create account", are the tabs: picking one is taking that branch.
  */
 import { AuthError, MIN_PASSWORD, passwordStrength, type AuthProvider, type User } from '../auth/types';
+import { DEVELOPER, INSTITUTION } from '../credit';
 import { h } from './dom';
 
 type Mode = 'signin' | 'signup' | 'forgot' | 'reset';
@@ -77,7 +78,12 @@ export class AuthScreen {
     );
     this.body.id = 'auth-panel';
     this.body.setAttribute('role', 'tabpanel');
-    this.el = h('div', { class: 'auth', hidden: true }, sign, h('main', { class: 'auth-main' }, this.body));
+    this.el = h(
+      'div',
+      { class: 'auth', hidden: true },
+      sign,
+      h('main', { class: 'auth-main' }, this.body, h('footer', { class: 'auth-credit' }, 'Developed by ', h('strong', {}, DEVELOPER), h('br'), INSTITUTION)),
+    );
     document.body.append(this.el);
   }
 
