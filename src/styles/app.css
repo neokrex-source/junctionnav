@@ -496,6 +496,9 @@ button { cursor: pointer; }
 .b-icon { font-size: 54px; grid-row: span 2; display: grid; justify-items: center; gap: 2px; }
 .b-icon > .ico { color: var(--hud); filter: drop-shadow(0 0 10px color-mix(in srgb, var(--hud) 45%, transparent)); }
 .b-dist { font: 700 24px/1 var(--font-cond); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
+/* About how long until the maneuver, under its distance. */
+.b-time { font: 600 15px/1 var(--font-cond); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; opacity: 0.82; margin-top: 1px; }
+.b-time[hidden] { display: none; }
 .b-primary {
   font: 700 clamp(22px, 5.4vw, 32px)/1.08 var(--font-cond);
   text-wrap: balance;
@@ -1502,6 +1505,11 @@ button { cursor: pointer; }
 .fa-text { flex: 1; min-width: 0; font: 700 15px/1 var(--font-cond); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .faster .fa-take { flex: none; min-height: 0; height: min(30px, calc(max(36px, 5vh) - 8px)); padding: 0 12px; font-size: 14px; border-radius: 999px; }
 .faster .fa-keep { flex: none; padding: 4px; font-size: 16px; }
+/* Switching by itself: the button counts down, its fill running out. */
+.faster .fa-take.is-counting { position: relative; overflow: hidden; isolation: isolate; font-variant-numeric: tabular-nums; }
+.faster .fa-take.is-counting::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, #ffffff 26%, transparent); transform-origin: left center; transform: scaleX(var(--left, 1)); transition: transform 0.25s linear; }
+.faster .fa-take .fa-count { margin-left: 6px; font: 700 14px/1 var(--font-cond); opacity: 0.9; }
+.faster .fa-stay { flex: none; min-height: 0; height: min(30px, calc(max(36px, 5vh) - 8px)); padding: 0 10px; font-size: 14px; border-radius: 999px; }
 @media (max-width: 480px) {
   .traffic-chip, .traffic-card, .toll-chip, .faster, .nav-stack > .sim { margin-right: 66px; }
 }

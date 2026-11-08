@@ -35,6 +35,8 @@ export interface Progress {
   /** The one after it (for "then" hints). */
   after?: Step;
   distToNext: number;
+  /** Planned time to the maneuver we are approaching (s), from the route's own times. */
+  timeToNext: number;
   remaining: number;
   remainingTime: number;
   eta: Date;
@@ -238,7 +240,8 @@ export class NavEngine {
     // Remaining time: rest of current step plus later steps.
     const cur = steps[k];
     const curLen = Math.max(1, next.s - cur.s);
-    let remainingTime = (cur.duration * distToNext) / curLen;
+    const timeToNext = (cur.duration * distToNext) / curLen;
+    let remainingTime = timeToNext;
     for (let i = k + 1; i < steps.length; i++) remainingTime += steps[i].duration;
     const remaining = Math.max(0, line.length - s);
     const arrived = remaining < 25 || (next.type === 'arrive' && !next.waypoint && distToNext < 20);
@@ -289,6 +292,7 @@ export class NavEngine {
       after,
       distToNext,
       remaining,
+      timeToNext,
       remainingTime,
       eta: new Date(Date.now() + remainingTime * 1000),
       onRoute,

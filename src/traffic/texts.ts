@@ -61,6 +61,9 @@ export type TrafficKey =
   | 'faster'
   | 'switch'
   | 'keep'
+  | 'stay'
+  | 'stayLong'
+  | 'switchIn'
   | 'switched'
   | 'updated'
   | 'from'
@@ -94,6 +97,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     faster: 'Faster route via {via}: saves {m} min',
     switch: 'Switch',
     keep: 'Keep',
+    stay: 'Stay',
+    stayLong: 'Stay on this route',
+    switchIn: 'Switching to the faster route in {s} s',
     switched: 'Switched to the faster route.',
     updated: 'Updated {t}',
     from: '{a} to {b}',
@@ -110,7 +116,7 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     forNext: 'For the next {d}',
     left: '{d} left',
     long: '{d} long',
-    fasterShort: 'Via {via}: {m} min faster',
+    fasterShort: '{m} min faster via {via}',
   },
   ms: {
     traffic: 'Trafik',
@@ -126,6 +132,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     faster: 'Laluan lebih pantas melalui {via}: jimat {m} min',
     switch: 'Tukar',
     keep: 'Kekal',
+    stay: 'Kekal',
+    stayLong: 'Kekal di laluan ini',
+    switchIn: 'Bertukar ke laluan lebih pantas dalam {s} saat',
     switched: 'Ditukar ke laluan lebih pantas.',
     updated: 'Dikemas kini {t}',
     from: '{a} ke {b}',
@@ -142,7 +151,7 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     forNext: 'Untuk {d} lagi',
     left: '{d} lagi',
     long: 'Sepanjang {d}',
-    fasterShort: 'Melalui {via}: {m} min lebih pantas',
+    fasterShort: '{m} min lebih pantas melalui {via}',
   },
   ja: {
     traffic: '交通情報',
@@ -158,6 +167,9 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     faster: '{via}経由の速いルート: {m}分短縮',
     switch: '切り替える',
     keep: 'このまま',
+    stay: 'このまま',
+    stayLong: 'このルートのまま',
+    switchIn: '{s}秒後に速いルートへ切り替えます',
     switched: '速いルートに切り替えました。',
     updated: '{t} 更新',
     from: '{a} から {b}',
@@ -174,7 +186,7 @@ const UI: Record<LangCode, Record<TrafficKey, string>> = {
     forNext: 'この先{d}続きます',
     left: '残り{d}',
     long: '長さ{d}',
-    fasterShort: '{via}経由: {m}分早い',
+    fasterShort: '{m}分早い（{via}経由）',
   },
 };
 
@@ -249,12 +261,12 @@ export function warningSpeech(i: RouteIncident, dist: number, lang: LangCode, un
   return `${what[i.kind]}, in ${d}.${m >= 2 ? ` About ${m} minutes' delay.` : ''}`;
 }
 
-/** "A faster route is available, saving 7 minutes." */
-export function fasterSpeech(save: number, lang: LangCode): string {
+/** "A faster route is available, saving 7 minutes." (and when it will be taken by itself) */
+export function fasterSpeech(save: number, lang: LangCode, autoIn = 0): string {
   const m = minutes(save);
-  if (lang === 'ms') return `Laluan lebih pantas tersedia, jimat ${m} minit.`;
-  if (lang === 'ja') return `${m}分早く着くルートがあります。`;
-  return `A faster route is available, saving ${m} minutes.`;
+  if (lang === 'ms') return `Laluan lebih pantas tersedia, jimat ${m} minit.${autoIn ? ` Bertukar dalam ${autoIn} saat, kecuali anda pilih kekal.` : ''}`;
+  if (lang === 'ja') return `${m}分早く着くルートがあります。${autoIn ? `${autoIn}秒後に切り替えます。` : ''}`;
+  return `A faster route is available, saving ${m} minutes.${autoIn ? ` Switching in ${autoIn} seconds unless you stay on this route.` : ''}`;
 }
 
 /* ------------------------------------------------------------------ the traffic voice guide */

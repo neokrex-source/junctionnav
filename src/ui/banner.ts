@@ -1,6 +1,6 @@
 /** Maneuver banner: icon, distance, where to go, what to do, lanes, and the maneuver after. */
 import type { LaneState } from '../nav/lanes';
-import { describeStep, formatDistance, lanePhrase, LANGS, type LangCode, type Units } from '../routing/instructions';
+import { describeStep, formatDistance, formatShortTime, lanePhrase, LANGS, type LangCode, type Units } from '../routing/instructions';
 import type { Lane, Step } from '../routing/types';
 import { h } from './dom';
 import { laneIcon, maneuverIcon } from './icons';
@@ -10,6 +10,8 @@ export class Banner {
   readonly then: HTMLElement;
   private icon = h('div', { class: 'b-icon' });
   private dist = h('div', { class: 'b-dist' });
+  /** About how long until the maneuver, under the distance. */
+  private time = h('div', { class: 'b-time' });
   private primary = h('div', { class: 'b-primary' });
   private action = h('div', { class: 'b-action' });
   private lanes = h('div', { class: 'b-lanes', hidden: true });
@@ -29,13 +31,13 @@ export class Banner {
     this.then = h('div', { class: 'b-then', hidden: true });
   }
 
-  update(step: Step, after: Step | undefined, dist: number, lang: LangCode, units: Units, showLanes = true, lane: LaneState | null = null) {
+  update(step: Step, after: Step | undefined, dist: number, lang: LangCode, units: Units, showLanes = true, lane: LaneState | null = null, time: number | null = null) {
     const t = describeStep(step, lang);
     const key = `${step.index}|${lang}`;
     if (key !== this.key) {
       this.key = key;
       this.icon.innerHTML = maneuverIcon(step.type, step.modifier, step.drivingSide);
-      this.icon.append(this.dist);
+      this.icon.append(this.dist, this.time);
       this.primary.textContent = t.primary;
       this.action.innerHTML = '';
       if (t.exitRef) this.action.append(h('span', { class: 'b-exit' }, `EXIT ${t.exitRef}`));
@@ -61,6 +63,9 @@ export class Banner {
       this.cue.hidden = true;
     }
     this.dist.textContent = formatDistance(dist, units);
+    const tm = time == null ? '' : formatShortTime(time);
+    this.time.textContent = tm;
+    this.time.hidden = !tm;
     // "Then" hint when the following maneuver comes quickly.
     if (after && after.s - step.s < 350 && after.type !== 'arrive') {
       this.then.hidden = false;

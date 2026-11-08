@@ -262,19 +262,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     onRoute: window.__app.traffic.onRoute.map((i) => [i.id, Math.round(i.s), Math.round(i.endS)]),
     routeNews: window.__app.traffic.routeNews.map((n) => n.title),
     edge: window.__app.map.map.querySourceFeatures('traffic-route').length,
+    count: Number(document.querySelector('.faster:not([hidden]) .fa-take.is-counting .fa-count')?.textContent ?? NaN),
+    stay: document.querySelector('.faster:not([hidden]) .fa-stay')?.textContent ?? null,
+    bannerDist: document.querySelector('.banner .b-dist')?.textContent ?? null,
+    bannerTime: document.querySelector('.banner .b-time:not([hidden])')?.textContent ?? null,
   }));
   await shot('3-driving');
+  check('the banner shows the time to the next turn under its distance', /^\d+(\.\d)? (m|km)$/.test(nav.bannerDist ?? '') && /^(\d+ s|\d+ min|\d+ h \d+ min)$/.test(nav.bannerTime ?? ''), { dist: nav.bannerDist, time: nav.bannerTime });
+  check('the faster route counts down to switching by itself, with Stay beside it', nav.count >= 12 && nav.count <= 15 && nav.stay === 'Stay', { count: nav.count, stay: nav.stay });
   check('incidents placed on the route', nav.onRoute.length === 2 && Math.abs(nav.onRoute[0][1] - 2400) < 80, nav.onRoute);
   check('traffic chip shows the next incident', /Slow traffic/.test(nav.chip ?? ''), nav.chip);
   check('arrival time includes traffic', /\+\d+ min traffic/.test(nav.etaSub ?? ''), nav.etaSub);
   check('news on the route flagged', nav.routeNews.length === 1, nav.routeNews);
-  check('faster route offered', /Via Jalan Ampang: 15 min faster/.test(nav.faster ?? ''), nav.faster);
+  check('faster route offered, the saving first', /^15 min faster via Jalan Ampang$/.test(nav.faster ?? ''), nav.faster);
   // Popups stay slim: about 5% of the screen.
   const fasterBox = await page.evaluate(() => {
     const r = document.querySelector('.faster:not([hidden])')?.getBoundingClientRect();
     return r && { h: r.height, share: (r.width * r.height) / (innerWidth * innerHeight), vh: innerHeight };
   });
   check('faster route bar is slim (at most 5% of the screen)', fasterBox && fasterBox.share <= 0.05 && fasterBox.h <= Math.max(36, fasterBox.vh * 0.05) + 1, fasterBox);
+  // Stay: the offer goes and the route stays (it does not come back for the same saving).
+  const routeBefore = await page.evaluate(() => window.__app.engine.route.summary);
+  await page.click('.faster .fa-stay');
+  await page.evaluate(() => {
+    window.__app.fasterCheckedAt = 0;
+    window.__app.checkFaster();
+  });
+  await sleep(400);
+  const stayed = await page.evaluate(() => ({ hidden: document.querySelector('.faster').hidden, route: window.__app.engine.route.summary, timer: window.__app.fasterTimer }));
+  check('Stay keeps this route and ends the countdown', stayed.hidden && stayed.route === routeBefore && !stayed.timer, { stayed, routeBefore });
   const see = await page.evaluate(() => ['route-line', 'route-casing', 'route-glow'].map((id) => window.__app.map.map.getPaintProperty(id, 'line-opacity')));
   check('route line is see-through with live traffic on', see[0] === 0.5 && see[1] < 0.5, see);
   check('incident edge drawn along the route', nav.edge > 0, nav.edge);
@@ -417,11 +433,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ask();
   await page.waitForSelector('.faster:not([hidden])', { timeout: 20_000 }).catch(() => {});
   const before = await page.evaluate(() => window.__app.engine.route.summary);
-  await page.click('.faster .btn-primary', { timeout: 8000 }).catch((e) => console.log('click failed:', String(e).slice(0, 600)));
-  await sleep(800);
-  const after = await page.evaluate(() => ({ summary: window.__app.engine.route.summary, toast: document.querySelector('.toast.is-on')?.textContent ?? '', faster: !document.querySelector('.faster').hidden }));
+  await sleep(6000);
+  await shot('6-counting-down');
+  const midway = await page.evaluate(() => ({ count: Number(document.querySelector('.faster .fa-count')?.textContent ?? NaN), left: getComputedStyle(document.querySelector('.faster .fa-take')).getPropertyValue('--left') }));
+  check('the countdown runs down', midway.count >= 7 && midway.count <= 10 && Number(midway.left) < 0.7, midway);
+  // Nobody taps: when it runs out the faster route is taken, and said.
+  await page.waitForFunction((b) => window.__app.engine.route.summary !== b, before, { timeout: 15_000 }).catch(() => {});
+  await sleep(500);
+  const after = await page.evaluate(() => ({ summary: window.__app.engine.route.summary, toast: document.querySelector('.toast.is-on')?.textContent ?? '', faster: !document.querySelector('.faster').hidden, said: (window.__said ?? []).slice(-3) }));
   await shot('6-switched');
-  check('switching takes the faster route', after.summary !== before && /faster route/.test(after.toast), { before, after });
+  check('when the countdown runs out the faster route is taken', after.summary !== before && /faster route/.test(after.toast) && !after.faster && after.said.some((t) => /Switched to the faster route/.test(t)), { before, after });
 
   // ---- no travel time from TomTom: the arrival time counts the incidents' delays instead
   calls.failRouting = true;

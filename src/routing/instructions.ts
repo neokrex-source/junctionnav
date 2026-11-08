@@ -604,6 +604,13 @@ export function formatDistance(m: number, units: Units = 'metric'): string {
   return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
 }
 
+/** A short time to the next maneuver: "25 s" (in fives), "4 min", "1 h 5 min". */
+export function formatShortTime(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return '';
+  if (sec < 57.5) return `${Math.max(5, Math.round(sec / 5) * 5)} s`;
+  return formatDuration(sec);
+}
+
 export function formatDuration(sec: number): string {
   const min = Math.round(sec / 60);
   if (min < 60) return `${Math.max(1, min)} min`;

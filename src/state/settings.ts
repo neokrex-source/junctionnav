@@ -55,6 +55,8 @@ export interface Settings {
   trafficAlerts: boolean;
   /** Traffic headlines from Malaysian news (no key needed). */
   trafficNews: boolean;
+  /** A faster route on offer is taken by itself after this many seconds, unless you stay (0: only offered). */
+  fasterSwitch: number;
   /** How often the places around you are brought up to date (src/places). */
   placesUpdate: PlacesUpdate;
   /** How far around you places are kept (km). */
@@ -103,6 +105,7 @@ export const DEFAULTS: Settings = {
   trafficMap: true,
   trafficAlerts: true,
   trafficNews: true,
+  fasterSwitch: 15,
   placesUpdate: 'monthly',
   placesRadius: 100,
   placesWifiOnly: true,

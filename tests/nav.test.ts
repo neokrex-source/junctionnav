@@ -4,7 +4,7 @@ import { haversine, Polyline, angleDiff, type LngLat } from '../src/geo/geo';
 import { detectJunctions } from '../src/junction/detect';
 import { buildOverpassQuery, parseOverpass } from '../src/junction/osmdata';
 import { NavEngine } from '../src/nav/engine';
-import { describeStep, formatDistance, spokenInstruction } from '../src/routing/instructions';
+import { describeStep, formatDistance, formatShortTime, spokenInstruction } from '../src/routing/instructions';
 import { normalizeOsrm, OsrmRouter } from '../src/routing/osrm';
 import { parseDestinations } from '../src/routing/types';
 import { parseCoordinates } from '../src/search/places';
@@ -104,6 +104,34 @@ describe('navigation engine', () => {
     expect(spoken.some((t) => t.startsWith('In 1 kilometre, take exit 114'))).toBe(true);
     expect(spoken.filter((t) => t.includes('exit 114')).length).toBeLessThanOrEqual(4);
     expect(eng.progress?.arrived).toBe(true);
+  });
+
+  it('estimates the time to the next maneuver from the route', () => {
+    const r = route();
+    const eng = new NavEngine();
+    eng.setRoute(r, detectJunctions(r));
+    const at = (s: number) => eng.update({ lngLat: r.line.pointAt(s), accuracy: 5, heading: r.line.bearingAt(s), speed: 20, time: s })!;
+    const step = r.steps[1];
+    const before = r.steps[0];
+    // Halfway along the first step: half of its time is left.
+    const half = at(before.s + (step.s - before.s) / 2);
+    expect(half.next.index).toBe(step.index);
+    expect(half.timeToNext).toBeCloseTo(before.duration / 2, 0);
+    // The time to the turn is part of the time to arrive, and runs out at the turn.
+    expect(half.timeToNext).toBeLessThanOrEqual(half.remainingTime);
+    const near = at(step.s - 10);
+    expect(near.next.index).toBe(step.index);
+    expect(near.timeToNext).toBeCloseTo((before.duration * 10) / (step.s - before.s), 1);
+  });
+
+  it('writes the time to the next maneuver short', () => {
+    expect(formatShortTime(3)).toBe('5 s');
+    expect(formatShortTime(23)).toBe('25 s');
+    expect(formatShortTime(57)).toBe('55 s');
+    expect(formatShortTime(58)).toBe('1 min');
+    expect(formatShortTime(14 * 60 + 10)).toBe('14 min');
+    expect(formatShortTime(65 * 60)).toBe('1 h 5 min');
+    expect(formatShortTime(NaN)).toBe('');
   });
 
   it('flags off-route after repeated far fixes', () => {

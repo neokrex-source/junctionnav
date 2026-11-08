@@ -158,6 +158,12 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     }) as HTMLInputElement;
     const trafficMap = h('input', { id: 'trafficMap', type: 'checkbox' }) as HTMLInputElement;
     trafficMap.checked = current.trafficMap;
+    const fasterSwitch = select('fasterSwitch', String(current.fasterSwitch), [
+      ['10', 'Switch by itself after 10 seconds'],
+      ['15', 'Switch by itself after 15 seconds'],
+      ['30', 'Switch by itself after 30 seconds'],
+      ['0', 'Only offer it'],
+    ]);
     const trafficAlerts = h('input', { id: 'trafficAlerts', type: 'checkbox' }) as HTMLInputElement;
     trafficAlerts.checked = current.trafficAlerts;
     const trafficNews = h('input', { id: 'trafficNews', type: 'checkbox' }) as HTMLInputElement;
@@ -217,6 +223,9 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           ),
           h('label', { class: 'toggle' }, trafficMap, 'Show live traffic on the map and your route'),
           h('label', { class: 'toggle' }, trafficAlerts, 'Voice guide for traffic: warnings ahead, clearing traffic, arrival time changes, faster routes and news'),
+          h('label', { for: 'fasterSwitch', class: 'sub-label' }, 'When a faster route opens up'),
+          fasterSwitch,
+          h('div', { class: 'hint' }, 'The offer counts down on its Switch button and takes the faster route when it runs out, unless you tap Stay. Tap Switch to take it straight away.'),
           TRAFFIC_NEWS_URL ? h('label', { class: 'toggle' }, trafficNews, 'Traffic news from Malaysian news sites') : null,
           h(
             'div',
@@ -473,6 +482,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         trafficMap: trafficMap.checked,
         trafficAlerts: trafficAlerts.checked,
         trafficNews: trafficNews.checked,
+        fasterSwitch: Number(fasterSwitch.value) || 0,
         offlineUse: offlineUse.value as Settings['offlineUse'],
         routerUrl: routerUrl.value.trim() || DEFAULTS.routerUrl,
         overpassUrls: overpassUrls.value.split(',').map((s) => s.trim()).filter(Boolean).join('\n') || DEFAULTS.overpassUrls,

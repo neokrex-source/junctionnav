@@ -315,7 +315,10 @@ class App {
   /** Travel times with traffic for the routes being compared before a drive. */
   private planTraffic = new Map<Route, { travelTime: number; delay: number; at: number }>();
   /** The faster route on offer, and the ones turned down (with what they would have saved). */
-  private faster: { route: Route; s: number; save: number } | null = null;
+  private faster: { route: Route; s: number; save: number; left: number; total: number } | null = null;
+  /** The countdown before a faster route is taken by itself. */
+  private fasterTimer = 0;
+  private fasterTickAt = 0;
   /** The incident the popup card shows (within 500 m), and the ones closed by hand on this drive. */
   private cardId = '';
   private cardClosed = new Set<string>();
@@ -2713,8 +2716,11 @@ class App {
     this.paintRecenter();
 
     this.driveSimLanes(p);
-    this.banner.update(p.next, p.after, p.distToNext, this.L, units, true, p.lane);
-    this.paintEta(p);
+    // The time to the next maneuver, slowed by the traffic ahead as the arrival time is.
+    const tr = this.trafficNow(p);
+    const slower = tr && p.remainingTime > 0 ? Math.max(1, tr.time / p.remainingTime) : 1;
+    this.banner.update(p.next, p.after, p.distToNext, this.L, units, true, p.lane, p.timeToNext * slower);
+    this.paintEta(p, tr);
     this.tunnelCard.update(this.settings.tunnelAlerts ? p.tunnel : null, { lang: this.L, units, theme: this.themeFor(route), dr: p.dr });
     const kmh = Math.round(p.speed * 3.6);
     this.el.speed.innerHTML = `<div>${units === 'imperial' ? Math.round(kmh / 1.609) : kmh}<small>${units === 'imperial' ? 'mph' : 'km/h'}</small></div>`;
@@ -3082,9 +3088,8 @@ class App {
     return null;
   }
 
-  private paintEta(p: Progress) {
+  private paintEta(p: Progress, tr = this.trafficNow(p)) {
     const units = this.settings.units;
-    const tr = this.trafficNow(p);
     const left = tr?.time ?? p.remainingTime;
     this.el.etaMain.innerHTML = `${this.clock(new Date(Date.now() + left * 1000))}<small>${this.tr('arrival')}</small>`;
     const sub = this.el.etaSub;
@@ -3287,36 +3292,84 @@ class App {
     if (declined != null && best.save < declined + 300) return this.hideFaster();
     const isNew = this.faster?.route !== best.route;
     const text = tt(this.L, 'fasterShort', { via: best.route.summary || '…', m: minutes(best.save) });
-    this.faster = { route: best.route, s: best.s, save: best.save };
+    // A new offer starts its countdown (Settings: 10, 15 or 30 s, or none); the same one keeps counting.
+    const total = Math.max(0, this.settings.fasterSwitch || 0);
+    this.faster = isNew || !this.faster ? { route: best.route, s: best.s, save: best.save, left: total, total } : { ...this.faster, s: best.s, save: best.save };
     const el = this.el.faster;
     // Same offer as on screen: leave the buttons alone (a tap may be under way).
     if (!isNew && !el.hidden && el.dataset.text === text) return;
     el.dataset.text = text;
-    const take = h('button', { class: 'btn btn-primary fa-take', type: 'button' }, tt(this.L, 'switch'));
-    take.addEventListener('click', () => {
-      const f = this.faster;
-      if (!f) return;
-      const pr = f.route.line.project(this.engine.progress?.snapped ?? f.route.line.pointAt(f.s), Math.max(0, f.s - 200));
-      this.takeAlternative(f.route, pr.s);
-      toast(tt(this.L, 'switched'), 3500);
-    });
-    const keep = h('button', { class: 'mini fa-keep', type: 'button', html: ICON.close, 'aria-label': tt(this.L, 'keep'), title: tt(this.L, 'keep') });
-    keep.addEventListener('click', () => {
+    const take = h('button', { class: `btn btn-primary fa-take${total ? ' is-counting' : ''}`, type: 'button' }, tt(this.L, 'switch'));
+    if (total) take.append(h('span', { class: 'fa-count' }));
+    take.addEventListener('click', () => this.takeFaster(false));
+    const stay = total
+      ? h('button', { class: 'btn btn-ghost fa-stay', type: 'button', 'aria-label': tt(this.L, 'stayLong'), title: tt(this.L, 'stayLong') }, tt(this.L, 'stay'))
+      : h('button', { class: 'mini fa-keep', type: 'button', html: ICON.close, 'aria-label': tt(this.L, 'keep'), title: tt(this.L, 'keep') });
+    stay.addEventListener('click', () => {
       if (this.faster) this.fasterDeclined.set(this.faster.route, this.faster.save);
       this.hideFaster();
     });
     el.innerHTML = '';
     el.title = tt(this.L, 'faster', { via: best.route.summary || '…', m: minutes(best.save) });
-    el.append(h('span', { class: 'fa-ico', html: ICON.bolt }), h('span', { class: 'fa-text' }, text), take, keep);
+    el.append(h('span', { class: 'fa-ico', html: ICON.bolt }), h('span', { class: 'fa-text' }, text), take, stay);
     el.hidden = false;
+    if (total) this.startFasterCountdown();
     if (isNew && this.settings.trafficAlerts) {
       this.tv.lastAt = Date.now();
       this.voice.chime();
-      window.setTimeout(() => this.say(fasterSpeech(best.save, this.L), false), 420);
+      window.setTimeout(() => this.say(fasterSpeech(best.save, this.L, total), false), 420);
     }
   }
 
+  /** Takes the faster route on offer (tapped, or the countdown ran out). */
+  private takeFaster(byItself: boolean) {
+    const f = this.faster;
+    if (!f || this.view !== 'nav') return;
+    const pr = f.route.line.project(this.engine.progress?.snapped ?? f.route.line.pointAt(f.s), Math.max(0, f.s - 200));
+    this.hideFaster();
+    this.takeAlternative(f.route, pr.s);
+    toast(tt(this.L, 'switched'), 3500);
+    if (byItself && this.settings.trafficAlerts) this.say(tt(this.L, 'switched'), false);
+  }
+
+  private startFasterCountdown() {
+    this.paintFasterCountdown();
+    if (this.fasterTimer) return;
+    this.fasterTickAt = Date.now();
+    this.fasterTimer = window.setInterval(() => this.tickFaster(), 250);
+  }
+
+  private stopFasterCountdown() {
+    clearInterval(this.fasterTimer);
+    this.fasterTimer = 0;
+  }
+
+  /** A quarter second of the countdown; it waits while a sheet covers the offer. */
+  private tickFaster() {
+    const f = this.faster;
+    const now = Date.now();
+    const dt = (now - this.fasterTickAt) / 1000;
+    this.fasterTickAt = now;
+    if (!f || !f.total || this.view !== 'nav') return this.stopFasterCountdown();
+    if (this.navOverlay || this.el.faster.hidden) return;
+    f.left -= dt;
+    if (f.left <= 0) return this.takeFaster(true);
+    this.paintFasterCountdown();
+  }
+
+  private paintFasterCountdown() {
+    const f = this.faster;
+    const take = this.el.faster.querySelector<HTMLElement>('.fa-take');
+    if (!f || !f.total || !take) return;
+    const secs = Math.max(1, Math.ceil(f.left));
+    const count = take.querySelector('.fa-count');
+    if (count && count.textContent !== String(secs)) count.textContent = String(secs);
+    take.style.setProperty('--left', String(Math.max(0, Math.min(1, f.left / f.total))));
+    take.title = tt(this.L, 'switchIn', { s: String(secs) });
+  }
+
   private hideFaster() {
+    this.stopFasterCountdown();
     this.faster = null;
     this.el.faster.hidden = true;
   }
