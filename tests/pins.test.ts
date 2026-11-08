@@ -8,7 +8,7 @@ import type { RouteResult, Router } from '../src/routing/types';
 import { FallbackRouter } from '../src/tomtom/fallback';
 import { TomTomGate } from '../src/tomtom/gate';
 import { resetFamilies } from '../src/tomtom/http';
-import { arrivesHeading, dropApproach, HeadingNotMet, normalizeTomTom, TomTomRouter, type TtRoute } from '../src/tomtom/routing';
+import { arrivesHeading, dropApproach, HeadingNotMet, normalizeTomTom, TomTomRouter, type TtInstruction, type TtRoute } from '../src/tomtom/routing';
 
 /** A browser's storage, for the store. */
 function memoryStorage() {
@@ -127,7 +127,7 @@ describe('arriving in a direction', () => {
   });
 
   it('gives the offline router the direction for the last point', async () => {
-    const route = vi.fn(async () => ({ code: 'NoRoute', message: 'x' }));
+    const route = vi.fn(async (_req: { bearings?: (number | null)[] }) => ({ code: 'NoRoute', message: 'x' }));
     const off = new OfflineRouter({ route } as never);
     await off.route({ origin: KL, destination: [101.7, 3.15], via: [[101.695, 3.145]], viaBearings: [null], destinationBearing: 180 }).catch(() => {});
     expect(route.mock.calls[0][0]).toMatchObject({ bearings: [null, null, 180] });
@@ -150,7 +150,7 @@ describe('arriving in a direction', () => {
     };
     /** One leg, or two with a stop between them. */
     const ttRoute = (...legs: LngLat[][]): TtRoute => {
-      const instructions = [{ point: tt(legs[0][0]), pointIndex: 0, routeOffsetInMeters: 0, travelTimeInSeconds: 0, maneuver: 'DEPART' }];
+      const instructions: TtInstruction[] = [{ point: tt(legs[0][0]), pointIndex: 0, routeOffsetInMeters: 0, travelTimeInSeconds: 0, maneuver: 'DEPART' }];
       let idx = 0;
       let off = 0;
       legs.forEach((pts, i) => {

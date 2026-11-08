@@ -114,7 +114,9 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
   await page.click('.auth-submit');
   await page.waitForSelector('.auth', { state: 'hidden', timeout: 30_000 });
   await page.waitForFunction(() => window.__app, null, { timeout: 30_000 });
-  await sleep(8000);
+  // The first map tiles: on the emulator's network they can take twenty seconds or so.
+  await page.waitForFunction(() => window.__app.map.tilesOk > 0 || window.__app.map.styleFailed, null, { timeout: 40_000 }).catch(() => {});
+  await sleep(1500);
   await shot('2-map');
   // The online map: which style is up, whether its tiles arrive, and a direct look at the tile server.
   const map = await page.evaluate(async () => {
