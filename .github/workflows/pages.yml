@@ -1,5 +1,10 @@
-# Builds the app and publishes it to GitHub Pages on every push to main.
-# One-time setup: repository Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# Builds the app on every push to main and publishes it with GitHub Pages.
+#
+# Where: the repository variable SITE_REPO (default neokrex-source/junctionnav). When that is this
+# repository, the site is deployed here (Settings → Pages → Source: "GitHub Actions"). When it is
+# another one (this source repository private, the site public, see Publishing in the README), the
+# site goes to that repository's gh-pages branch and its front page to main, written with the
+# SITE_TOKEN secret, and GitHub Pages there serves gh-pages.
 #
 # The offline maps (built by offline-pack.yml and kept in the Actions cache) are published with
 # the site under offline/, and the places data (places.yml) under places/. When either has a new
@@ -16,6 +21,9 @@ permissions:
   pages: write
   id-token: write
 
+env:
+  SITE_REPO: ${{ vars.SITE_REPO || 'neokrex-source/junctionnav' }}
+
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -24,6 +32,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      split: ${{ steps.where.outputs.split }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,18 +42,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Where the site is published
+        id: where
+        run: |
+          echo "SITE_OWNER=${SITE_REPO%%/*}" >> "$GITHUB_ENV"
+          echo "SITE_NAME=${SITE_REPO##*/}" >> "$GITHUB_ENV"
+          if [ "${SITE_REPO,,}" = "${GITHUB_REPOSITORY,,}" ]; then echo "split=false" >> "$GITHUB_OUTPUT"; else echo "split=true" >> "$GITHUB_OUTPUT"; fi
       - run: npm run build
         env:
           # Optional: set these as repository variables (Settings → Secrets and variables → Actions → Variables).
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
           # The Android installer published by the Android app workflow, linked from Settings.
-          VITE_APK_URL: https://github.com/${{ github.repository }}/releases/download/android/JunctionNav.apk
+          VITE_APK_URL: https://github.com/${{ env.SITE_REPO }}/releases/download/android/JunctionNav.apk
           # This site, for the Android app's website mode (downloaded into the app, see src/native/appMode.ts).
-          VITE_WEB_APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          VITE_WEB_APP_URL: https://${{ env.SITE_OWNER }}.github.io/${{ env.SITE_NAME }}/
           VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
           # Traffic headlines collected by the Traffic news workflow (no key needed).
-          VITE_TRAFFIC_NEWS_URL: https://raw.githubusercontent.com/${{ github.repository }}/traffic-news/news.json
+          VITE_TRAFFIC_NEWS_URL: https://raw.githubusercontent.com/${{ env.SITE_REPO }}/traffic-news/news.json
           # Optional: a TomTom key for everyone (each user can also paste their own in Settings).
           VITE_TOMTOM_KEY: ${{ vars.VITE_TOMTOM_KEY }}
 
@@ -81,12 +97,28 @@ jobs:
           fi
           du -sh dist
 
+      # ---- a separate public site repository: the site on gh-pages, its front page on main
+      - name: Publish to the public site repository
+        if: steps.where.outputs.split == 'true'
+        env:
+          SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
+        run: |
+          touch dist/.nojekyll
+          scripts/site/publish.sh dist gh-pages "Site from ${GITHUB_SHA::7}"
+          mkdir -p front && cp scripts/site/public/README.md front/
+          scripts/site/publish.sh front main "Front page from ${GITHUB_SHA::7}"
+          echo "::notice title=Published::https://${SITE_OWNER}.github.io/${SITE_NAME}/ from ${SITE_REPO} (gh-pages)"
+
+      # ---- or this repository's own GitHub Pages
       - uses: actions/configure-pages@v5
+        if: steps.where.outputs.split != 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.where.outputs.split != 'true'
         with:
           path: dist
   deploy:
     needs: build
+    if: needs.build.outputs.split != 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

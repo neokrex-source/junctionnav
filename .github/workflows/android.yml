@@ -1,6 +1,8 @@
 # Builds the Android app (this web app inside a Capacitor shell, see android/ and the README) and
-# publishes the installer as JunctionNav.apk on the "android" release:
-#   https://github.com/<owner>/<repo>/releases/download/android/JunctionNav.apk
+# publishes the installer as JunctionNav.apk on the "android" release of the site repository
+# (SITE_REPO, default neokrex-source/junctionnav: this repository, or the public one when this
+# source is private, written with the SITE_TOKEN secret; see Publishing in the README):
+#   https://github.com/neokrex-source/junctionnav/releases/download/android/JunctionNav.apk
 # Then installs it on an Android emulator, drives it with Playwright and pushes screenshots and a
 # report to the android-check branch.
 #
@@ -25,6 +27,7 @@ on:
       - 'package-lock.json'
       - 'vite.config.ts'
       - 'scripts/android/**'
+      - 'scripts/site/**'
       - '.github/workflows/android.yml'
   schedule:
     - cron: '17 4 * * 1'
@@ -134,25 +137,46 @@ jobs:
       # ---- publish
       - name: Publish on the android release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SITE_REPO: ${{ vars.SITE_REPO || 'neokrex-source/junctionnav' }}
+          SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
           VERSION: ${{ steps.ver.outputs.name }}
         run: |
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/android/JunctionNav.apk"
+          URL="https://github.com/${SITE_REPO}/releases/download/android/JunctionNav.apk"
           cat > notes.md <<EOF
           **JunctionNav ${VERSION}** for Android 7 or newer, built from ${GITHUB_SHA::7} on $(date -u +'%d %b %Y').
 
           **Install:** open [JunctionNav.apk](${URL}) on your phone, then tap the downloaded file. Android asks once to allow installs from your browser or file manager; allow it and tap **Install**. Later versions install over this one and keep your account, places and offline maps.
 
-          The whole app is inside the installer, so it opens without internet from the first start. Offline maps for Peninsular Malaysia download from Settings → Offline maps. Needs an up to date Android System WebView (Play Store).
+          The whole app is inside the installer, so it opens without internet from the first start. Offline maps for Peninsular Malaysia download from Settings → Downloads → Offline maps. Needs an up to date Android System WebView (Play Store).
+
+          Developed by Dr. Mohd Anuaruddin Ahmadon, Universiti Teknologi PETRONAS.
           EOF
-          git tag -f android "$GITHUB_SHA"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/tags/android
-          if gh release view android >/dev/null 2>&1; then
-            gh release edit android --title "JunctionNav for Android ${VERSION}" --notes-file notes.md --latest
+          if [ "${SITE_REPO,,}" = "${GITHUB_REPOSITORY,,}" ]; then
+            # This repository is the site: the tag on this build.
+            export GH_TOKEN="$GITHUB_TOKEN"
+            git tag -f android "$GITHUB_SHA"
+            git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/tags/android
+            AT=(--verify-tag)
           else
-            gh release create android --title "JunctionNav for Android ${VERSION}" --notes-file notes.md --latest --verify-tag
+            # The public site repository: the release hangs on its front page.
+            if [ -z "$SITE_TOKEN" ]; then
+              echo "::error title=Cannot publish::The SITE_TOKEN secret is not set, so the installer cannot go to ${SITE_REPO}. See Publishing in the README."
+              exit 1
+            fi
+            export GH_TOKEN="$SITE_TOKEN"
+            if ! gh api "repos/${SITE_REPO}/branches/main" >/dev/null 2>&1; then
+              mkdir -p front && cp scripts/site/public/README.md front/
+              scripts/site/publish.sh front main "Front page from ${GITHUB_SHA::7}"
+            fi
+            AT=(--target main)
           fi
-          gh release upload android apk/JunctionNav.apk --clobber
+          if gh release view android -R "$SITE_REPO" >/dev/null 2>&1; then
+            gh release edit android -R "$SITE_REPO" --title "JunctionNav for Android ${VERSION}" --notes-file notes.md --latest
+          else
+            gh release create android -R "$SITE_REPO" --title "JunctionNav for Android ${VERSION}" --notes-file notes.md --latest "${AT[@]}"
+          fi
+          gh release upload android apk/JunctionNav.apk -R "$SITE_REPO" --clobber
           echo "::notice title=Android installer::${URL}"
 
   check:
