@@ -250,7 +250,7 @@ function clip(seg: RoadSeg, m0: number, m1: number): RoadSeg | null {
  */
 function window(roads: RoadSet, seg: RoadSeg, m: number, win: number): RoadSeg[] {
   const line = roads.line(seg.line);
-  if (!line || line[seg.i] !== seg) return [clip(seg, m - win, m + win) ?? seg];
+  if (!line || line[seg.i]?.m !== seg.m) return [clip(seg, m - win, m + win) ?? seg];
   let a = seg.i;
   let b = seg.i;
   while (a > 0 && line[a - 1].m + line[a - 1].len >= m - win) a--;
