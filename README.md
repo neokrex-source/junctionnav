@@ -223,6 +223,20 @@ Settings → *Routing and place search* has two choices:
 
 The map itself, the junction views' road detail and tunnel names always come from OpenStreetMap. TomTom's free tier is 2,500 requests a day (routing, search and traffic together) and 50,000 map tiles; a day of normal driving uses a small part of it. TomTom routes already carry traffic, so they need no extra travel-time requests on the route cards or for the prepared alternatives. `scripts/dev/tomtom-check.cjs` checks all of this in a browser with TomTom, OSRM, Photon and Overpass answered by the check itself.
 
+#### TomTom routes on the map's roads
+
+TomTom plans on its own map while the app draws OpenStreetMap, and the same road can lie a few metres apart in the two (more at interchanges, where a ramp leaves the main road at another place). Drawn as they come, TomTom routes could run beside the road or cut across a ramp. So every TomTom route is moved onto the roads the map draws (`src/routing/align.ts`), read from the same OpenFreeMap tiles at their most detailed level (`src/map/roadTiles.ts`, shared with the map through the browser's cache):
+
+- the route is walked in 4 m steps; each step looks at the roads within 25 m going its way (one-way roads only in their own direction), TomTom's motorway and tunnel stretches preferring motorways and tunnels;
+- one road is picked for every step with a hidden Markov model (Viterbi): near roads are likely, keeping the spacing along one road is likely, and changing to a road that does not meet the current one (a road alongside) is not, so the route does not hop between parallel roads;
+- the steps are snapped onto their roads and a change of road passes through the point where the two roads meet, so a ramp leaves the main road where the map has it;
+- a stretch with no such road nearby (a road too new for the map) stays as TomTom drew it;
+- the maneuvers, stops and toll gates move with the line, so guidance, junction views and the car on the line all follow the map's roads.
+
+Routes come back after at most 1.5 s of waiting for road tiles. A long route whose far end was not in by then comes back lined up as far as the tiles go, and the rest follows a few seconds later: swapped in while the routes are on offer, or taken over quietly during the drive (same maneuvers, nothing said again, never in the middle of a junction view). OpenStreetMap routes (OSRM, offline) are already on the map's roads and are left alone.
+
+`.github/workflows/route-align.yml` measures this on GitHub Actions with ten real routes around KL and from UTP to Ipoh: OSRM routes lie within about half a metre of the map's roads, and the same routes redrawn up to 9 m off (the way another map would have them) come back within 0.3 m of the map's roads (99% of points) and on the same roads as OSRM for 98 to 100% of their length. With a `TOMTOM_KEY` secret it measures TomTom's own routes too. `scripts/dev/align-check.cjs` checks it in the app in a browser with the saved tiles.
+
 ### Live traffic and traffic news
 
 Two sources, each used when it is there:
@@ -354,6 +368,7 @@ src/
   search/                 place search (Photon), coordinates, plus codes, Google Maps links and rough addresses
                           (smartSearch.ts), category search nearby / along route (Overpass)
   tomtom/                 TomTom first: routing adapter, place and category search, fallback to the OSM services
+  routing/align.ts        moves a route onto the map's roads (HMM map matching on the map's own road lines)
   places/                 places around you: data format and categories, worker (storage, updates, index),
                           update schedule, search and category merging
   traffic/                live traffic (TomTom incidents, travel times, congestion tiles), traffic news feed,
@@ -366,7 +381,7 @@ src/
   nav/sources.ts          GPS, simulator, speech, screen wake lock
   offline/                offline maps: pack storage and download, road graph, router, place index,
                           worker, offline map style, online/offline provider switch
-  map/                    MapLibre main map, style registry, offline demo style
+  map/                    MapLibre main map, style registry, offline demo style, the map's road lines (roadTiles.ts)
   junction/detect.ts      which maneuvers get a junction view
   junction/osmdata.ts     Overpass fetch, batching and cache
   junction/scene.ts       junction geometry, lane alignment, height profile, sign specs

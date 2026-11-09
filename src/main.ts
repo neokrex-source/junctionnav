@@ -14,7 +14,9 @@ import { guessTheme, SIGN_THEMES, type SignTheme } from './junction/signs';
 import { ZoomMap } from './junction/zoomMap';
 import { TerrainCache, TerrariumProvider, type TerrainPatch } from './junction/terrain';
 import { closeWeight, MapView, SCALE_STEPS, routeBounds, type FollowOptions, type RouteZone } from './map/mapView';
+import { RoadTiles } from './map/roadTiles';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
+import { OFM_TILES } from './map/techStyle';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
@@ -27,6 +29,7 @@ import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from '
 import { OverpassTollProvider, TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
 import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type UiKey } from './routing/instructions';
+import { RouteAligner } from './routing/aligner';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
@@ -193,6 +196,13 @@ class App {
     blob: () => this.offline.file('terrain.bin'),
   });
   private osrm: Router = new OsrmRouter(this.settings.routerUrl);
+  /**
+   * TomTom plans on its own map, the app shows OpenStreetMap: TomTom's routes are moved onto the
+   * roads the map draws (read from the same OpenFreeMap tiles) so the line sits on the road.
+   */
+  private aligner = new RouteAligner(new RoadTiles({ tileJson: OFM_TILES }));
+  /** A route being driven now lined up all the way, to take over at the next quiet moment. */
+  private pendingSwap: { from: Route; to: Route } | null = null;
   /** "TomTom first": whether TomTom is asked right now, or resting after a failure. */
   ttGate = new TomTomGate(
     () => tomtomKey(this.settings),
@@ -376,7 +386,7 @@ class App {
     this.osrm = new OsrmRouter(this.settings.routerUrl);
     // TomTom first (when chosen and the key works), OSRM when it cannot answer, the offline maps without internet.
     const ttKey = () => tomtomKey(this.settings);
-    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L), () => this.osrm, this.ttGate);
+    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L, () => this.aligner), () => this.osrm, this.ttGate);
     this.router = new HybridRouter(() => online, sw);
     this.jdata = new JunctionDataCache(new HybridJunctionData(new OverpassProvider(overpass()), sw));
     this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
@@ -1687,6 +1697,7 @@ class App {
       this.selected = 0;
       this.planTraffic.clear();
       void this.loadPlanTraffic(this.routes, ctrl.signal);
+      this.finishAlignment(this.routes);
       this.map.showRoutes(this.routes, 0);
       // Not while a point is being placed on the map: the map stays where it is.
       if ((this.view as View) === 'directions') this.map.fit(routeBounds(this.routes), this.overviewPadding());
@@ -2538,6 +2549,7 @@ class App {
   }
 
   private endNav() {
+    this.pendingSwap = null;
     this.map.setPulsing(false);
     // Website mode: a newer build that arrived during the drive opens now.
     if (NATIVE) void import('./native/appMode').then((m) => m.applyPending(this.modeHooks()));
@@ -2695,6 +2707,7 @@ class App {
   private lastFix: Fix | null = null;
 
   private onFix(fix: Fix) {
+    if (this.pendingSwap) this.trySwap();
     const p = this.engine.update(fix);
     const route = this.engine.route;
     if (!p || !route) return;
@@ -2882,6 +2895,8 @@ class App {
     this.tunnels.setRoute(r);
     this.tolls.setRoute(r);
     this.traffic.setRoute(r, startS);
+    this.pendingSwap = null;
+    this.finishAlignment([r]);
     this.hideFaster();
     if (this.sim) {
       this.sim.route = r;
@@ -2926,6 +2941,68 @@ class App {
   private setAlts(list: Route[]) {
     this.alts = list;
     this.traffic.setAlternatives(list);
+    this.finishAlignment(list);
+  }
+
+  /** Routes lined up with the map only as far as its road tiles came in time: the rest follows. */
+  private finishAlignment(routes: Route[]) {
+    for (const r of routes) {
+      if (!this.aligner.pending(r)) continue;
+      void this.aligner.complete(r).then((full) => full && this.alignedRoute(r, full));
+    }
+  }
+
+  /** A route now lined up all the way takes the place of the partly lined-up one, wherever it is. */
+  private alignedRoute(from: Route, to: Route) {
+    const pt = this.planTraffic.get(from);
+    if (pt) this.planTraffic.set(to, pt);
+    if (this.view !== 'nav') {
+      const i = this.routes.indexOf(from);
+      if (i < 0) return;
+      this.routes[i] = to;
+      if (this.view === 'directions') this.map.showRoutes(this.routes, this.selected);
+      return;
+    }
+    if (this.alts.includes(from)) this.setAlts(this.alts.map((a) => (a === from ? to : a)));
+    if (this.engine.route === from) {
+      this.pendingSwap = { from, to };
+      this.trySwap();
+    }
+  }
+
+  /**
+   * Drives on the fully lined-up route from here. It is the same route (only its far end moved
+   * onto the map's roads), so guidance carries on as it was: no new prompt, same alternatives.
+   * Not in the middle of a junction view; it waits for the next position after it.
+   */
+  private trySwap() {
+    const sw = this.pendingSwap;
+    if (!sw) return;
+    if (this.view !== 'nav' || this.engine.route !== sw.from) {
+      this.pendingSwap = null;
+      return;
+    }
+    if (this.activeJ || this.rerouting) return;
+    this.pendingSwap = null;
+    const r = sw.to;
+    const p = this.engine.progress;
+    const at = p ? r.line.project(p.snapped, Math.max(0, p.s - 300), p.s + 300) : null;
+    const s = at && at.dist < 30 ? at.s : (p?.s ?? 0);
+    this.engine.replaceRoute(r, detectJunctions(r), s);
+    this.tunnels.setRoute(r);
+    this.tolls.setRoute(r);
+    const eta = this.traffic.eta;
+    this.traffic.setRoute(r, s);
+    if (eta) this.traffic.seed(eta);
+    if (this.sim) this.sim.route = r;
+    this.routes = [r];
+    this.selected = 0;
+    this.map.showRoutes([r], 0);
+    this.paintJunctions();
+    this.map.setProgress(s);
+    // The turn arrow is drawn again from the new line at the next position.
+    this.lastStepIdx = -1;
+    this.prefetch(s);
   }
 
   /**

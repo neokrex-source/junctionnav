@@ -37,9 +37,21 @@ writeFileSync(join(out, 'shot.html'), page);
 
 (async () => {
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  // TILES=<folder of x-y.pbf>: the map from saved z14 tiles (no network), for looking at a replay.
+  const tiles = process.env.TILES;
+  const ctx = await browser.newContext();
+  if (tiles)
+    await ctx.route('https://tiles.openfreemap.org/**', async (r) => {
+      const u = r.request().url();
+      if (u.endsWith('/planet')) return r.fulfill({ json: { tilejson: '3.0.0', tiles: ['https://tiles.openfreemap.org/planet/x/{z}/{x}/{y}.pbf'], minzoom: 14, maxzoom: 14 } });
+      const m = u.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
+      const f = m && join(tiles, `${m[2]}-${m[3]}.pbf`);
+      if (f && require('node:fs').existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: 'application/x-protobuf' });
+      return r.fulfill({ status: 200, body: Buffer.alloc(0) });
+    });
   for (const s of shots) {
     for (const z of [17.3, 15.6]) {
-      const p = await browser.newPage({ viewport: { width: 520, height: 520 } });
+      const p = await ctx.newPage({ viewport: { width: 520, height: 520 } });
       await p.goto(`http://localhost:4173/${out}/shot.html?i=${s.i}&z=${z}`);
       await p.waitForFunction(() => window.done, null, { timeout: 60000 }).catch(() => console.log(s.i, 'did not go idle'));
       await p.waitForTimeout(800);

@@ -236,6 +236,39 @@ function stats(d: number[], at: LngLat[]): Stats {
   return { median: q(0.5), p95: q(0.95), p99: q(0.99), max: sorted[sorted.length - 1] ?? NaN, over3: ok.filter((x) => x > 3).length / ok.length, over6: ok.filter((x) => x > 6).length / ok.length, bad };
 }
 
+/** Motorway and tunnel stretches of a line on the map's roads (every 20 m, the nearest road going its way). */
+function kindsUnder(line: LngLat[]): Kinds {
+  const pl = new Polyline(line);
+  const out: Kinds = { at: [], k: [] };
+  let prev = '';
+  for (let s = 0; s <= pl.length; s += 20) {
+    const p = pl.pointAt(s);
+    const brg = pl.bearingAt(Math.max(0, s - 5), 10);
+    let best: { d: number; cls: string; tunnel: boolean; ramp: boolean } | null = null;
+    for (const g of roads.near(p, 10) ?? []) {
+      const f = new LocalFrame(p);
+      const a = f.toXY(g.a);
+      const b = f.toXY(g.b);
+      const along = Math.abs(((g.brg - brg + 540) % 360) - 180);
+      if (Math.min(along, 180 - along) > 40) continue;
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const L2 = dx * dx + dy * dy;
+      const t = L2 > 0 ? Math.max(0, Math.min(1, -(a[0] * dx + a[1] * dy) / L2)) : 0;
+      const d = Math.hypot(a[0] + dx * t, a[1] + dy * t);
+      if (!best || d < best.d) best = { d, cls: g.cls, tunnel: g.tunnel, ramp: g.ramp };
+    }
+    const k: RoadKind = { motorway: best?.cls === 'motorway' && !best.ramp, tunnel: !!best?.tunnel, ferry: false };
+    const key = `${k.motorway}${k.tunnel}`;
+    if (key !== prev) {
+      out.at.push(s);
+      out.k.push(k);
+      prev = key;
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ run */
 
 let bytes = 0;
@@ -321,6 +354,10 @@ for (const [name, a, b] of TRIPS) {
     kinds[k] = v.kinds;
   }
   set.apart = drawnApart(set.osrm, seed++);
+  // The drawn-apart line's road kinds, as a router's motorway and tunnel stretches would give
+  // them: from the map's roads under the OSRM route (OSRM's own answer has no road classes).
+  if (!REPLAY) await roads.load(roads.keysFor(set.osrm));
+  kinds.apart = kindsUnder(set.osrm);
   // Road tiles for everything drawn on this trip.
   const keys = [...new Set(Object.values(set).flatMap((l) => roads.keysFor(l)))];
   if (!REPLAY) await roads.load(keys);
@@ -328,7 +365,7 @@ for (const [name, a, b] of TRIPS) {
     if (k === 'osrm') continue;
     const t0 = performance.now();
     const scale = k === 'apart' ? new Polyline(set.osrm).length / Math.max(1, new Polyline(set.apart).length) : 1;
-    const res = await alignLine(set[k], roads, { kindAt: kindAt(kinds[k === 'apart' ? 'osrm' : k], scale) });
+    const res = await alignLine(set[k], roads, { kindAt: kindAt(kinds[k], scale) });
     const ms = performance.now() - t0;
     if (res) set[`${k}-aligned`] = res.coords;
     // Jumps: neighbouring points much further apart than the route between them.

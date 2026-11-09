@@ -158,10 +158,10 @@ const SWITCH = 0.3;
  * Changing to a road that does not meet this one (a road alongside): a car cannot do that, so
  * it costs about as much as 40 m on the wrong road.
  */
-const HOP = 10;
+const HOP = 15;
 /** Roads meet if they come within JOIN_GAP of each other within this many metres of the change. */
 const MEET_WINDOW = 40;
-const OFF_SWITCH = 1.5;
+const OFF_SWITCH = 8;
 const BACKWARDS = 3;
 /** At most this many roads per step. */
 const MAX_CANDS = 8;
@@ -197,9 +197,9 @@ interface Cand {
 function kindCost(seg: RoadSeg, k: RoadKind | undefined, end: boolean): number {
   let c = !end && seg.cls === 'service' ? SERVICE_MID : 0;
   if (!k) return c;
-  const fast = seg.cls === 'motorway' || seg.cls === 'trunk';
-  if (k.motorway && !fast) c += 1.5;
-  else if (!k.motorway && seg.cls === 'motorway' && !seg.ramp) c += 0.5;
+  // A router's motorway is a motorway or trunk road on the map; the other way round says little
+  // (routers and maps disagree on which expressways count as motorways).
+  if (k.motorway && seg.cls !== 'motorway' && seg.cls !== 'trunk') c += 1.5;
   if (k.tunnel !== seg.tunnel) c += 2;
   return c;
 }

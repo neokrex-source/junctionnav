@@ -10,6 +10,7 @@
  * information where the rest of the app looks for it (intersection classes and lanes).
  */
 import { angleDiff, destination, Polyline, type LngLat } from '../geo/geo';
+import type { RouteAligner } from '../routing/aligner';
 import { avoidList, labelRoutes, sameRoute } from '../routing/osrm';
 import type { Avoid, Intersection, Lane, Leg, ManeuverType, Modifier, Route, RouteRequest, RouteResult, Router, Step } from '../routing/types';
 import { TomTomError, ttEither, TT_BASE } from './http';
@@ -467,6 +468,8 @@ export class TomTomRouter implements Router {
   constructor(
     private key: () => string,
     private lang: () => string = () => 'en',
+    /** Puts TomTom's routes onto the map's roads (TomTom draws them from its own map). */
+    private aligner: () => RouteAligner | null = () => null,
   ) {}
 
   /** TomTom's routing speaks Malay and English, not Japanese (an unknown language is refused). */
@@ -500,7 +503,19 @@ export class TomTomRouter implements Router {
       routes.push(tf[0]);
     }
     labelRoutes(routes);
-    return { routes, warnings };
+    return { routes: await this.lineUp(routes, signal), warnings };
+  }
+
+  /** The routes on the map's own roads (as they are when that cannot be done). */
+  private async lineUp(routes: Route[], signal?: AbortSignal): Promise<Route[]> {
+    const al = this.aligner();
+    if (!al) return routes;
+    try {
+      return await al.align(routes, signal);
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e;
+      return routes;
+    }
   }
 
   /**

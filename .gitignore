@@ -6,3 +6,4 @@ server/osrm/data
 dist-artifact
 dist-android
 dist-traffic
+dist-align

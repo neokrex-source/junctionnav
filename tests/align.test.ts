@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { bearing, haversine, LocalFrame, Polyline, type LngLat, type XY } from '../src/geo/geo';
 import { alignLine, alignRoute, positionMap, type RoadSeg, type RoadSet } from '../src/routing/align';
+import { RouteAligner } from '../src/routing/aligner';
+import type { RoadTiles } from '../src/map/roadTiles';
 import type { Route, Step } from '../src/routing/types';
 
 const F = new LocalFrame([101.6869, 3.139]);
@@ -302,5 +304,98 @@ describe('a route lined up with the map', () => {
     const half = await alignRoute(r, new FakeRoads([{ pts: road }], ([x]) => x > 500));
     expect(half?.aligned).toBe('partial');
     expect(await alignRoute(r, new FakeRoads([{ pts: road }], () => true))).toBeNull();
+  });
+});
+
+describe('the aligner', () => {
+  const road: XY[] = [
+    [0, 0],
+    [1000, 0],
+  ];
+  function plain(): Route {
+    const geometry = shift(dense(road), 0, 6).map(ll);
+    const line = new Polyline(geometry);
+    const st = (s: number, type: Step['type'], index: number): Step => ({
+      index,
+      type,
+      location: line.pointAt(s),
+      bearingBefore: 90,
+      bearingAfter: 90,
+      name: '',
+      drivingSide: 'left',
+      distance: 0,
+      duration: 0,
+      intersections: [{ location: line.pointAt(s), bearings: [], entry: [], classes: [] }],
+      s,
+    });
+    return {
+      id: 't9',
+      geometry,
+      line,
+      distance: line.length,
+      duration: 90,
+      steps: [st(0, 'depart', 0), st(line.length, 'arrive', 1)],
+      summary: '',
+      hasToll: false,
+      hasMotorway: false,
+      hasFerry: false,
+      tollDistance: 0,
+      motorwayDistance: 0,
+      ferryDistance: 0,
+      legs: [{ distance: line.length, duration: 90, endS: line.length }],
+      label: 'fastest',
+      avoidApplied: [],
+      provider: 'TomTom',
+    };
+  }
+
+  /** Roads that come in when asked a second time (the far tile was late). */
+  function lateRoads() {
+    let late = true;
+    let asked = 0;
+    const roads = new FakeRoads([{ pts: road }], ([x]) => late && x > 600);
+    const tiles = {
+      keysFor: () => ['14/1/1'],
+      // The first wait runs out before the far tile; the second one gets it.
+      load: async () => {
+        if (++asked < 2) return false;
+        late = false;
+        return true;
+      },
+      near: (p: LngLat, r: number) => roads.near(p, r),
+      line: (id: number) => roads.line(id),
+    };
+    return tiles as unknown as RoadTiles;
+  }
+
+  it('lines routes up and remembers which still wait for road tiles', async () => {
+    const al = new RouteAligner(lateRoads());
+    const raw = plain();
+    const [first] = await al.align([raw]);
+    expect(first).not.toBe(raw);
+    expect(first.aligned).toBe('partial');
+    expect(al.pending(first)).toBe(true);
+    // The rest, once the tiles are in: from the router's own route, all of it on the road.
+    const full = await al.complete(first);
+    expect(full?.aligned).toBe('full');
+    for (const p of full!.geometry) expect(distTo(p, road)).toBeLessThan(0.3);
+    // Asked again: the same answer, not a second piece of work.
+    expect(await al.complete(first)).toBe(full);
+    expect(al.pending(full!)).toBe(false);
+  });
+
+  it('hands routes back unchanged when no roads come', async () => {
+    const tiles = { keysFor: () => [], load: async () => false, near: () => null, line: () => undefined } as unknown as RoadTiles;
+    const raw = plain();
+    const [r] = await new RouteAligner(tiles).align([raw]);
+    expect(r).toBe(raw);
+  });
+
+  it('gives up when the request is called off', async () => {
+    const tiles = { keysFor: () => ['k'], load: (_k: string[], _b: number, signal?: AbortSignal) => new Promise((_, no) => signal?.addEventListener('abort', () => no(new DOMException('Aborted', 'AbortError')))), near: () => null, line: () => undefined } as unknown as RoadTiles;
+    const ctrl = new AbortController();
+    const p = new RouteAligner(tiles).align([plain()], ctrl.signal);
+    ctrl.abort();
+    await expect(p).rejects.toThrow(/Abort/);
   });
 });

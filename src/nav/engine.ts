@@ -150,6 +150,18 @@ export class NavEngine {
     if (first) this.announced.add(`${first.index}:short`);
   }
 
+  /**
+   * The same route moved onto the map's roads further on (src/routing/align.ts): its maneuvers are
+   * the same ones, so what was said and the lane tracking stay; only the line and positions change.
+   */
+  replaceRoute(route: Route, junctions: JunctionCandidate[], s: number) {
+    this.route = route;
+    this.junctions = junctions;
+    this.lastS = s;
+    this.real = null;
+    this.estimating = false;
+  }
+
   setTunnels(spans: TunnelSpan[]) {
     this.tunnels = [...spans].sort((a, b) => a.fromS - b.fromS);
   }
