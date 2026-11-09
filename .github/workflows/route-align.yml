@@ -1,0 +1,48 @@
+# Measures how well route lines (TomTom and OSRM) sit on the roads the map draws, with pictures
+# of the worst stretches, pushed to the route-align branch for a look.
+name: Route alignment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/dev/route-align*'
+      - 'src/routing/align*'
+      - '.github/workflows/route-align.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm i --no-save playwright@1.64.1 && npx playwright install --with-deps chromium
+      - name: Measure
+        env:
+          TT_KEY: ${{ vars.VITE_TOMTOM_KEY }}
+        run: node scripts/dev/route-align.mjs route-align
+      - name: Pictures of the worst stretches
+        run: |
+          npx vite-node scripts/dev/route-align-style.ts route-align
+          python3 -m http.server 4173 >/dev/null 2>&1 &
+          sleep 2
+          node scripts/dev/route-align-shots.cjs route-align
+          ls -la route-align
+      - name: Push the report
+        run: |
+          cd route-align
+          git init -q -b route-align
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Route alignment from ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" route-align
