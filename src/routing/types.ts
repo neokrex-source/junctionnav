@@ -113,6 +113,11 @@ export interface Route {
   trafficDelay?: number;
   /** Toll gates the router itself reported on the route (TomTom does), by position along it. */
   tollGates?: { s: number; at: LngLat; name?: string }[];
+  /**
+   * Moved onto the map's roads (src/routing/align.ts): all of it, or only where the map's roads
+   * were loaded in time ('partial'; the rest follows when they are).
+   */
+  aligned?: 'full' | 'partial';
 }
 
 export interface RouteRequest {
