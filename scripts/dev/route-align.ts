@@ -197,6 +197,12 @@ const roads = new RoadTiles({
       const buf = await r.arrayBuffer();
       bytes += buf.byteLength;
       tilesFetched++;
+      // Kept with the report, so the lining up can be replayed offline (scripts/dev/route-align-replay.ts).
+      const m = String(input).match(/\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
+      if (m && r.ok) {
+        mkdirSync(join(OUT, 'tiles'), { recursive: true });
+        writeFileSync(join(OUT, 'tiles', `${m[2]}-${m[3]}.pbf`), new Uint8Array(buf));
+      }
       return new Response(buf, { status: r.status });
     }
     return r;
