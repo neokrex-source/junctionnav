@@ -154,6 +154,13 @@ const BETA = 1.2;
 const SERVICE_MID = 0.25;
 const END_ZONE = 300;
 const SWITCH = 0.3;
+/**
+ * Changing to a road that does not meet this one (a road alongside): a car cannot do that, so
+ * it costs about as much as 40 m on the wrong road.
+ */
+const HOP = 10;
+/** Roads meet if they come within JOIN_GAP of each other within this many metres of the change. */
+const MEET_WINDOW = 40;
 const OFF_SWITCH = 1.5;
 const BACKWARDS = 3;
 /** At most this many roads per step. */
@@ -224,17 +231,69 @@ function candidates(roads: RoadSet, sm: Sample, radius: number, kind: RoadKind |
   return list;
 }
 
-function transition(j: Cand, k: Cand, step: number): number {
-  if (j.seg && k.seg && j.seg.line === k.seg.line && j.dir === k.dir) {
-    const D = (k.m - j.m) * k.dir;
-    if (D < -0.5) return BACKWARDS + -D / BETA;
-    return Math.abs(D - step) / BETA;
+/** A piece cut to the part between m0 and m1 metres along its line (null if none of it is). */
+function clip(seg: RoadSeg, m0: number, m1: number): RoadSeg | null {
+  const a = Math.max(m0, seg.m);
+  const b = Math.min(m1, seg.m + seg.len);
+  if (b < a) return null;
+  if (a === seg.m && b === seg.m + seg.len) return seg;
+  const at = (m: number): LngLat => {
+    const t = seg.len > 0 ? (m - seg.m) / seg.len : 0;
+    return [seg.a[0] + (seg.b[0] - seg.a[0]) * t, seg.a[1] + (seg.b[1] - seg.a[1]) * t];
+  };
+  return { ...seg, a: at(a), b: at(b), m: a, len: b - a };
+}
+
+/**
+ * The road line's pieces within `win` metres along it of position m (cut at the window's ends:
+ * a long straight piece must not count as meeting another road far away).
+ */
+function window(roads: RoadSet, seg: RoadSeg, m: number, win: number): RoadSeg[] {
+  const line = roads.line(seg.line);
+  if (!line || line[seg.i] !== seg) return [clip(seg, m - win, m + win) ?? seg];
+  let a = seg.i;
+  let b = seg.i;
+  while (a > 0 && line[a - 1].m + line[a - 1].len >= m - win) a--;
+  while (b + 1 < line.length && line[b + 1].m <= m + win) b++;
+  const out: RoadSeg[] = [];
+  for (let i = a; i <= b; i++) {
+    const c = clip(line[i], m - win, m + win);
+    if (c) out.push(c);
   }
-  const D = metres(j.q, k.q);
-  let c = Math.abs(D - step) / BETA;
-  if (!j.seg !== !k.seg) c += OFF_SWITCH;
-  else if (j.seg && k.seg) c += SWITCH;
-  return c;
+  return out;
+}
+
+/** The cost of going from one choice at a step to another at the next, with what it has worked out. */
+function transitions(roads: RoadSet) {
+  const meet = new Map<string, boolean>();
+  /** The two roads meet near these places on them (a junction, a ramp's start, the same road in two tiles). */
+  const meets = (j: Cand, k: Cand) => {
+    const key = `${j.seg!.line}:${j.seg!.i}:${k.seg!.line}:${k.seg!.i}`;
+    let v = meet.get(key);
+    if (v === undefined) {
+      v = false;
+      const A = window(roads, j.seg!, j.m, MEET_WINDOW);
+      const B = window(roads, k.seg!, k.m, MEET_WINDOW);
+      for (const s of A) {
+        for (const u of B) if (segGap(s, u).d <= JOIN_GAP) v = true;
+        if (v) break;
+      }
+      meet.set(key, v);
+    }
+    return v;
+  };
+  return (j: Cand, k: Cand, step: number): number => {
+    if (j.seg && k.seg && j.seg.line === k.seg.line && j.dir === k.dir) {
+      const D = (k.m - j.m) * k.dir;
+      if (D < -0.5) return BACKWARDS + -D / BETA;
+      return Math.abs(D - step) / BETA;
+    }
+    const D = metres(j.q, k.q);
+    let c = Math.abs(D - step) / BETA;
+    if (!j.seg !== !k.seg) c += OFF_SWITCH;
+    else if (j.seg && k.seg) c += SWITCH + (meets(j, k) ? 0 : HOP);
+    return c;
+  };
 }
 
 /** The route's points every `step` metres, with the router's own points among them. */
@@ -276,8 +335,23 @@ function joinOf(roads: RoadSet, A: Cand, B: Cand): { q: LngLat; mA: number; mB: 
   const la = roads.line(A.seg!.line);
   const lb = roads.line(B.seg!.line);
   if (!la || !lb) return null;
-  const near = (segs: RoadSeg[], m: number) => segs.filter((s) => s.m + s.len >= m - JOIN_WINDOW && s.m <= m + JOIN_WINDOW);
+  const near = (segs: RoadSeg[], m: number) => segs.map((s) => clip(s, m - JOIN_WINDOW, m + JOIN_WINDOW)).filter((s): s is RoadSeg => !!s);
   let best: { d: number; q: LngLat; mA: number; mB: number; cost: number } | null = null;
+  // Roads lying on each other here (the same road in two tiles, a road carrying on under another
+  // name): they meet right where the change is.
+  for (const [from, to, segs, m0] of [
+    [A, 'B', near(lb, B.m), B.m],
+    [B, 'A', near(la, A.m), A.m],
+  ] as const) {
+    for (const u of segs) {
+      const pr = projectSeg(from.q, u.a, u.b);
+      if (pr.d > JOIN_GAP) continue;
+      const m = u.m + pr.t * u.len;
+      const cost = pr.d + 0.1 * Math.abs(m - m0);
+      if (best && cost >= best.cost) continue;
+      best = to === 'B' ? { d: pr.d, q: midpoint(from.q, pr.q), mA: A.m, mB: m, cost } : { d: pr.d, q: midpoint(from.q, pr.q), mA: m, mB: B.m, cost };
+    }
+  }
   for (const s of near(la, A.m))
     for (const u of near(lb, B.m)) {
       const g = segGap(s, u);
@@ -337,6 +411,7 @@ export async function alignLine(coords: LngLat[], roads: RoadSet, opts: AlignOpt
   const n = sm.length;
 
   // Viterbi: the cheapest choice of road for every step.
+  const transition = transitions(roads);
   const cands: Cand[][] = new Array(n);
   const from: Int16Array[] = new Array(n);
   let cost = new Float64Array(0);

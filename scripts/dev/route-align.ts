@@ -14,16 +14,18 @@
  *
  *   TT_KEY=... npx vite-node scripts/dev/route-align.ts <out dir>
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { destination, LocalFrame, Polyline, type LngLat } from '../../src/geo/geo';
 import { OFM_TILES } from '../../src/map/techStyle';
 import { RoadTiles } from '../../src/map/roadTiles';
-import { alignLine, type RoadSet } from '../../src/routing/align';
+import { alignLine, type RoadKind, type RoadSet } from '../../src/routing/align';
 
 const OUT = process.argv[2] ?? 'route-align';
 mkdirSync(OUT, { recursive: true });
 const KEY = (process.env.TT_KEY ?? '').trim();
+/** A folder with trips.json and tiles/ from an earlier run: no network, the same lines and roads. */
+const REPLAY = process.env.REPLAY ?? '';
 
 const TRIPS: [string, LngLat, LngLat][] = [
   ['KLCC to KLIA', [101.7119, 3.1578], [101.7099, 2.7456]],
@@ -52,20 +54,70 @@ async function getJson(url: string, tries = 3): Promise<any> {
   }
 }
 
-async function osrm(a: LngLat, b: LngLat): Promise<LngLat[]> {
-  const j = await getJson(`https://router.project-osrm.org/route/v1/driving/${a[0]},${a[1]};${b[0]},${b[1]}?overview=full&geometries=geojson&steps=false`);
-  return j.routes[0].geometry.coordinates;
+interface Kinds {
+  /** Positions along the line where the road kind changes. */
+  at: number[];
+  k: RoadKind[];
 }
 
-async function tomtom(family: 'classic' | 'orbis', a: LngLat, b: LngLat): Promise<LngLat[]> {
+function kindsFrom(line: LngLat[], marks: { p: LngLat; k: RoadKind }[]): Kinds {
+  const pl = new Polyline(line);
+  const out: Kinds = { at: [], k: [] };
+  let from = 0;
+  for (const m of marks) {
+    const pr = pl.project(m.p, from, from + 5000);
+    from = pr.s;
+    out.at.push(pr.s);
+    out.k.push(m.k);
+  }
+  return out;
+}
+
+function kindAt(kinds: Kinds | undefined, scale = 1): ((s: number) => RoadKind) | undefined {
+  if (!kinds?.at.length) return undefined;
+  return (s: number) => {
+    const x = s * scale;
+    let i = 0;
+    while (i + 1 < kinds.at.length && kinds.at[i + 1] <= x) i++;
+    return kinds.k[i];
+  };
+}
+
+async function osrm(a: LngLat, b: LngLat): Promise<{ line: LngLat[]; kinds: Kinds }> {
+  const j = await getJson(`https://router.project-osrm.org/route/v1/driving/${a[0]},${a[1]};${b[0]},${b[1]}?overview=full&geometries=geojson&steps=true`);
+  const line: LngLat[] = j.routes[0].geometry.coordinates;
+  const marks: { p: LngLat; k: RoadKind }[] = [];
+  for (const leg of j.routes[0].legs)
+    for (const st of leg.steps)
+      for (const x of st.intersections) {
+        const c: string[] = x.classes ?? [];
+        marks.push({ p: x.location, k: { motorway: c.includes('motorway'), tunnel: c.includes('tunnel'), ferry: c.includes('ferry') } });
+      }
+  return { line, kinds: kindsFrom(line, marks) };
+}
+
+async function tomtom(family: 'classic' | 'orbis', a: LngLat, b: LngLat): Promise<{ line: LngLat[]; kinds: Kinds }> {
   const q = new URLSearchParams({ key: KEY, travelMode: 'car', routeType: 'fastest', instructionsType: 'coded' });
   if (family === 'orbis') {
     q.set('apiVersion', '2');
     q.set('traffic', 'live');
   } else q.set('traffic', 'true');
+  for (const t of ['motorway', 'tunnel', 'ferry']) q.append('sectionType', t);
   const path = family === 'orbis' ? '/maps/orbis/routing/calculateRoute' : '/routing/1/calculateRoute';
   const j = await getJson(`https://api.tomtom.com${path}/${a[1]},${a[0]}:${b[1]},${b[0]}/json?${q}`, 2);
-  return j.routes[0].legs.flatMap((l: { points: { latitude: number; longitude: number }[] }) => l.points.map((p) => [p.longitude, p.latitude] as LngLat));
+  const r = j.routes[0];
+  const line: LngLat[] = r.legs.flatMap((l: { points: { latitude: number; longitude: number }[] }) => l.points.map((p) => [p.longitude, p.latitude] as LngLat));
+  // Kind changes at every section end, the way the app reads TomTom's sections.
+  const pl = new Polyline(line);
+  const secs: { a: number; b: number; t: string }[] = (r.sections ?? []).map((x: { startPointIndex: number; endPointIndex: number; sectionType: string }) => ({ a: pl.cum[x.startPointIndex], b: pl.cum[x.endPointIndex], t: x.sectionType }));
+  const cuts = [...new Set([0, ...secs.flatMap((x) => [x.a, x.b])])].sort((x, y) => x - y);
+  const kinds: Kinds = { at: [], k: [] };
+  for (const c of cuts) {
+    const on = (t: string) => secs.some((x) => x.t === t && c >= x.a - 0.5 && c < x.b - 0.5);
+    kinds.at.push(c);
+    kinds.k.push({ motorway: on('MOTORWAY'), tunnel: on('TUNNEL'), ferry: on('FERRY') });
+  }
+  return { line, kinds };
 }
 
 /* ------------------------------------------------------------------ "another map's" line */
@@ -192,12 +244,13 @@ const roads = new RoadTiles({
   tileJson: OFM_TILES,
   maxTiles: 2000,
   fetch: async (input, init) => {
+    if (REPLAY) throw new Error('replaying: no network');
     const r = await fetch(input, init);
     if (String(input).endsWith('.pbf')) {
       const buf = await r.arrayBuffer();
       bytes += buf.byteLength;
       tilesFetched++;
-      // Kept with the report, so the lining up can be replayed offline (scripts/dev/route-align-replay.ts).
+      // Kept with the report, so the lining up can be replayed offline (REPLAY=<that folder>).
       const m = String(input).match(/\/(\d+)\/(\d+)\/(\d+)\.pbf$/);
       if (m && r.ok) {
         mkdirSync(join(OUT, 'tiles'), { recursive: true });
@@ -209,6 +262,27 @@ const roads = new RoadTiles({
   },
 });
 
+if (REPLAY) {
+  const dir = join(REPLAY, 'tiles');
+  for (const f of existsSync(dir) ? readdirSync(dir) : []) {
+    const m = f.match(/^(\d+)-(\d+)\.pbf$/);
+    if (m) roads.addTile(Number(m[1]), Number(m[2]), new Uint8Array(readFileSync(join(dir, f))));
+  }
+}
+function replayTrips(): Record<string, Record<string, { line: LngLat[]; kinds: Kinds }>> {
+  if (existsSync(join(REPLAY, 'trips.json'))) return JSON.parse(readFileSync(join(REPLAY, 'trips.json'), 'utf8'));
+  // An older report: its lines without road kinds.
+  const r: Record<string, Record<string, LngLat[]>> = JSON.parse(readFileSync(join(REPLAY, 'routes.json'), 'utf8'));
+  const out: ReturnType<typeof replayTrips> = {};
+  for (const [name, set] of Object.entries(r)) {
+    out[name] = {};
+    for (const [k, line] of Object.entries(set)) if (k === 'osrm' || /^tomtom-(classic|orbis)$/.test(k)) out[name][k] = { line, kinds: { at: [], k: [] } };
+  }
+  return out;
+}
+const saved = REPLAY ? replayTrips() : {};
+const trips: typeof saved = {};
+
 const lines: string[] = ['# Route lines against the map roads', ''];
 lines.push(KEY ? 'With TomTom routes.' : 'No TomTom key here: OSRM routes, and OSRM routes drawn apart to stand for another map.', '');
 lines.push('Metres to the nearest map road going the same way (every 5 m), and for lined-up lines also to the OSRM route.', '');
@@ -218,35 +292,61 @@ const shots: { trip: string; line: string; at: LngLat; len: number; mean: number
 const pc = (x: number) => `${(x * 100).toFixed(1)}%`;
 const f1 = (x: number) => (Number.isFinite(x) ? x.toFixed(1) : '-');
 let seed = 7;
+let totalJumps = 0;
 
 for (const [name, a, b] of TRIPS) {
   const set: Record<string, LngLat[]> = {};
-  try {
-    set.osrm = await osrm(a, b);
-  } catch (e) {
-    console.log(name, 'OSRM:', (e as Error).message);
-    continue;
+  const kinds: Record<string, Kinds> = {};
+  const got = saved[name] ?? {};
+  if (!REPLAY) {
+    try {
+      got.osrm = await osrm(a, b);
+    } catch (e) {
+      console.log(name, 'OSRM:', (e as Error).message);
+      continue;
+    }
+    if (KEY)
+      for (const fam of ['classic', 'orbis'] as const) {
+        try {
+          got[`tomtom-${fam}`] = await tomtom(fam, a, b);
+        } catch (e) {
+          console.log(name, fam, (e as Error).message);
+        }
+      }
+  }
+  if (!got.osrm) continue;
+  trips[name] = got;
+  for (const [k, v] of Object.entries(got)) {
+    set[k] = v.line;
+    kinds[k] = v.kinds;
   }
   set.apart = drawnApart(set.osrm, seed++);
-  if (KEY) {
-    for (const fam of ['classic', 'orbis'] as const) {
-      try {
-        set[`tomtom-${fam}`] = await tomtom(fam, a, b);
-      } catch (e) {
-        console.log(name, fam, (e as Error).message);
-      }
-    }
-  }
   // Road tiles for everything drawn on this trip.
   const keys = [...new Set(Object.values(set).flatMap((l) => roads.keysFor(l)))];
-  await roads.load(keys);
+  if (!REPLAY) await roads.load(keys);
   for (const k of Object.keys(set)) {
     if (k === 'osrm') continue;
     const t0 = performance.now();
-    const res = await alignLine(set[k], roads);
+    const scale = k === 'apart' ? new Polyline(set.osrm).length / Math.max(1, new Polyline(set.apart).length) : 1;
+    const res = await alignLine(set[k], roads, { kindAt: kindAt(kinds[k === 'apart' ? 'osrm' : k], scale) });
     const ms = performance.now() - t0;
     if (res) set[`${k}-aligned`] = res.coords;
-    console.log(name, k, res ? `matched ${pc(res.matched)}, unknown ${pc(res.unknown)}, max move ${res.maxMove.toFixed(1)} m, ${res.coords.length} points from ${set[k].length}, ${ms.toFixed(0)} ms` : 'not aligned');
+    // Jumps: neighbouring points much further apart than the route between them.
+    let jumps = 0;
+    if (res) {
+      // Between points that stand for places on the route (joins in between count with them).
+      let last = 0;
+      let run = 0;
+      for (let i = 1; i < res.coords.length; i++) {
+        run += new Polyline([res.coords[i - 1], res.coords[i]]).length;
+        if (Number.isNaN(res.oldS[i])) continue;
+        if (run > res.oldS[i] - res.oldS[last] + 15) jumps++;
+        last = i;
+        run = 0;
+      }
+    }
+    console.log(name, k, res ? `matched ${pc(res.matched)}, unknown ${pc(res.unknown)}, max move ${res.maxMove.toFixed(1)} m, ${res.coords.length} points from ${set[k].length}, jumps ${jumps}, ${ms.toFixed(0)} ms` : 'not aligned');
+    totalJumps += jumps;
     (set as Record<string, unknown>)[`${k}-ms`] = ms;
   }
   const ref = new Polyline(set.osrm);
@@ -268,11 +368,12 @@ for (const [name, a, b] of TRIPS) {
   for (const k of Object.keys(set)) if (k.endsWith('-ms')) delete (set as Record<string, unknown>)[k];
   routesOut[name] = set;
 }
-lines.push('', `Road tiles fetched: ${tilesFetched}, ${(bytes / 1e6).toFixed(1)} MB.`, '');
+lines.push('', `Road tiles fetched: ${tilesFetched}, ${(bytes / 1e6).toFixed(1)} MB. Jumps in lined-up lines: ${totalJumps}.`, '');
 lines.push('## Worst stretches', '');
 for (const s of shots) lines.push(`- ${s.trip}, ${s.line}: ${s.len} m more than 3 m off (mean ${s.mean.toFixed(1)} m) at ${s.at[1].toFixed(5)},${s.at[0].toFixed(5)}`);
 writeFileSync(join(OUT, 'report.md'), lines.join('\n') + '\n');
 writeFileSync(join(OUT, 'routes.json'), JSON.stringify(routesOut));
+if (!REPLAY) writeFileSync(join(OUT, 'trips.json'), JSON.stringify(trips));
 // Pictures: the lined-up lines' worst places first.
 shots.sort((a, b) => Number(b.line.endsWith('aligned')) - Number(a.line.endsWith('aligned')) || b.len * b.mean - a.len * a.mean);
 writeFileSync(join(OUT, 'shots.json'), JSON.stringify(shots.slice(0, 12).map((s, i) => ({ i, trip: s.trip, provider: s.line, at: s.at, len: s.len, mean: s.mean }))));

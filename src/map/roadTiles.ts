@@ -115,7 +115,7 @@ export class RoadTiles implements RoadSet {
   private readonly f: typeof fetch;
 
   constructor(private opts: RoadTilesOptions) {
-    this.f = opts.fetch ?? ((...a) => fetch(...a));
+    this.f = opts.fetch ?? ((input, init) => fetch(input, init));
   }
 
   /** The tiles a line passes through, in its order. */
