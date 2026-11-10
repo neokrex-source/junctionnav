@@ -171,6 +171,7 @@ describe.skipIf(!dir)('junction views put the route on its side', () => {
     const tally = new Map<string, Tally>(variants.map((v) => [v.id, { n: 0, osm: 0, right: 0, wrong: 0, unsure: 0, far: 0 }]));
     const lines: string[] = ['JUNCTION SIDES'];
     const wrongs: string[] = [];
+    const fars: string[] = [];
     let seed = 11;
     for (const [name, a, b] of TRIPS) {
       const res = router.route({ coords: [a, b], bearings: [null, null] });
@@ -202,7 +203,11 @@ describe.skipIf(!dir)('junction views put the route on its side', () => {
           const split = (sc as JunctionScene & { shift?: number }).shift ?? 0;
           const at = r.line.pointAt(cand.s + split);
           const far = new LocalFrame(at).toXY(route.line.pointAt(j.s));
-          if (Math.hypot(far[0], far[1]) > 15) t.far++;
+          const off = Math.hypot(far[0], far[1]);
+          if (off > 15) {
+            t.far++;
+            fars.push(`${name} ${(j.s / 1000).toFixed(2)} km ${j.kind} ${step.type}/${step.modifier} ${v.id}: split ${Math.round(off)} m from OpenStreetMap's (${sc.source}, moved ${Math.round(split)} m) at ${j.location[1].toFixed(5)},${j.location[0].toFixed(5)}`);
+          }
           const got = viewSide(sc);
           if (got === want) t.right++;
           else if (got === null || got === 'middle') t.unsure++;
@@ -221,8 +226,15 @@ describe.skipIf(!dir)('junction views put the route on its side', () => {
       lines.push(`  ${v.label.padEnd(32)} ${String(t.n).padStart(5)}  ${String(t.osm).padStart(8)}  ${String(t.right).padStart(10)}  ${String(t.wrong).padStart(10)}  ${String(t.unsure).padStart(6)}  ${String(t.far).padStart(6)}`);
     }
     if (wrongs.length) lines.push('', '  WRONG SIDE:', ...wrongs.map((w) => `    ${w}`));
+    if (fars.length) lines.push('', '  SPLIT MORE THAN 15 M OFF:', ...fars.map((w) => `    ${w}`));
     console.log(lines.join('\n'));
     expect(tally.get('osm')!.n).toBeGreaterThan(20);
     expect(wrongs, 'junction views with the route on the wrong side').toEqual([]);
+    // TomTom's version of the route still gets views from the road data, centred on the split.
+    for (const v of variants) {
+      const t = tally.get(v.id)!;
+      expect(t.osm / t.n, `${v.label}: views from the road data`).toBeGreaterThan(0.9);
+      expect(t.far / t.n, `${v.label}: views off the split`).toBeLessThan(0.12);
+    }
   }, 300_000);
 });
