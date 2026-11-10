@@ -3,6 +3,7 @@ import type { FeatureCollection } from 'geojson';
 import type { Settings } from '../state/settings';
 import { themeFor } from '../theme/palette';
 import { techStyle } from './techStyle';
+import { tomtomStyle } from './tomtomStyle';
 
 export interface StyleDef {
   id: string;
@@ -58,7 +59,7 @@ export function fallbackStyle(night: boolean): StyleSpecification {
 }
 
 export const STYLES: StyleDef[] = [
-  { id: 'tech', label: 'JunctionNav (day and night)', url: () => '', spec: (night, s) => techStyle(night, s.lang) },
+  { id: 'tech', label: 'JunctionNav (TomTom map, else OpenStreetMap)', url: () => '', spec: (night, s) => techStyle(night, s.lang) },
   { id: 'ofm-liberty', label: 'OpenFreeMap Liberty', night: 'ofm-dark', url: () => 'https://tiles.openfreemap.org/styles/liberty' },
   { id: 'ofm-bright', label: 'OpenFreeMap Bright', night: 'ofm-dark', url: () => 'https://tiles.openfreemap.org/styles/bright' },
   { id: 'ofm-positron', label: 'OpenFreeMap Positron', night: 'ofm-dark', url: () => 'https://tiles.openfreemap.org/styles/positron' },
@@ -86,10 +87,15 @@ export const STYLES: StyleDef[] = [
   { id: 'custom', label: 'Custom style URL', url: (s) => s.customStyleUrl },
 ];
 
-export function resolveStyle(s: Settings, night: boolean): string | StyleSpecification {
+/**
+ * The map style for the settings. `tomtomTiles` is TomTom's map tile address when TomTom's map
+ * can be used right now (src/map/tomtomMap.ts): the JunctionNav look is then drawn from it.
+ */
+export function resolveStyle(s: Settings, night: boolean, tomtomTiles: string | null = null): string | StyleSpecification {
   let def = STYLES.find((d) => d.id === s.mapStyle) ?? STYLES[0];
   if (def.needsKey && !s.maptilerKey) def = STYLES[0];
   if (def.id === 'custom' && !s.customStyleUrl) def = STYLES[0];
+  if (def.id === 'tech' && tomtomTiles) return tomtomStyle(night, s.lang, tomtomTiles);
   if (def.spec) return def.spec(night, s);
   if (night && def.night) def = STYLES.find((d) => d.id === def.night) ?? def;
   return def.url(s);

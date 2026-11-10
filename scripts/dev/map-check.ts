@@ -9,6 +9,8 @@ import { VectorTile } from '@mapbox/vector-tile';
 import Pbf from 'pbf';
 import { techOnlineStyle } from '../../src/map/techStyle';
 import { themeFor } from '../../src/theme/palette';
+import { checkTile, tomtomTileUrl, type MapFamily } from '../../src/map/tomtomMap';
+import { tomtomMapStyle } from '../../src/map/tomtomStyle';
 
 const out = process.argv[2] ?? 'map-check';
 mkdirSync(out, { recursive: true });
@@ -77,5 +79,51 @@ map.on('error', (e) => console.error(String(e.error && e.error.message)));
 </script>`,
   );
 }
+// TomTom's map in the JunctionNav look, with a TomTom key (the TOMTOM_KEY secret): one tile
+// checked against the layout the style draws, and day and night pictures. The key never goes into
+// the files pushed with the pictures: the pages take it from their address (map-shots.cjs).
+const ttKey = (process.env.TT_KEY ?? '').trim();
+const ttStatus: Record<string, unknown> = { key: !!ttKey };
+if (ttKey) {
+  const [tx, ty] = [Math.floor(((101.7 + 180) / 360) * 4096), Math.floor(((1 - Math.log(Math.tan((3.145 * Math.PI) / 180) + 1 / Math.cos((3.145 * Math.PI) / 180)) / Math.PI) / 2) * 4096)];
+  let family: MapFamily | null = null;
+  for (const f of ['classic', 'orbis'] as const) {
+    const res = await fetch(tomtomTileUrl(f, ttKey).replace('{z}', '12').replace('{x}', String(tx)).replace('{y}', String(ty)));
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const c = res.ok ? checkTile(buf) : { ok: false, why: `HTTP ${res.status}` };
+    let layers: string[] = [];
+    try {
+      layers = res.ok ? Object.keys(new VectorTile(new Pbf(buf)).layers) : [];
+    } catch {
+      /* not a tile */
+    }
+    ttStatus[f] = { status: res.status, ok: c.ok, why: c.why, layers };
+    console.log(`TomTom ${f} map tile: ${res.status} ${c.ok ? 'in the expected layout' : c.why} (${layers.join(', ')})`);
+    if (c.ok && !family) family = f;
+  }
+  ttStatus.family = family;
+  if (family)
+    for (const night of [false, true]) {
+      const mode = night ? 'tt-night' : 'tt-day';
+      writeFileSync(join(out, `style-${mode}.json`), JSON.stringify(tomtomMapStyle(night, 'en', tomtomTileUrl(family, '{KEY}'))));
+      writeFileSync(
+        join(out, `page-${mode}.html`),
+        `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/node_modules/maplibre-gl/dist/maplibre-gl.css">
+<style>html,body,#m{margin:0;width:100%;height:100%}</style><div id="m"></div>
+<script src="/node_modules/maplibre-gl/dist/maplibre-gl.js"></script>
+<script>
+(async () => {
+  const key = new URLSearchParams(location.search).get('k') || '';
+  const style = await (await fetch('/${out}/style-${mode}.json')).json();
+  style.sources.tomtom.tiles = style.sources.tomtom.tiles.map((u) => u.replace('%7BKEY%7D', encodeURIComponent(key)).replace('{KEY}', encodeURIComponent(key)));
+  const map = new maplibregl.Map({ container: 'm', style, center: [101.7, 3.145], zoom: 14.2, pitch: 0, attributionControl: false });
+  map.on('load', () => map.once('idle', () => (window.done = true)));
+  map.on('error', (e) => console.error(String(e.error && e.error.message)));
+})();
+</script>`,
+      );
+    }
+}
+writeFileSync(join(out, 'tomtom.json'), JSON.stringify(ttStatus, null, 1));
 writeFileSync(join(out, 'problems.json'), JSON.stringify(problems, null, 1));
 console.log(problems.length ? `PROBLEMS:\n${problems.join('\n')}` : 'no problems');

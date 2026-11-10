@@ -1,5 +1,6 @@
 import { SIGN_THEMES } from '../junction/signs';
 import { STYLES } from '../map/styles';
+import { TomTomMap } from '../map/tomtomMap';
 import type { OfflineStore } from '../offline/store';
 import { BUILT_IN_TOMTOM_KEY, DEFAULTS, type Settings } from '../state/settings';
 import { TomTomTraffic } from '../traffic/tomtom';
@@ -10,6 +11,7 @@ import { runningCopy } from '../native/appMode';
 import { APK_URL, APP_VERSION, NATIVE, TRAFFIC_NEWS_URL } from '../platform';
 import { DEVELOPER, INSTITUTION } from '../credit';
 import { h } from './dom';
+import { voicesFor, type VoiceChoice, type VoiceInfo } from '../nav/sources';
 import { offlinePanel } from './offlinePanel';
 import type { PlacesService } from '../places/service';
 import type { PlacesUpdate } from '../places/schedule';
@@ -50,7 +52,12 @@ export interface SettingsOptions {
   tab?: 'map' | 'drive' | 'traffic' | 'downloads' | 'app';
   /** Your pins on the map: how many, and removing them all. */
   pins?: { count: number; clear: () => void };
+  /** The voices this phone or browser can speak with, and a sample in one of them. */
+  voices?: { list: () => Promise<VoiceInfo[]>; test: (lang: Settings['lang'], choice: VoiceChoice) => void };
 }
+
+/** Speech language of each app language (as in src/routing/instructions.ts). */
+const SPEECH: Record<Settings['lang'], string> = { en: 'en-GB', ms: 'ms-MY', ja: 'ja-JP' };
 
 /** The settings tab last open, to come back to. */
 const TAB_KEY = 'junctionnav.settings.tab';
@@ -89,6 +96,50 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     closeUp.checked = current.closeUp;
     const voice = h('input', { id: 'voice', type: 'checkbox' }) as HTMLInputElement;
     voice.checked = current.voice;
+    const voiceGender = select('voiceGender', current.voiceGender, [
+      ['female', 'Female voice'],
+      ['male', 'Male voice'],
+    ]);
+    const voiceId = select('voiceId', current.voiceId, [['', 'Best for the language']]);
+    const voiceNote = h('div', { class: 'hint', role: 'status' });
+    const voiceTest = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Test voice') as HTMLButtonElement;
+    let allVoices: VoiceInfo[] = [];
+    const speechLang = () => SPEECH[lang.value as Settings['lang']] ?? 'en-GB';
+    /** The voices for the language chosen, named so they can be told apart, and what the choice will sound like. */
+    const fillVoices = () => {
+      const keep = voiceId.value || current.voiceId;
+      const list = voicesFor(allVoices, speechLang());
+      const short = (v: VoiceInfo) => v.id.match(/-x-([a-z0-9]+)/i)?.[1] ?? '';
+      voiceId.replaceChildren(
+        h('option', { value: '' }, 'Best for the language'),
+        ...list.map((v) => {
+          const bits = [v.gender === 'male' ? 'male' : v.gender === 'female' ? 'female' : '', v.local ? '' : 'needs internet'].filter(Boolean);
+          const code = short(v);
+          return h('option', { value: v.id }, `${v.label}${code ? ` ${code}` : ''}${bits.length ? ` (${bits.join(', ')})` : ''}`);
+        }),
+      );
+      voiceId.value = list.some((v) => v.id === keep) ? keep : '';
+      const wanted = voiceGender.value;
+      if (!opts.voices) voiceNote.textContent = '';
+      else if (!list.length) voiceNote.textContent = 'This device lists no voices for this language; the usual voice speaks.';
+      else if (wanted === 'male' && !list.some((v) => v.gender === 'male') && !voiceId.value)
+        voiceNote.textContent = NATIVE
+          ? 'No male voice for this language is known on this phone, so the usual voice speaks a little lower. Pick another voice below and test it, or add voices in Android Settings → Text-to-speech output → Speech Services by Google → Install voice data.'
+          : 'No male voice for this language is known in this browser, so the usual voice speaks a little lower. Pick another voice below and test it.';
+      else voiceNote.textContent = '';
+    };
+    if (opts.voices)
+      void opts.voices.list().then((v) => {
+        allVoices = v;
+        fillVoices();
+      });
+    lang.addEventListener('change', fillVoices);
+    voiceGender.addEventListener('change', () => {
+      voiceId.value = '';
+      fillVoices();
+    });
+    voiceId.addEventListener('change', fillVoices);
+    voiceTest.addEventListener('click', () => opts.voices?.test(lang.value as Settings['lang'], { gender: voiceGender.value as VoiceChoice['gender'], id: voiceId.value }));
     const laneAlerts = select('laneAlerts', current.laneAlerts, [
       ['gps', 'Early lane advice + GPS lane check'],
       ['advice', 'Early lane advice only'],
@@ -179,11 +230,16 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       }
       testKey.disabled = true;
       keyState.dataset.ok = '';
-      keyState.textContent = 'Checking routing, search and traffic…';
+      keyState.textContent = 'Checking the map, routing, search and traffic…';
       resetFamilies();
       const k = () => key;
-      // Three small requests around central Kuala Lumpur: a short route, a search, the incidents.
-      const [route, search, incidents] = await Promise.allSettled([
+      // Small requests around central Kuala Lumpur: a map tile, a short route, a search, the incidents.
+      const map = new TomTomMap(k, () => true, { storage: null });
+      const [tile, route, search, incidents] = await Promise.allSettled([
+        map.check().then(() => {
+          if (!map.tiles) throw new Error(map.reason);
+          return map.family === 'orbis' ? 'Orbis map' : 'classic map';
+        }),
         new TomTomRouter(k).route({ origin: [101.6869, 3.139], destination: [101.7119, 3.1578] }),
         new TomTomPlaceSearch(k).search('KLCC', [101.7, 3.15], 'en'),
         new TomTomTraffic(k).incidents([101.66, 3.12, 101.73, 3.18]),
@@ -191,20 +247,21 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       const why = (r: PromiseRejectedResult) => ((r.reason as Error)?.message === 'Failed to fetch' ? 'TomTom could not be reached' : (r.reason as Error)?.message ?? 'failed');
       const line = (label: string, r: PromiseSettledResult<unknown>, ok: string) => (r.status === 'fulfilled' ? `${label}: works (${ok}).` : `${label}: ${why(r)}`);
       const lines = [
+        line('Map', tile, tile.status === 'fulfilled' ? tile.value : ''),
         line('Routing', route, route.status === 'fulfilled' ? `${Math.round(route.value.routes[0].duration / 60)} min KL Sentral to KLCC with traffic` : ''),
         line('Search', search, search.status === 'fulfilled' ? `${search.value.length} places for KLCC` : ''),
         line('Traffic', incidents, incidents.status === 'fulfilled' ? `${incidents.value.length} incident${incidents.value.length === 1 ? '' : 's'} in central KL` : ''),
       ];
-      const good = [route, search, incidents].filter((r) => r.status === 'fulfilled').length;
-      keyState.dataset.ok = good === 3 ? 'true' : good === 0 ? 'false' : '';
+      const good = [tile, route, search, incidents].filter((r) => r.status === 'fulfilled').length;
+      keyState.dataset.ok = good === 4 ? 'true' : good === 0 ? 'false' : '';
       keyState.textContent = '';
       for (const l of lines) keyState.append(h('div', {}, l));
       testKey.disabled = false;
     });
-    // Which services plan routes and find places.
+    // Which services draw the map, plan routes and find places.
     const services = select('services', current.services, [
-      ['tomtom', 'TomTom first, OpenStreetMap services when TomTom cannot answer'],
-      ['open', 'OpenStreetMap services only (OSRM, Photon, Overpass)'],
+      ['tomtom', 'TomTom first, OpenStreetMap when TomTom cannot answer'],
+      ['open', 'OpenStreetMap only (OpenFreeMap, OSRM, Photon, Overpass)'],
     ]);
     const traffic = opts.preview
       ? null
@@ -214,12 +271,12 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           h('label', { for: 'tomtomKey' }, 'TomTom key'),
           h('div', { class: 'key-row' }, tomtomKey, testKey),
           keyState,
-          h('label', { for: 'services', class: 'sub-label' }, 'Routing and place search'),
+          h('label', { for: 'services', class: 'sub-label' }, 'Map, routing and places'),
           services,
           h(
             'div',
             { class: 'hint' },
-            'TomTom first: routes and alternatives with live traffic in the times, rerouting, place search and the petrol, EV, parking, food, rest area and store buttons come from TomTom whenever the key works. When TomTom cannot answer (no key, key refused, the day\u2019s free allowance used up, no answer), the OpenStreetMap services below take over on their own, and the offline maps when there is no internet. The map and the junction views always use OpenStreetMap.',
+            'TomTom first: the map (in the JunctionNav look, with the JunctionNav map style), routes and alternatives with live traffic in the times, rerouting, place search and the petrol, EV, parking, food, rest area and store buttons come from TomTom whenever the key works. When TomTom cannot answer (no key, key refused, the day\u2019s free allowance used up, no answer), OpenStreetMap takes over on its own (OpenFreeMap for the map, the services below for the rest), and the offline maps when there is no internet. The junction views\u2019 road detail always comes from OpenStreetMap.',
           ),
           h('label', { class: 'toggle' }, trafficMap, 'Show live traffic on the map and your route'),
           h('label', { class: 'toggle' }, trafficAlerts, 'Voice guide for traffic: warnings ahead, clearing traffic, arrival time changes, faster routes and news'),
@@ -292,7 +349,23 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at turns, forks, dividers, ramps, exits, entrances and junctions'),
       h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange from 300 m before the split (as in the junction view) and dark orange for the 100 m either side of the split itself; the other roads at the split are grey, so only the orange line is your way. Works at every map scale; between turns the automatic scale shows 100 m.'),
     );
-    const voiceGrp = h('div', { class: 'grp' }, h('label', { for: 'voice' }, 'Voice guidance'), h('label', { class: 'toggle' }, voice, 'Spoken prompts'));
+    const voiceGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'voice' }, 'Voice guidance'),
+      h('label', { class: 'toggle' }, voice, 'Spoken prompts'),
+      opts.voices
+        ? h(
+            'div',
+            { class: 'voice-pick' },
+            h('label', { for: 'voiceGender', class: 'sub-label' }, 'Voice'),
+            h('div', { class: 'key-row' }, voiceGender, voiceTest),
+            h('label', { for: 'voiceId', class: 'sub-label' }, 'Which voice'),
+            voiceId,
+            voiceNote,
+          )
+        : null,
+    );
     const laneGrp = grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances, junctions and turns ("Move into the right lane" with the first notice of a turn when the map has no lane detail). The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.');
     const tunnelGrp = h(
       'div',
@@ -464,6 +537,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         closeUp: closeUp.checked,
         appMode: appMode.value as Settings['appMode'],
         voice: voice.checked,
+        voiceGender: voiceGender.value as Settings['voiceGender'],
+        voiceId: voiceId.value,
         jvSurround: surround.checked,
         jvMapGround: mapGround.checked,
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],

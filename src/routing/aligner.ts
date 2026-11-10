@@ -6,7 +6,7 @@
  */
 import type { RoadTiles } from '../map/roadTiles';
 import { alignRoute } from './align';
-import type { Route } from './types';
+import type { Route, RouteRequest, RouteResult, Router } from './types';
 
 const pause = () => new Promise<void>((ok) => setTimeout(ok, 0));
 
@@ -66,5 +66,53 @@ export class RouteAligner {
         });
     this.finishing.set(r, p);
     return p;
+  }
+}
+
+/** Whose map a route was planned on: TomTom's, or OpenStreetMap (OSRM, the offline maps). */
+export function routeData(r: Route): 'tomtom' | 'osm' {
+  return r.provider === 'TomTom' ? 'tomtom' : 'osm';
+}
+
+/**
+ * A router whose routes are put onto the roads of the map being drawn: TomTom's routes when the
+ * map is OpenStreetMap's, OpenStreetMap routes when the map is TomTom's (`alignerFor` says which
+ * aligner a route needs, or null when it was planned on the map's own data).
+ */
+export class AligningRouter implements Router {
+  constructor(
+    private inner: Router,
+    private alignerFor: (r: Route) => RouteAligner | null,
+  ) {}
+
+  get name() {
+    return this.inner.name;
+  }
+
+  async route(req: RouteRequest, signal?: AbortSignal): Promise<RouteResult> {
+    const res = await this.inner.route(req, signal);
+    const groups = new Map<RouteAligner, number[]>();
+    res.routes.forEach((r, i) => {
+      const al = this.alignerFor(r);
+      if (!al) return;
+      const g = groups.get(al);
+      if (g) g.push(i);
+      else groups.set(al, [i]);
+    });
+    if (!groups.size) return res;
+    const routes = res.routes.slice();
+    for (const [al, idx] of groups) {
+      try {
+        const out = await al.align(
+          idx.map((i) => routes[i]),
+          signal,
+        );
+        idx.forEach((i, k) => (routes[i] = out[k]));
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e;
+        /* the routes as they came */
+      }
+    }
+    return { ...res, routes };
   }
 }

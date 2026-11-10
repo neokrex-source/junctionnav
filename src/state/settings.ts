@@ -13,6 +13,10 @@ export interface Settings {
   lang: LangCode;
   units: Units;
   voice: boolean;
+  /** A man's or a woman's voice for the spoken prompts. */
+  voiceGender: 'female' | 'male';
+  /** One voice picked by name ('' = the best for the language and gender above). */
+  voiceId: string;
   jvMode: JvMode;
   appearance: 'auto' | 'day' | 'night';
   routerUrl: string;
@@ -81,6 +85,8 @@ export const DEFAULTS: Settings = {
   lang: 'en',
   units: 'metric',
   voice: true,
+  voiceGender: 'female',
+  voiceId: '',
   jvMode: 'illustration',
   appearance: 'auto',
   routerUrl: env.VITE_ROUTER_URL || 'https://routing.openstreetmap.de/routed-car/route/v1/driving',

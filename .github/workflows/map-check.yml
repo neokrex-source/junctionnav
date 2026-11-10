@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - 'src/map/techStyle.ts'
+      - 'src/map/tomtomStyle.ts'
+      - 'src/map/tomtomMap.ts'
       - 'src/theme/**'
       - 'scripts/dev/map-*'
       - '.github/workflows/map-check.yml'
@@ -27,9 +29,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm i --no-save playwright@1.64.1 && npx playwright install --with-deps chromium
-      - name: Check the style against OpenFreeMap
+      - name: Check the style against OpenFreeMap (and TomTom, with a TOMTOM_KEY secret)
+        env:
+          TT_KEY: ${{ secrets.TOMTOM_KEY }}
         run: npx vite-node scripts/dev/map-check.ts map-check
       - name: Day and night pictures
+        env:
+          TT_KEY: ${{ secrets.TOMTOM_KEY }}
         run: |
           python3 -m http.server 4173 >/dev/null 2>&1 &
           sleep 2

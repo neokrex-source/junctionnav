@@ -184,6 +184,8 @@ Phone GPS is usually accurate to 3 to 5 m in open sky and worse between tall bui
 
 Every maneuver is announced ahead and again a few seconds before it: on fast roads at 2 km, 1 km and 400 m, in town at 500 m and 180 m, where the stretch before it is long enough for each. A turn on a short block (in town under about 300 m, on fast roads under about 500 m) gets one heads-up with the real distance as you pass the maneuver before it ("In 250 metres, turn right onto Jalan Raja Chulan"), so no turn is first heard at the corner. Slight turns are said as "Bear left" and "Bear right" in English.
 
+Settings → Drive → *Voice* picks a **female or male voice**, and *Which voice* any voice your phone or browser has for the app's language (each marked male or female where its name says so), with **Test voice** to hear it. On Android these are the phone's text-to-speech voices (Google's have a few of each for English and Japanese; more can be added in Android Settings → Text-to-speech output); in a browser, the browser's voices (Chrome and Edge have male voices for English and Malay). When no male voice is known for the language, the usual voice speaks a little lower and Settings says so. `scripts/dev/voice-check.cjs` checks it with a set of browser voices.
+
 The first heads-up of a turn also says which lane to be in. With lane data from the router it is the lane advice below ("Use the right 2 lanes."); without it, for turns, U-turns, the end of the road and slight bends, it is the turn's side: "In 500 metres, turn right onto Jalan Kuching. Move into the right lane." (*Masuk ke lorong kanan.* in Malay, *右車線に寄ってください。* in Japanese). A U-turn takes the lane by the middle of the road, the right one where traffic keeps left. Lane alerts *Off* in Settings leaves this out too.
 
 ### Toll plazas: get your Touch 'n Go ready
@@ -211,21 +213,22 @@ The demo route starts with a 500 m tunnel through a hill, Terowong Bukit Demo, j
 
 ### TomTom first, OpenStreetMap when TomTom cannot answer
 
-Settings → *Routing and place search* has two choices:
+Settings → Traffic → *Map, routing and places* has two choices:
 
 - **TomTom first** (the default). With a TomTom key (see below), these come from TomTom:
+  - the **map**: TomTom's own vector map drawn in the JunctionNav look, light purple by day and dark purple by night, with the same road tiers, labels and place icons as the OpenStreetMap version (`src/map/tomtomStyle.ts`). TomTom's routes and traffic then lie on the roads they were planned on. One tile near you is asked for first (TomTom's classic map service, else Orbis, whichever the key is set up for) and must come back in the layout the style draws; the next start opens on the TomTom map straight away (`src/map/tomtomMap.ts`). Tiles are fetched up to zoom 16 and drawn larger beyond, to go easy on the free allowance;
   - **routes** with today's traffic already in the times, up to two alternatives and a toll-free option, avoid tolls, highways and ferries, and **rerouting** and the **alternatives kept ready during the drive**, all with traffic. TomTom's lane guidance, toll, motorway, tunnel and ferry stretches, exits and signposts are mapped onto the app's own route shape (`src/tomtom/routing.ts`), so junction views, lane advice, tunnel signs and the voice work on TomTom routes as on OSRM ones;
   - **place search** (typed search near you, and the address for a point on the map);
   - the **category buttons** (petrol, EV charging, parking, food, rest areas, convenience stores), nearby and along the route, where along-route results are the ones worth at most a five-minute detour.
 
-  When TomTom cannot answer (no key, key refused, the day's free allowance used up, too busy, no answer), the OpenStreetMap services take over by themselves for that request and TomTom rests for a while: about a minute after an error, twenty minutes after a refused key (traffic requests rest too then). The route options say who planned them: "Routes by TomTom, with live traffic in the times", or "TomTom could not plan this (key refused or daily allowance used up), so these routes come from OpenStreetMap". Without internet the offline maps answer, as before. **Test key** in Settings checks routing, search and traffic at once.
-- **OpenStreetMap services only**: OSRM routing, Photon search and Overpass places, as before. Live traffic still uses TomTom when a key is set and *Show live traffic* is on.
+  When TomTom cannot answer (no key, key refused, the day's free allowance used up, too busy, no answer), OpenStreetMap takes over by itself for that request and TomTom rests for a while: about a minute after an error, twenty minutes after a refused key (traffic requests rest too then). For the map that means the JunctionNav look on OpenFreeMap's tiles, with a short note when it happens during a drive, and TomTom's map again once it answers. The route options say who planned them: "Routes by TomTom, with live traffic in the times", or "TomTom could not plan this (key refused or daily allowance used up), so these routes come from OpenStreetMap". Without internet the offline maps answer, as before. **Test key** in Settings checks the map, routing, search and traffic at once.
+- **OpenStreetMap only**: the OpenFreeMap map, OSRM routing, Photon search and Overpass places, as before. Live traffic still uses TomTom when a key is set and *Show live traffic* is on.
 
-The map itself, the junction views' road detail and tunnel names always come from OpenStreetMap. TomTom's free tier is 2,500 requests a day (routing, search and traffic together) and 50,000 map tiles; a day of normal driving uses a small part of it. TomTom routes already carry traffic, so they need no extra travel-time requests on the route cards or for the prepared alternatives. `scripts/dev/tomtom-check.cjs` checks all of this in a browser with TomTom, OSRM, Photon and Overpass answered by the check itself.
+The TomTom map is used with the JunctionNav map style (the default); the other styles in Settings (OpenFreeMap, MapTiler, your own) stay as they are. The junction views' road detail, the ground under the 3D junction view and tunnel names always come from OpenStreetMap, since the 3D roads are built from it. TomTom's free tier is 2,500 requests a day (routing, search and traffic together) and 50,000 map tiles; a day of normal driving uses a small part of it. `scripts/dev/tomtom-map-check.cjs` checks the TomTom map in a browser with tiles in TomTom's layout made from saved OpenFreeMap tiles (`scripts/dev/tt-tiles.cjs`): the look by day and night, the classic and Orbis services, the next start, pins, and the fallbacks for a refused key, a key refused while driving, tiles in another layout and *OpenStreetMap only*. TomTom routes already carry traffic, so they need no extra travel-time requests on the route cards or for the prepared alternatives. `scripts/dev/tomtom-check.cjs` checks all of this in a browser with TomTom, OSRM, Photon and Overpass answered by the check itself.
 
-#### TomTom routes on the map's roads
+#### Routes on the map's roads
 
-TomTom plans on its own map while the app draws OpenStreetMap, and the same road can lie a few metres apart in the two (more at interchanges, where a ramp leaves the main road at another place). Drawn as they come, TomTom routes could run beside the road or cut across a ramp. So every TomTom route is moved onto the roads the map draws (`src/routing/align.ts`), read from the same OpenFreeMap tiles at their most detailed level (`src/map/roadTiles.ts`, shared with the map through the browser's cache):
+A route planned on one map and drawn on another can run a few metres beside the road (more at interchanges, where a ramp leaves the main road at another place). So a route is moved onto the roads of the map being shown when it was planned on the other one (`src/routing/align.ts`, `src/routing/aligner.ts`): TomTom routes when the map is OpenStreetMap's (TomTom cannot draw it right now, or another map style is chosen), and OSRM or offline routes when the map is TomTom's (TomTom could not plan the route). The roads are read from the same tiles the map draws (`src/map/roadTiles.ts`: OpenFreeMap's at zoom 14, TomTom's at zoom 15), shared with the map through the browser's cache. A route planned on the map's own data is left as it is.
 
 - the route is walked in 4 m steps; each step looks at the roads within 25 m going its way (one-way roads only in their own direction), TomTom's motorway and tunnel stretches preferring motorways and tunnels;
 - one road is picked for every step with a hidden Markov model (Viterbi): near roads are likely, keeping the spacing along one road is likely, and changing to a road that does not meet the current one (a road alongside) is not, so the route does not hop between parallel roads;
@@ -233,8 +236,7 @@ TomTom plans on its own map while the app draws OpenStreetMap, and the same road
 - a stretch with no such road nearby (a road too new for the map) stays as TomTom drew it;
 - the maneuvers, stops and toll gates move with the line, so guidance, junction views and the car on the line all follow the map's roads.
 
-Routes come back after at most 1.5 s of waiting for road tiles. A long route whose far end was not in by then comes back lined up as far as the tiles go, and the rest follows a few seconds later: swapped in while the routes are on offer, or taken over quietly during the drive (same maneuvers, nothing said again, never in the middle of a junction view). OpenStreetMap routes (OSRM, offline) are already on the map's roads and are left alone.
-
+Routes come back after at most 1.5 s of waiting for road tiles. A long route whose far end was not in by then comes back lined up as far as the tiles go, and the rest follows a few seconds later: swapped in while the routes are on offer, or taken over quietly during the drive (same maneuvers, nothing said again, never in the middle of a junction view). 
 `.github/workflows/route-align.yml` measures this on GitHub Actions with ten real routes around KL and from UTP to Ipoh: OSRM routes lie within about half a metre of the map's roads, and the same routes redrawn up to 9 m off (the way another map would have them) come back within 0.3 m of the map's roads (99% of points) and on the same roads as OSRM for 98 to 100% of their length. With a `TOMTOM_KEY` secret it measures TomTom's own routes too. `scripts/dev/align-check.cjs` checks it in the app in a browser with the saved tiles.
 
 ### Live traffic and traffic news
@@ -308,7 +310,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 
 | Purpose | Default | Notes |
 | --- | --- | --- |
-| Base map | JunctionNav day and night map on OpenFreeMap vector tiles | No key. OpenFreeMap's own styles (Liberty, Bright, Positron, Dark), MapTiler (key) and any MapLibre style URL can be picked in Settings. |
+| Base map | JunctionNav day and night map on TomTom's vector map (with a key, *TomTom first*), else on OpenFreeMap vector tiles | TomTom: 50,000 free tiles a day. OpenFreeMap: no key. OpenFreeMap's own styles (Liberty, Bright, Positron, Dark), MapTiler (key) and any MapLibre style URL can be picked in Settings. |
 | Routing | TomTom (with a key, *TomTom first*), else `routing.openstreetmap.de` (FOSSGIS OSRM) | TomTom: traffic in the times, alternatives, lanes. OSRM: public demo server for light use; self-host for real driving (below). |
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
 | Search | TomTom (with a key, *TomTom first*), else `photon.komoot.io` | Photon is OSM-based and allows search-as-you-type, fair use only. The category buttons use TomTom, else Overpass. |
@@ -381,7 +383,8 @@ src/
   nav/sources.ts          GPS, simulator, speech, screen wake lock
   offline/                offline maps: pack storage and download, road graph, router, place index,
                           worker, offline map style, online/offline provider switch
-  map/                    MapLibre main map, style registry, offline demo style, the map's road lines (roadTiles.ts)
+  map/                    MapLibre main map, style registry, offline demo style, the map's road lines (roadTiles.ts),
+                          the TomTom map in the JunctionNav look and when to use it (tomtomStyle.ts, tomtomMap.ts)
   junction/detect.ts      which maneuvers get a junction view
   junction/osmdata.ts     Overpass fetch, batching and cache
   junction/scene.ts       junction geometry, lane alignment, height profile, sign specs

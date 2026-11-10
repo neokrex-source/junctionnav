@@ -17,6 +17,8 @@ import { closeWeight, MapView, SCALE_STEPS, routeBounds, type FollowOptions, typ
 import { RoadTiles } from './map/roadTiles';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import { OFM_TILES } from './map/techStyle';
+import { TomTomMap } from './map/tomtomMap';
+import { TT_SOURCE } from './map/tomtomStyle';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
@@ -28,8 +30,8 @@ import { distinctAlternatives, matchAlternative } from './nav/alternatives';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
 import { OverpassTollProvider, TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
-import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type UiKey } from './routing/instructions';
-import { RouteAligner } from './routing/aligner';
+import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
+import { AligningRouter, RouteAligner, routeData } from './routing/aligner';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
@@ -82,6 +84,12 @@ import type { AppMode, ModeHooks } from './native/appMode';
 const CLOSE_UP_AT = new Set<ManeuverType>(['turn', 'fork', 'off ramp', 'on ramp', 'merge', 'end of road', 'roundabout', 'rotary', 'roundabout turn', 'exit roundabout', 'exit rotary']);
 
 const KL: LngLat = [101.6869, 3.139];
+/** What Test voice says in Settings. */
+const VOICE_SAMPLE: Record<LangCode, string> = {
+  en: 'In 300 metres, keep left for the exit to Kuala Lumpur.',
+  ms: 'Dalam 300 meter, ikut kiri untuk keluar ke Kuala Lumpur.',
+  ja: '300メートル先、左方向です。クアラルンプール方面の出口です。',
+};
 /** The traffic chip opens into a card with the details this close to an incident on the route. */
 const TRAFFIC_CARD_WITHIN = 500;
 /** Traffic answers older than this no longer count for the arrival time. */
@@ -196,11 +204,23 @@ class App {
     blob: () => this.offline.file('terrain.bin'),
   });
   private osrm: Router = new OsrmRouter(this.settings.routerUrl);
+  /** TomTom's map (with TomTom first): whether it can be drawn now, and from which of its services. */
+  private ttMap = new TomTomMap(
+    () => tomtomKey(this.settings),
+    () => this.settings.services === 'tomtom' && this.settings.mapStyle === 'tech' && !this.demo && !ARTIFACT,
+    { at: () => this.myPos ?? lastPosition() ?? KL },
+  );
   /**
-   * TomTom plans on its own map, the app shows OpenStreetMap: TomTom's routes are moved onto the
-   * roads the map draws (read from the same OpenFreeMap tiles) so the line sits on the road.
+   * Routes are moved onto the roads the map draws: TomTom's routes onto OpenStreetMap's roads
+   * (the OpenFreeMap tiles) when the map is OpenStreetMap's, and OpenStreetMap routes (OSRM, the
+   * offline maps) onto TomTom's roads when the map is TomTom's.
    */
-  private aligner = new RouteAligner(new RoadTiles({ tileJson: OFM_TILES }));
+  private osmAligner = new RouteAligner(new RoadTiles({ tileJson: OFM_TILES }));
+  private ttAligner = new RouteAligner(new RoadTiles({ tiles: () => this.ttMap.tiles, schema: 'tomtom', zoom: 15 }));
+  /** TomTom map tile errors lately (other than a refused key), to tell a bad patch from a few lost tiles. */
+  private ttErrors: number[] = [];
+  /** The map shown is TomTom's (for the note when it goes over to OpenStreetMap). */
+  private mapOnTomTom = false;
   /** A route being driven now lined up all the way, to take over at the next quiet moment. */
   private pendingSwap: { from: Route; to: Route } | null = null;
   /** "TomTom first": whether TomTom is asked right now, or resting after a failure. */
@@ -386,8 +406,8 @@ class App {
     this.osrm = new OsrmRouter(this.settings.routerUrl);
     // TomTom first (when chosen and the key works), OSRM when it cannot answer, the offline maps without internet.
     const ttKey = () => tomtomKey(this.settings);
-    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L, () => this.aligner), () => this.osrm, this.ttGate);
-    this.router = new HybridRouter(() => online, sw);
+    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L), () => this.osrm, this.ttGate);
+    this.router = new AligningRouter(new HybridRouter(() => online, sw), (r) => this.alignerFor(r));
     this.jdata = new JunctionDataCache(new HybridJunctionData(new OverpassProvider(overpass()), sw));
     this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
     const tunnels = new OverpassTunnelProvider(overpass);
@@ -423,10 +443,59 @@ class App {
     this.terrainReady.clear();
   }
 
-  /** Map style for the real (non-demo) map: the offline maps when they should be used, else the chosen style. */
-  private baseStyle(settings = this.settings): string | StyleSpecification {
+  /**
+   * Map style for the real (non-demo) map: the offline maps when they should be used, else the
+   * chosen style (the JunctionNav look on TomTom's map when TomTom first can draw it; `tomtom`
+   * false: OpenStreetMap's map in any case).
+   */
+  private baseStyle(settings = this.settings, tomtom = true): string | StyleSpecification {
     if (this.offlineMapReady && (settings.offlineUse === 'always' || !navigator.onLine)) return offlineStyle(isNight(settings), settings.lang);
-    return resolveStyle(settings, isNight(settings));
+    const tt = tomtom && settings.services === 'tomtom' && settings.mapStyle === 'tech' && tomtomKey(settings) === tomtomKey(this.settings) ? this.ttMap.tiles : null;
+    return resolveStyle(settings, isNight(settings), tt);
+  }
+
+  /** The map shown is drawn from TomTom's tiles. */
+  private get mapIsTomTom(): boolean {
+    if (this.demo || ARTIFACT) return false;
+    const s = this.baseStyle();
+    return typeof s !== 'string' && !!s.sources?.[TT_SOURCE];
+  }
+
+  /** The aligner a route needs to lie on the map shown, or null when it was planned on the map's own data. */
+  private alignerFor(r: Route): RouteAligner | null {
+    if (this.demo || ARTIFACT) return null;
+    const map = this.mapIsTomTom ? 'tomtom' : 'osm';
+    if (routeData(r) === map) return null;
+    return map === 'tomtom' ? this.ttAligner : this.osmAligner;
+  }
+
+  /** The aligner still finishing a route, if any. */
+  private alignerOf(r: Route): RouteAligner | null {
+    if (this.osmAligner.pending(r)) return this.osmAligner;
+    if (this.ttAligner.pending(r)) return this.ttAligner;
+    return null;
+  }
+
+  /** TomTom's map became usable or stopped being usable: draw the map from the other source. */
+  private onTomTomMap() {
+    const was = this.mapOnTomTom;
+    this.refreshMapSource(true);
+    this.mapOnTomTom = this.mapIsTomTom;
+    if (was && !this.mapOnTomTom && this.ttMap.reason) toast(`Map from OpenStreetMap for now: ${this.ttMap.reason}.`, 5000);
+  }
+
+  /** A TomTom map tile failed: a refused key or the day's tiles used up at once, else a run of failures. */
+  private tomtomTileError(status: number) {
+    if (status === 401 || status === 403 || status === 429) {
+      this.ttMap.failed(status);
+      return;
+    }
+    const now = Date.now();
+    this.ttErrors = [...this.ttErrors.filter((t) => now - t < 60_000), now];
+    if (this.ttErrors.length >= 8 && status !== 404) {
+      this.ttErrors = [];
+      this.ttMap.failed(status);
+    }
   }
 
   private mapOnOffline = false;
@@ -516,7 +585,9 @@ class App {
     e.app.dataset.view = this.view;
     this.applyTheme();
     // The hosted preview can only draw the bundled demo roads, so never ask for remote tiles there.
-    const startStyle = ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : resolveStyle(this.settings, isNight(this.settings));
+    // TomTom's map when it worked last time with this key (checked again straight after).
+    if (!ARTIFACT) this.ttMap.restore();
+    const startStyle = ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : this.baseStyle();
     this.map = new MapView(e.map, startStyle, ARTIFACT ? buildDemo().start : lastPosition() ?? KL, ARTIFACT ? 14 : 12);
     this.nightNow = isNight(this.settings);
     this.map.setTheme(themeFor(this.nightNow));
@@ -528,6 +599,10 @@ class App {
     this.map.fallback = fallback;
     this.map.onFallback = () => this.zoom?.setStyle(fallback());
     this.map.onRecover = () => this.zoom?.setStyle(this.demo || ARTIFACT ? demoStyle(buildDemo().geojson, isNight(this.settings)) : this.baseStyle());
+    this.mapOnTomTom = this.mapIsTomTom;
+    this.ttMap.onChange = () => this.onTomTomMap();
+    this.map.onTomTomTileError = (st) => this.tomtomTileError(st);
+    if (!ARTIFACT) void this.ttMap.check();
     this.map.onLongPress((p) => this.pickOnMap(p));
     this.map.onUserPan(() => this.paintRecenter());
     this.map.onScaleShown = () => this.paintRecenter();
@@ -1871,7 +1946,8 @@ class App {
     if (!st.jvMapGround || st.jvMode === 'map') return null;
     const night = isNight(st);
     if (ARTIFACT || this.demo) return { style: demoStyle(buildDemo().geojson, night), key: `demo|${night ? 'n' : 'd'}` };
-    const style = this.baseStyle();
+    // OpenStreetMap's map even when TomTom's is shown: the 3D roads on it are built from OpenStreetMap.
+    const style = this.baseStyle(this.settings, false);
     const id = typeof style === 'string' ? style : String(hashString(JSON.stringify(style.sources ?? {}) + (style.layers?.length ?? 0)));
     return { style, key: `${id}|${night ? 'n' : 'd'}` };
   }
@@ -2353,6 +2429,7 @@ class App {
     this.el.mute.innerHTML = this.settings.voice ? ICON.volume : ICON.mute;
     this.el.mute.setAttribute('aria-label', this.settings.voice ? 'Mute voice' : 'Unmute voice');
     this.voice.enabled = this.settings.voice;
+    this.voice.choice = { gender: this.settings.voiceGender, id: this.settings.voiceId };
   }
 
   private applyLang() {
@@ -2947,8 +3024,9 @@ class App {
   /** Routes lined up with the map only as far as its road tiles came in time: the rest follows. */
   private finishAlignment(routes: Route[]) {
     for (const r of routes) {
-      if (!this.aligner.pending(r)) continue;
-      void this.aligner.complete(r).then((full) => full && this.alignedRoute(r, full));
+      const al = this.alignerOf(r);
+      if (!al) continue;
+      void al.complete(r).then((full) => full && this.alignedRoute(r, full));
     }
   }
 
@@ -3700,6 +3778,16 @@ class App {
     const u = this.user;
     const next = await openSettings(this.settings, {
       preview: ARTIFACT,
+      voices: {
+        list: () => this.voice.voices(),
+        test: (lang, choice) => {
+          this.voice.unlock();
+          const was = this.voice.enabled;
+          this.voice.enabled = true;
+          this.voice.speak(VOICE_SAMPLE[lang], LANGS[lang].speechLang, true, choice);
+          this.voice.enabled = was;
+        },
+      },
       pack: ARTIFACT ? undefined : this.offline,
       places: ARTIFACT ? undefined : this.placesSvc,
       pins: { count: this.pins.pins.length, clear: () => this.pins.clear() },
@@ -3737,6 +3825,7 @@ class App {
     if (prev.appearance !== next.appearance) this.applyDayNight();
     else this.applyTheme();
     // TomTom first or not, or a new key: ask TomTom again at once, and plan again with it.
+    if (tomtomKey(prev) !== tomtomKey(next) || prev.services !== next.services || prev.mapStyle !== next.mapStyle) this.ttMap.reset();
     if (tomtomKey(prev) !== tomtomKey(next) || prev.services !== next.services) {
       resetFamilies();
       this.ttGate.reset();

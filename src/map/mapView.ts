@@ -6,6 +6,8 @@ import { angleDiff, bearing, haversine, type LngLat } from '../geo/geo';
 import { headingArrow } from './pinsLayer';
 import type { Route, Step } from '../routing/types';
 import { fallbackStyle } from './styles';
+import { isTomTomMapTile } from './tomtomMap';
+import { TT_SOURCE } from './tomtomStyle';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
 import { tollImage } from '../ui/tollIcon';
 
@@ -223,6 +225,8 @@ export class MapView {
   fallback: () => StyleSpecification = () => fallbackStyle(false);
   /** Called when the map switches to the fallback, so other maps can follow. */
   onFallback: (() => void) | null = null;
+  /** A TomTom map tile failed (HTTP status, 0 without one). */
+  onTomTomTileError: ((status: number) => void) | null = null;
   /** Shown over the map when tiles cannot load. */
   private notice: HTMLElement;
   private tilesOk = 0;
@@ -281,8 +285,14 @@ export class MapView {
       }
     });
     this.map.on('error', (e) => {
-      const ev = e as { error?: Error & { url?: string }; sourceId?: string; tile?: unknown };
+      const ev = e as { error?: Error & { url?: string; status?: number }; sourceId?: string; tile?: unknown };
       const msg = String(ev.error?.message ?? '');
+      // TomTom's map tiles that fail (key refused, the day's tiles used up): the app goes over to
+      // the OpenStreetMap map (src/map/tomtomMap.ts).
+      if (ev.sourceId === TT_SOURCE || isTomTomMapTile(ev.error?.url ?? '')) {
+        this.onTomTomTileError?.(Number(ev.error?.status ?? 0));
+        return;
+      }
       // Traffic tiles that fail (no key, over the allowance) are the traffic layer's business.
       if (ev.sourceId?.startsWith('traffic') || ev.error?.url?.includes('api.tomtom.com')) return;
       this.lastError = msg;
@@ -1179,14 +1189,16 @@ export class MapView {
       return [];
     }
     const ROAD = /^(transportation|roads|road|street|streets)$/;
-    const SKIP = /^(rail|transit|path|pedestrian|footway|cycleway|track|bridleway|steps|ferry|aerialway|other)$/;
+    const SKIP = /^(rail|railway|transit|path|pedestrian|footway|cycleway|track|bridleway|steps|ferry|aerialway|other)$/;
     let best: { d: number; a: LngLat; b: LngLat; name: string | null; oneway: number } | null = null;
     for (const f of feats) {
       const src = f.sourceLayer ?? '';
       // Vector tiles name their road layer; GeoJSON roads (the demo map) are known by the style layer.
       const road = src ? ROAD.test(src) : /road|street|highway|motorway|trunk|link/.test(f.layer?.id ?? '');
       if (!road || (f.geometry.type !== 'LineString' && f.geometry.type !== 'MultiLineString')) continue;
-      const cls = String(f.properties?.class ?? f.properties?.kind ?? '');
+      // OpenMapTiles say class, Protomaps kind, TomTom category.
+      const cls = String(f.properties?.class ?? f.properties?.kind ?? f.properties?.category ?? '');
+      if (f.properties?.subcategory === 'pedestrian') continue;
       if (SKIP.test(cls)) continue;
       const lines = f.geometry.type === 'LineString' ? [f.geometry.coordinates as LngLat[]] : (f.geometry.coordinates as LngLat[][]);
       for (const line of lines) {
@@ -1200,8 +1212,9 @@ export class MapView {
           const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2));
           const d = Math.hypot(a.x + t * dx - pt.x, a.y + t * dy - pt.y);
           if (d > radius || (best && d >= best.d)) continue;
-          const ow = Number(f.properties?.oneway ?? 0);
-          const nm = f.properties?.name ?? f.properties?.['name:latin'] ?? f.properties?.name_en ?? null;
+          // One way: OpenMapTiles and Protomaps say oneway, TomTom direction (1 along the line, -1 against).
+          const ow = Number(f.properties?.oneway ?? f.properties?.direction ?? 0);
+          const nm = f.properties?.name ?? f.properties?.['name:latin'] ?? f.properties?.name_en ?? f.properties?.['name_en-GB'] ?? null;
           best = { d, a: line[i], b: line[i + 1], name: nm ? String(nm) : null, oneway: ow === 1 || ow === -1 ? ow : 0 };
         }
       }

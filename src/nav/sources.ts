@@ -175,10 +175,107 @@ type TtsModule = typeof import('@capacitor-community/text-to-speech');
 let nativeTts: Promise<TtsModule> | null = null;
 const ttsModule = () => (nativeTts ??= import('@capacitor-community/text-to-speech'));
 
+export type VoiceGender = 'female' | 'male';
+
+/** A voice the phone or browser can speak with. */
+export interface VoiceInfo {
+  /** Its own name (Android's voice name such as en-gb-x-gbd-local, or the browser voice's name). */
+  id: string;
+  /** What to show: the browser's name for it, or Android's language and country. */
+  label: string;
+  lang: string;
+  gender: VoiceGender | null;
+  /** Its number for Android's speech (the plugin's list order) or the browser's list. */
+  index: number;
+  /** Works without internet. */
+  local: boolean;
+}
+
+/** Google's Android voices by their code (en-US, en-GB, en-AU, en-IN, ja-JP, id-ID). */
+const MALE_CODES = /-x-(iol|iom|tpd|gbb|gbd|rjs|aub|aud|end|jac|jad|idd|ide)(-|#|$)/i;
+const FEMALE_CODES = /-x-(iob|iog|sfg|tpc|tpf|gba|gbc|gbg|afh|aua|auc|ahp|cxx|ene|htm|jab|dfz|idc)(-|#|$)/i;
+/** Voices named after people (Windows, Edge, Apple, Chrome). */
+const MALE_NAMES = /\b(male|man|david|mark|george|james|guy|ryan|william|christopher|eric|brian|andrew|roger|thomas|liam|connor|daniel|alex|fred|aaron|arthur|gordon|oliver|rishi|ravi|prabhat|ichiro|keita|otoya|hattori|daichi|naoki|osman|rizwan|ardi|kenji|takumi)\b/i;
+const FEMALE_NAMES = /\b(female|woman|zira|hazel|susan|heera|haruka|ayumi|sayaka|nanami|aoi|mayu|shiori|aria|jenny|sonia|libby|natasha|samantha|karen|moira|tessa|kyoko|o-ren|amira|yasmin|victoria|fiona|veena|catherine|serena|nicky|allison|ava|neerja|gadis)\b/i;
+
+/** Whether a voice is a man's or a woman's, from its name (null when the name does not say). */
+export function voiceGender(name: string): VoiceGender | null {
+  // Older Google voices say it in the name (en-us-x-sfg#male_1-local), before the code does.
+  if (/#female/i.test(name)) return 'female';
+  if (/#male/i.test(name)) return 'male';
+  if (FEMALE_CODES.test(name)) return 'female';
+  if (MALE_CODES.test(name)) return 'male';
+  if (FEMALE_NAMES.test(name)) return 'female';
+  if (MALE_NAMES.test(name)) return 'male';
+  return null;
+}
+
+/** What the voice setting asks for: a man's or a woman's voice, or one voice by its id. */
+export interface VoiceChoice {
+  gender: VoiceGender;
+  id: string;
+}
+
+const normLang = (l: string) => l.toLowerCase().replace('_', '-');
+
+/** The voices for a language: its own region first, then the same language elsewhere; offline ones first. */
+export function voicesFor(voices: VoiceInfo[], lang: string): VoiceInfo[] {
+  const want = normLang(lang);
+  const base = want.slice(0, 2);
+  const rank = (v: VoiceInfo) => (normLang(v.lang) === want ? 0 : 2) + (v.local ? 0 : 1);
+  return voices.filter((v) => normLang(v.lang).startsWith(base)).sort((a, b) => rank(a) - rank(b));
+}
+
+/**
+ * The voice to speak a language with: the one chosen by id (when it speaks the language), else
+ * one of the gender asked for. With no man's voice for the language, the usual voice speaks a
+ * little lower (pitch below 1).
+ */
+export function pickVoice(voices: VoiceInfo[], lang: string, choice: VoiceChoice): { voice: VoiceInfo | null; pitch: number } {
+  const list = voicesFor(voices, lang);
+  if (choice.id) {
+    const v = list.find((x) => x.id === choice.id);
+    if (v) return { voice: v, pitch: 1 };
+  }
+  const g = list.find((x) => x.gender === choice.gender);
+  if (g) return { voice: g, pitch: 1 };
+  if (choice.gender === 'female') return { voice: list.find((x) => x.gender !== 'male') ?? null, pitch: 1 };
+  return { voice: null, pitch: 0.8 };
+}
+
 export class Voice {
   enabled = true;
+  /** Which voice to speak with (from Settings). */
+  choice: VoiceChoice = { gender: 'female', id: '' };
   private unlocked = false;
   private audio: AudioContext | null = null;
+  private nativeVoices: Promise<VoiceInfo[]> | null = null;
+
+  /** The voices this phone or browser has (the browser may need a moment to list them). */
+  voices(): Promise<VoiceInfo[]> {
+    if (NATIVE) {
+      this.nativeVoices ??= ttsModule()
+        .then((m) => m.TextToSpeech.getSupportedVoices())
+        .then(({ voices }) =>
+          voices.map((v, index) => ({ id: v.voiceURI || v.name, label: v.name, lang: v.lang, gender: voiceGender(v.voiceURI || v.name), index, local: v.localService !== false })),
+        )
+        .catch(() => {
+          this.nativeVoices = null;
+          return [];
+        });
+      return this.nativeVoices;
+    }
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return Promise.resolve([]);
+    const synth = window.speechSynthesis;
+    const read = () => synth.getVoices().map((v, index) => ({ id: v.voiceURI || v.name, label: v.name, lang: v.lang, gender: voiceGender(`${v.name} ${v.voiceURI}`), index, local: v.localService }));
+    const now = read();
+    if (now.length) return Promise.resolve(now);
+    return new Promise((ok) => {
+      const done = () => ok(read());
+      synth.addEventListener('voiceschanged', done, { once: true });
+      setTimeout(done, 1500);
+    });
+  }
 
   /** Two short rising tones before an urgent prompt (needs unlock() from a tap first). */
   chime() {
@@ -226,12 +323,15 @@ export class Voice {
   }
 
   /** Urgent prompts cut off whatever is playing; others wait their turn. */
-  speak(text: string, lang: string, urgent = true) {
+  speak(text: string, lang: string, urgent = true, choice: VoiceChoice = this.choice) {
     if (!this.enabled) return;
     if (NATIVE) {
       // Flush (0) cuts off what is playing, Add (1) queues.
-      void ttsModule()
-        .then((m) => m.TextToSpeech.speak({ text, lang, rate: 1.0, queueStrategy: urgent ? 0 : 1 }))
+      void Promise.all([ttsModule(), this.voices()])
+        .then(([m, voices]) => {
+          const { voice, pitch } = pickVoice(voices, lang, choice);
+          return m.TextToSpeech.speak({ text, lang, rate: 1.0, pitch, ...(voice ? { voice: voice.index } : {}), queueStrategy: urgent ? 0 : 1 });
+        })
         .catch((e) => console.warn('[voice]', e));
       return;
     }
@@ -240,8 +340,11 @@ export class Voice {
     if (urgent) synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
-    const voice = synth.getVoices().find((v) => v.lang.toLowerCase().startsWith(lang.toLowerCase().slice(0, 2)));
-    if (voice) u.voice = voice;
+    const all = synth.getVoices();
+    const infos = all.map((v, index) => ({ id: v.voiceURI || v.name, label: v.name, lang: v.lang, gender: voiceGender(`${v.name} ${v.voiceURI}`), index, local: v.localService }));
+    const { voice, pitch } = pickVoice(infos, lang, choice);
+    if (voice) u.voice = all[voice.index];
+    u.pitch = pitch;
     u.rate = 1.02;
     synth.speak(u);
   }

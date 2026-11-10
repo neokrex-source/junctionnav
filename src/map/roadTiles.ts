@@ -1,12 +1,12 @@
 /**
- * The map's road lines, read from the same OpenFreeMap vector tiles the map draws (zoom 14, the
- * most detailed level; the map scales those up beyond it), for lining routes up with them
- * (src/routing/align.ts). Tiles load a few at a time in the order the route passes them and stay
- * in memory for later routes (reroutes, alternatives). The browser's cache is shared with the
- * map, so a tile the map already has costs nothing, and one fetched here is ready for the map.
+ * The map's road lines, read from the same vector tiles the map draws, for lining routes up with
+ * them (src/routing/align.ts): OpenFreeMap's (OpenMapTiles layout, zoom 14, their most detailed
+ * level) or TomTom's (src/map/tomtomStyle.ts layout). Tiles load a few at a time in the order the
+ * route passes them and stay in memory for later routes (reroutes, alternatives). The browser's
+ * cache is shared with the map, so a tile the map already has costs nothing.
  *
- * A z14 tile carries its neighbours' roads for about 38 m past its edge, so the roads within 25 m
- * of a point all come from the point's own tile.
+ * Roads near a tile's edge are looked up in the neighbouring tiles too, so it does not matter how
+ * far past its edge a tile carries its neighbours' roads.
  */
 import { VectorTile } from '@mapbox/vector-tile';
 import Pbf from 'pbf';
@@ -14,26 +14,46 @@ import type { LngLat } from '../geo/geo';
 import { metres, type RoadSeg, type RoadSet } from '../routing/align';
 
 export const ROAD_ZOOM = 14;
-const N = 2 ** ROAD_ZOOM;
-/** Roads a car can be routed on (OpenMapTiles classes). */
+/** Roads a car can be routed on (OpenMapTiles classes; TomTom's categories are put into these). */
 const CAR_ROADS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service', 'busway']);
-/** Index cells per tile side (about 76 m at the equator). */
+/** Index cells per tile side (about 76 m at zoom 14 on the equator). */
 const CELLS = 32;
 
-export function tileOf(p: LngLat): [number, number] {
+export type RoadSchema = 'openmaptiles' | 'tomtom';
+
+export function tileOf(p: LngLat, z = ROAD_ZOOM): [number, number] {
+  const n = 2 ** z;
   const lat = Math.max(-85, Math.min(85, p[1])) * (Math.PI / 180);
-  const x = Math.floor(((p[0] + 180) / 360) * N);
-  const y = Math.floor(((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * N);
-  return [Math.max(0, Math.min(N - 1, x)), Math.max(0, Math.min(N - 1, y))];
+  const x = Math.floor(((p[0] + 180) / 360) * n);
+  const y = Math.floor(((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * n);
+  return [Math.max(0, Math.min(n - 1, x)), Math.max(0, Math.min(n - 1, y))];
 }
 
 const keyOf = (x: number, y: number) => `${x}/${y}`;
 
-function lngOf(x: number): number {
-  return (x / N) * 360 - 180;
+function lngOf(x: number, z: number): number {
+  return (x / 2 ** z) * 360 - 180;
 }
-function latOf(y: number): number {
-  return (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / N))) * 180) / Math.PI;
+function latOf(y: number, z: number): number {
+  return (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / 2 ** z))) * 180) / Math.PI;
+}
+
+/** TomTom's road categories as OpenMapTiles classes (null: not a road for cars). */
+function tomtomClass(category: string, sub: string): string | null {
+  switch (category) {
+    case 'motorway':
+    case 'trunk':
+    case 'primary':
+    case 'secondary':
+    case 'tertiary':
+      return category;
+    case 'street':
+      return 'minor';
+    case 'minor':
+      return sub === 'pedestrian' ? null : 'service';
+    default:
+      return null;
+  }
 }
 
 /** Per road line: OpenMapTiles class codes. */
@@ -74,8 +94,14 @@ interface Tile {
 }
 
 export interface RoadTilesOptions {
-  /** TileJSON address of the vector tiles (OpenMapTiles schema). */
-  tileJson: string;
+  /** TileJSON address of the vector tiles. */
+  tileJson?: string;
+  /** Or the tile address itself ({z}/{x}/{y}), asked each time (null while there is none). */
+  tiles?: () => string | null;
+  /** Their layout (OpenMapTiles unless said). */
+  schema?: RoadSchema;
+  /** Zoom of the tiles read (14). */
+  zoom?: number;
   fetch?: typeof fetch;
   /** Tiles kept in memory (150: about 25 MB in the densest city, much less elsewhere). */
   maxTiles?: number;
@@ -94,22 +120,23 @@ interface Decoded {
 }
 
 /** The car roads of one tile, as flat arrays (consecutive vertices of a line at least 5 cm apart). */
-export function decodeTile(buf: Uint8Array, x: number, y: number): Decoded {
+export function decodeTile(buf: Uint8Array, x: number, y: number, z = ROAD_ZOOM, schema: RoadSchema = 'openmaptiles'): Decoded {
   const out: Decoded = { xy: [], m: [], vLine: [], first: [], cls: [], oneway: [], flags: [] };
   if (!buf.length) return out;
   const vt = new VectorTile(new Pbf(buf));
-  const layer = vt.layers.transportation;
+  const tt = schema === 'tomtom';
+  const layer = vt.layers[tt ? 'roads' : 'transportation'];
   if (!layer) return out;
   const ext = layer.extent;
   for (let f = 0; f < layer.length; f++) {
     const feat = layer.feature(f);
     if (feat.type !== 2) continue;
     const pr = feat.properties;
-    const cls = String(pr.class ?? '');
-    if (!CAR_ROADS.has(cls)) continue;
-    const ow = Number(pr.oneway ?? 0);
-    const ramp = pr.ramp === 1 || pr.ramp === true || pr.ramp === '1';
-    const tunnel = pr.brunnel === 'tunnel';
+    const cls = tt ? tomtomClass(String(pr.category ?? ''), String(pr.subcategory ?? '')) : String(pr.class ?? '');
+    if (!cls || !CAR_ROADS.has(cls)) continue;
+    const ow = Number((tt ? pr.direction : pr.oneway) ?? 0);
+    const ramp = !tt && (pr.ramp === 1 || pr.ramp === true || pr.ramp === '1');
+    const tunnel = tt ? pr.tunnel === true || pr.tunnel === 'true' : pr.brunnel === 'tunnel';
     for (const ring of feat.loadGeometry()) {
       if (ring.length < 2) continue;
       const l = out.first.length;
@@ -117,7 +144,7 @@ export function decodeTile(buf: Uint8Array, x: number, y: number): Decoded {
       let prev: LngLat | null = null;
       let m = 0;
       for (const pt of ring) {
-        const p: LngLat = [lngOf(x + pt.x / ext), latOf(y + pt.y / ext)];
+        const p: LngLat = [lngOf(x + pt.x / ext, z), latOf(y + pt.y / ext, z)];
         if (prev) {
           const len = metres(prev, p);
           if (len < 0.05) continue;
@@ -145,8 +172,8 @@ export function decodeTile(buf: Uint8Array, x: number, y: number): Decoded {
 }
 
 /** The car roads of one tile as road pieces (for checks and tests). */
-export function decodeRoads(buf: ArrayBuffer | Uint8Array, x: number, y: number, nextLine: () => number): { segs: RoadSeg[]; lines: Map<number, RoadSeg[]> } {
-  const t = new RoadTiles({ tileJson: '' });
+export function decodeRoads(buf: ArrayBuffer | Uint8Array, x: number, y: number, nextLine: () => number, opts: { zoom?: number; schema?: RoadSchema } = {}): { segs: RoadSeg[]; lines: Map<number, RoadSeg[]> } {
+  const t = new RoadTiles({ tileJson: '', ...opts });
   t.addTile(x, y, buf instanceof Uint8Array ? buf : new Uint8Array(buf));
   const segs: RoadSeg[] = [];
   const lines = new Map<number, RoadSeg[]>();
@@ -179,17 +206,28 @@ export class RoadTiles implements RoadSet {
     this.f = opts.fetch ?? ((input, init) => fetch(input, init));
   }
 
-  /** The tiles a line passes through, in its order. */
+  get zoom(): number {
+    return this.opts.zoom ?? ROAD_ZOOM;
+  }
+
+  /** The tiles a line passes through (and those within 30 m of it), in its order. */
   keysFor(coords: LngLat[]): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
+    const z = this.zoom;
     const add = (p: LngLat) => {
-      const [x, y] = tileOf(p);
-      const k = keyOf(x, y);
-      if (!seen.has(k)) {
-        seen.add(k);
-        out.push(k);
-      }
+      const dLat = 30 / 111_195;
+      const dLng = dLat / Math.max(0.2, Math.cos((p[1] * Math.PI) / 180));
+      const [x0, y0] = tileOf([p[0] - dLng, p[1] + dLat], z);
+      const [x1, y1] = tileOf([p[0] + dLng, p[1] - dLat], z);
+      for (let x = x0; x <= x1; x++)
+        for (let y = y0; y <= y1; y++) {
+          const k = keyOf(x, y);
+          if (!seen.has(k)) {
+            seen.add(k);
+            out.push(k);
+          }
+        }
     };
     for (let i = 0; i < coords.length; i++) {
       add(coords[i]);
@@ -256,7 +294,8 @@ export class RoadTiles implements RoadSet {
   }
 
   private tileUrl(): Promise<string | null> {
-    this.template ??= this.f(this.opts.tileJson)
+    if (this.opts.tiles) return Promise.resolve(this.opts.tiles());
+    this.template ??= this.f(this.opts.tileJson ?? '')
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { tiles?: string[] } | null) => j?.tiles?.[0] ?? null)
       .catch(() => null)
@@ -273,7 +312,7 @@ export class RoadTiles implements RoadSet {
       const tpl = await this.tileUrl();
       if (!tpl) return false;
       const [x, y] = key.split('/').map(Number);
-      const res = await this.f(tpl.replace('{z}', String(ROAD_ZOOM)).replace('{x}', String(x)).replace('{y}', String(y)));
+      const res = await this.f(tpl.replace('{z}', String(this.zoom)).replace('{x}', String(x)).replace('{y}', String(y)));
       if (!res.ok) return res.status === 204 || res.status === 404 ? this.addTile(x, y, new Uint8Array(0)) : false;
       return this.addTile(x, y, new Uint8Array(await res.arrayBuffer()));
     } catch {
@@ -283,9 +322,10 @@ export class RoadTiles implements RoadSet {
 
   /** Adds a downloaded tile (also used by the checks). */
   addTile(x: number, y: number, buf: Uint8Array): boolean {
-    const d = decodeTile(buf, x, y);
-    const west = lngOf(x);
-    const north = latOf(y);
+    const z = this.zoom;
+    const d = decodeTile(buf, x, y, z, this.opts.schema);
+    const west = lngOf(x, z);
+    const north = latOf(y, z);
     const id0 = this.lineSeq;
     this.lineSeq += d.first.length + 1;
     const first = Int32Array.from([...d.first, d.m.length]);
@@ -294,8 +334,8 @@ export class RoadTiles implements RoadSet {
       y,
       west,
       north,
-      cw: (lngOf(x + 1) - west) / CELLS,
-      ch: (north - latOf(y + 1)) / CELLS,
+      cw: (lngOf(x + 1, z) - west) / CELLS,
+      ch: (north - latOf(y + 1, z)) / CELLS,
       xy: Float64Array.from(d.xy),
       m: Float64Array.from(d.m),
       vLine: Int32Array.from(d.vLine),
@@ -400,32 +440,37 @@ export class RoadTiles implements RoadSet {
   }
 
   near(p: LngLat, r: number): RoadSeg[] | null {
-    const [x, y] = tileOf(p);
-    const t = this.tiles.get(keyOf(x, y));
-    if (!t) return null;
-    t.used = Date.now();
     const dLat = r / 111_195;
     const dLng = dLat / Math.max(0.2, Math.cos((p[1] * Math.PI) / 180));
-    const c0 = this.cell(t, p[0] - dLng, p[1] + dLat);
-    const c1 = this.cell(t, p[0] + dLng, p[1] - dLat);
+    const z = this.zoom;
+    const [x0, y0] = tileOf([p[0] - dLng, p[1] + dLat], z);
+    const [x1, y1] = tileOf([p[0] + dLng, p[1] - dLat], z);
     const stamp = ++this.lookups;
     const out: RoadSeg[] = [];
-    let lastL = -1;
-    let segs: RoadSeg[] = [];
-    for (let cx = c0[0]; cx <= c1[0]; cx++)
-      for (let cy = c0[1]; cy <= c1[1]; cy++) {
-        const c = cx * (CELLS + 4) + cy;
-        for (let k = t.cellStart[c]; k < t.cellStart[c + 1]; k++) {
-          const v = t.cellVerts[k];
-          if (t.stamp[v] === stamp) continue;
-          t.stamp[v] = stamp;
-          const l = t.vLine[v];
-          if (l !== lastL) {
-            segs = this.build(t, l);
-            lastL = l;
+    for (let tx = x0; tx <= x1; tx++)
+      for (let ty = y0; ty <= y1; ty++) {
+        const t = this.tiles.get(keyOf(tx, ty));
+        if (!t) return null;
+        t.used = Date.now();
+        const c0 = this.cell(t, p[0] - dLng, p[1] + dLat);
+        const c1 = this.cell(t, p[0] + dLng, p[1] - dLat);
+        let lastL = -1;
+        let segs: RoadSeg[] = [];
+        for (let cx = c0[0]; cx <= c1[0]; cx++)
+          for (let cy = c0[1]; cy <= c1[1]; cy++) {
+            const c = cx * (CELLS + 4) + cy;
+            for (let k = t.cellStart[c]; k < t.cellStart[c + 1]; k++) {
+              const v = t.cellVerts[k];
+              if (t.stamp[v] === stamp) continue;
+              t.stamp[v] = stamp;
+              const l = t.vLine[v];
+              if (l !== lastL) {
+                segs = this.build(t, l);
+                lastL = l;
+              }
+              out.push(segs[v - t.first[l]]);
+            }
           }
-          out.push(segs[v - t.first[l]]);
-        }
       }
     return out;
   }

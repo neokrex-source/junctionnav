@@ -29,10 +29,10 @@ export const PLACES_MIN_ZOOM = 12;
 export const PLACES_LIMIT = 450;
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-/** Base-map layers that show points of interest (OpenMapTiles "poi", Protomaps "pois"). */
+/** Base-map layers that show points of interest (OpenMapTiles "poi", Protomaps "pois", TomTom "poi_basic"). */
 function basePoiLayers(m: maplibregl.Map): string[] {
   return (m.getStyle()?.layers ?? [])
-    .filter((l) => l.type === 'symbol' && l.id !== 'places' && ['poi', 'pois'].includes((l as { 'source-layer'?: string })['source-layer'] ?? ''))
+    .filter((l) => l.type === 'symbol' && l.id !== 'places' && ['poi', 'pois', 'poi_basic', 'poi_extended'].includes((l as { 'source-layer'?: string })['source-layer'] ?? ''))
     .map((l) => l.id);
 }
 
