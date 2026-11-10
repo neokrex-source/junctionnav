@@ -14,6 +14,8 @@ on:
       - 'src/trip/**'
       - 'src/nav/**'
       - 'tests/drives.real.test.ts'
+      - 'tests/junctionSides.real.test.ts'
+      - 'src/tomtom/routing.ts'
       - 'tests/terrainPack.real.test.ts'
   workflow_run:
     workflows: ['Offline maps']
@@ -53,4 +55,4 @@ jobs:
       - name: Drive the KL test drives
         env:
           PACK_DIR: pack
-        run: npx vitest run tests/drives.real.test.ts tests/terrainPack.real.test.ts --reporter=verbose
+        run: npx vitest run tests/drives.real.test.ts tests/terrainPack.real.test.ts tests/junctionSides.real.test.ts --reporter=verbose

@@ -292,8 +292,11 @@ function toRoute(r: TtRoute, provider: string): Route {
     const bearings = [(bearingBefore + 180) % 360, bearingAfter];
     const entry = [false, true];
     if (type === 'fork' || type === 'off ramp') {
-      const turn = angleDiff(bearingAfter, bearingBefore);
-      const other = type === 'off ramp' ? bearingBefore : bearingBefore - Math.sign(turn || (modifier?.includes('left') ? -1 : 1)) * Math.max(18, Math.abs(turn));
+      // The side the route takes: the maneuver's own (keep left, exit right), else the line's bend
+      // (positive: to the right). The other branch goes off on the other side.
+      const turn = angleDiff(bearingBefore, bearingAfter);
+      const side = modifier?.includes('left') ? -1 : modifier?.includes('right') ? 1 : Math.sign(turn) || 1;
+      const other = type === 'off ramp' ? bearingBefore : bearingBefore - side * Math.max(18, Math.abs(turn));
       bearings.push((other + 360) % 360);
       entry.push(true);
     }
