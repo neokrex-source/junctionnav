@@ -1910,7 +1910,25 @@ class App {
       }
       this.sceneCache.set(key, sc);
     }
+    this.refineJunction(cand, sc);
     return sc;
+  }
+
+  /** Junctions already moved onto their split. */
+  private refined = new WeakSet<JunctionCandidate>();
+
+  /**
+   * The view found the split as OpenStreetMap has it some metres from the router's maneuver
+   * point (TomTom's often is): the junction moves there, so the view, the distance to it, the
+   * orange stretch of the route and the close-up all centre on the split.
+   */
+  private refineJunction(cand: JunctionCandidate, sc: JunctionScene) {
+    if (!sc.shift || this.refined.has(cand)) return;
+    this.refined.add(cand);
+    cand.s += sc.shift;
+    cand.showFromS += sc.shift;
+    cand.hideAtS += sc.shift;
+    if (this.engine.junctions.includes(cand)) this.paintJunctions();
   }
 
   /** Get OSM detail for a junction, then call back (used to upgrade a schematic view). */

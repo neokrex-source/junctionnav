@@ -24,6 +24,7 @@ import type { OsmData, OsmWay } from './osmdata';
 import { surroundScene, type SurroundData, type SurroundScene } from './surroundings';
 import type { GroundMap } from './groundMap';
 import type { TerrainPatch } from './terrain';
+import { snapAround, type LocalSnap } from './snap';
 import { VerticalModel, wayLevel } from './vertical';
 
 export type RoadClass = 'motorway' | 'trunk' | 'major' | 'minor' | 'link';
@@ -149,6 +150,12 @@ export interface JunctionScene {
    * into it for a merge), for drawing them in their own colours on the navigation map.
    */
   forks?: ForkLine[];
+  /**
+   * How far past the junction's position on the route the split is as OpenStreetMap has it
+   * (metres, negative before): the view is centred on the split, so the app moves the junction
+   * there (the router's maneuver point need not be at the split, notably TomTom's).
+   */
+  shift?: number;
 }
 
 export interface ForkLine {
@@ -594,6 +601,90 @@ function alignGroups(groups: Group[], sharedLanes: number, osrmLanes: Lane[] | u
   return W;
 }
 
+/* ---------------------------------------------------------------- the split */
+
+/** The side a maneuver takes ('left', 'right'), or null (straight on, or no side). */
+function wantSide(step: Step): 'left' | 'right' | null {
+  const m = step.modifier ?? '';
+  return m.includes('left') ? 'left' : m.includes('right') ? 'right' : null;
+}
+
+/**
+ * The split on the route laid on the roads (position on `snap.line`), near the router's
+ * maneuver at sM: a node of three or more roads on the line where the route goes on one road and
+ * another road goes off forward (comes in, for a merge). The nearest such node wins; one where
+ * the other road lies on the side the route takes (a keep left with the other road on the left)
+ * is passed over, and service roads beside a main road count for less.
+ */
+function findSplit(snap: LocalSnap, sM: number, cand: JunctionCandidate, step: Step, osm: OsmData): number | null {
+  const line = snap.line;
+  const frame = new LocalFrame(line.pointAt(sM));
+  const reach = cand.highway ? 110 : 70;
+  const g = new RoadGraph(osm, frame, reach + 160);
+  const isMerge = cand.kind === 'merge';
+  const want = isMerge ? null : wantSide(step);
+  const from = Math.max(0, sM - reach);
+  const to = Math.min(line.length, sM + reach);
+  const ptsXY = line.slice(from, to).map((p) => frame.toXY(p));
+  let best: { s: number; score: number } | null = null;
+  for (const n of g.nodes.values()) {
+    if (Math.hypot(n.p[0], n.p[1]) > reach + 20 || g.degree(n.id) < 3) continue;
+    // On the line?
+    let near = Infinity;
+    for (let i = 0; i + 1 < ptsXY.length; i++) {
+      const [ax, ay] = ptsXY[i];
+      const [bx, by] = ptsXY[i + 1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? clamp(((n.p[0] - ax) * dx + (n.p[1] - ay) * dy) / l2, 0, 1) : 0;
+      near = Math.min(near, Math.hypot(ax + dx * t - n.p[0], ay + dy * t - n.p[1]));
+    }
+    if (near > 2) continue;
+    const sN = line.project(frame.toLngLat(n.p[0], n.p[1]), from, to).s;
+    const approachBrg = line.bearingAt(Math.max(0, sN - 25), 25);
+    const takenBrg = line.bearingAt(Math.min(line.length - 1, sN + 1), 25);
+    const pick = (edges: GEdge[], brg: number) => edges.reduce<GEdge | null>((b, e) => (Math.abs(angleDiff(e.brg, brg)) < 40 && (!b || Math.abs(angleDiff(e.brg, brg)) < Math.abs(angleDiff(b.brg, brg))) ? e : b), null);
+    const eIn = pick(g.inn.get(n.id) ?? [], approachBrg);
+    const eOut = pick(g.out.get(n.id) ?? [], takenBrg);
+    if (!eIn || !eOut) continue;
+    const others = isMerge
+      ? (g.inn.get(n.id) ?? []).filter((e) => e !== eIn && e.a !== eOut.b && Math.abs(angleDiff(takenBrg, e.brg)) <= 80)
+      : (g.out.get(n.id) ?? []).filter((e) => e !== eOut && e.b !== eIn.a && Math.abs(angleDiff(approachBrg, e.brg)) <= 80);
+    if (!others.length) continue;
+    let score = Math.abs(sN - sM);
+    // Only service roads (car parks, petrol stations) going off a main road: probably not the split.
+    const mainRoad = MAIN_ROAD.test(eIn.way.tags.highway ?? '');
+    if (mainRoad && others.every((e) => !MAIN_ROAD.test(e.way.tags.highway ?? ''))) score += 45;
+    if (want) {
+      // The route 40 m on, against the other road 40 m on: on the side the maneuver says?
+      const routeAt = frame.toXY(line.pointAt(Math.min(line.length, sN + 40)));
+      const routeLat = lateralOf([routeAt[0] - n.p[0], routeAt[1] - n.p[1]], approachBrg);
+      const sideOk = others.some((e) => {
+        const chain = g.walk(e, 40, true);
+        const end = g.nodes.get(chain[chain.length - 1].b)!.p;
+        const lat = lateralOf([end[0] - n.p[0], end[1] - n.p[1]], approachBrg);
+        return want === 'left' ? routeLat < lat : routeLat > lat;
+      });
+      // The roads say the route goes the other way: not this node (the line found the wrong road).
+      if (!sideOk) continue;
+    }
+    if (!best || score < best.score) best = { s: sN, score };
+  }
+  return best && best.score < reach + 60 ? best.s : null;
+}
+
+/** The side the taken lanes are drawn on against the others (null: no others, or between them). */
+function drawnSide(groups: Group[], by: 'offset' | 'lateral'): 'left' | 'right' | null {
+  const t = groups.find((g) => g.taken);
+  const others = groups.filter((g) => !g.taken);
+  if (!t || !others.length) return null;
+  const v = (g: Group) => (by === 'offset' ? g.offset : g.lateral);
+  if (others.every((o) => v(t) < v(o))) return 'left';
+  if (others.every((o) => v(t) > v(o))) return 'right';
+  return null;
+}
+
 /* ---------------------------------------------------------------- main builders */
 
 export function buildScene(
@@ -603,10 +694,29 @@ export function buildScene(
   opts: SceneOptions = {},
 ): JunctionScene {
   const step = route.steps[cand.stepIndex];
-  const origin = route.line.pointAt(cand.s);
+  // With road data: the route through the junction on its roads, centred on the split there.
+  let line = route.line;
+  let at = cand.s;
+  let shift = 0;
+  let snapped: LocalSnap | null = null;
+  if (osm && osm.ways.length) {
+    try {
+      snapped = snapAround(route, cand.s, osm);
+    } catch (err) {
+      console.warn('[junction] could not lay the route on the roads', err);
+    }
+    if (snapped) {
+      const sM = snapped.toLocal(cand.s);
+      const sN = findSplit(snapped, sM, cand, step, osm);
+      line = snapped.line;
+      at = sN ?? sM;
+      if (sN != null) shift = snapped.toRoute(sN) - cand.s;
+    }
+  }
+  const origin = line.pointAt(at);
   const frame = new LocalFrame(origin);
-  const before = route.line.slice(cand.s - BEFORE, cand.s).map((p) => frame.toXY(p));
-  const after = route.line.slice(cand.s, cand.s + AFTER).map((p) => frame.toXY(p));
+  const before = line.slice(at - BEFORE, at).map((p) => frame.toXY(p));
+  const after = line.slice(at, at + AFTER).map((p) => frame.toXY(p));
   if (before.length < 2) before.unshift([before[0][0], before[0][1] - 50]);
   if (after.length < 2) after.push([after[0][0], after[0][1] + 50]);
   const seed = hashString(`${origin[0].toFixed(5)},${origin[1].toFixed(5)}`);
@@ -614,9 +724,18 @@ export function buildScene(
   let scene: JunctionScene | null = null;
   if (osm && osm.ways.length) {
     const s = fromOsm(cand, step, frame, before, after, osm, opts);
-    if (s) scene = { ...base, ...s, source: 'osm' };
+    if (s) scene = { ...base, ...s, source: 'osm', ...(Math.abs(shift) > 0.5 ? { shift } : {}) };
   }
-  scene ??= { ...base, ...schematic(route, cand, step, before, after, frame, opts), source: 'schematic' };
+  if (!scene) {
+    // No split found in the road data: the sketch, at the router's own point on its own line.
+    const o = route.line.pointAt(cand.s);
+    const f = new LocalFrame(o);
+    const b = route.line.slice(cand.s - BEFORE, cand.s).map((p) => f.toXY(p));
+    const a = route.line.slice(cand.s, cand.s + AFTER).map((p) => f.toXY(p));
+    if (b.length < 2) b.unshift([b[0][0], b[0][1] - 50]);
+    if (a.length < 2) a.push([a[0][0], a[0][1] + 50]);
+    scene = { ...base, origin: o, seed: hashString(`${o[0].toFixed(5)},${o[1].toFixed(5)}`), ...schematic(route, cand, step, b, a, f, opts), source: 'schematic' };
+  }
   if (opts.groundMap) scene.groundMap = opts.groundMap;
   if (opts.surround) {
     try {
@@ -763,7 +882,14 @@ function fromOsm(
     };
   });
   const sharedLanesAtJ = Math.round(shared.lanes[sharedIdx]);
-  const W = shared.oneway ? alignGroups(groups, sharedLanesAtJ, osrmLanes, lw) : sharedLanesAtJ;
+  let W = shared.oneway ? alignGroups(groups, sharedLanesAtJ, osrmLanes, lw) : sharedLanesAtJ;
+  // Lane data that puts the route's lanes on the other side from where its road goes off (and
+  // from the maneuver): lane data for another place; the roads decide.
+  const want = isMerge ? null : wantSide(step);
+  if (shared.oneway && osrmLanes && want && drawnSide(groups, 'offset') !== want && drawnSide(groups, 'lateral') === want) {
+    for (const gr of groups) gr.lanes = Math.max(1, Math.round(gr.strip.lanes[0]));
+    W = alignGroups(groups, sharedLanesAtJ, undefined, lw);
+  }
   const farIdx = isMerge ? shared.pts.length - 1 : 0;
   const lanesFar = Math.round(shared.lanes[farIdx]);
   // Side where lanes are added: away from the main (widest) group.
@@ -1250,14 +1376,21 @@ function schematic(
   const lw = shared.laneWidth;
   const branchStrips = isMerge ? [approach, ...others] : [taken, ...others];
   const approachBrg = step.bearingBefore;
-  const groups: Group[] = branchStrips.map((st) => ({
-    strip: st,
-    lanes: Math.max(1, Math.round(isMerge ? st.lanes[st.lanes.length - 1] : st.lanes[0])),
-    lateral: lateralOf(pointAtS(st, isMerge ? -60 : 60), isMerge ? step.bearingAfter : approachBrg),
-    span: [0, 0],
-    offset: 0,
-    taken: st === (isMerge ? approach : taken),
-  }));
+  // Without road data the drawn line decides little (the router's line may run to the side): the
+  // route's lanes go on the side its maneuver says.
+  const side = isMerge ? null : wantSide(step);
+  const groups: Group[] = branchStrips.map((st) => {
+    const isTaken = st === (isMerge ? approach : taken);
+    const lateral = lateralOf(pointAtS(st, isMerge ? -60 : 60), isMerge ? step.bearingAfter : approachBrg);
+    return {
+      strip: st,
+      lanes: Math.max(1, Math.round(isMerge ? st.lanes[st.lanes.length - 1] : st.lanes[0])),
+      lateral: isTaken && side ? (side === 'left' ? -1e6 : 1e6) : lateral,
+      span: [0, 0],
+      offset: 0,
+      taken: isTaken,
+    };
+  });
   const W = alignGroups(groups, Math.round(shared.lanes[isMerge ? 0 : shared.lanes.length - 1]), isMerge ? undefined : lanesInfo, lw);
   for (let i = 0; i < shared.lanes.length; i++) {
     shared.lanes[i] = W;

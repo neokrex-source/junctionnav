@@ -402,6 +402,25 @@ function simplify(pts: LngLat[], keep: boolean[], tol: number): boolean[] {
  * long route does not hold up the screen (`pause` is awaited between slices).
  */
 export async function alignLine(coords: LngLat[], roads: RoadSet, opts: AlignOptions = {}, pause: () => Promise<void> = async () => {}): Promise<AlignedLine | null> {
+  const it = alignSteps(coords, roads, opts);
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+    await pause();
+  }
+}
+
+/** The same, all at once (short stretches, such as the road through one junction). */
+export function alignLineSync(coords: LngLat[], roads: RoadSet, opts: AlignOptions = {}): AlignedLine | null {
+  const it = alignSteps(coords, roads, opts);
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** The work, handing back control between slices (a yield). */
+function* alignSteps(coords: LngLat[], roads: RoadSet, opts: AlignOptions): Generator<void, AlignedLine | null> {
   if (coords.length < 2) return null;
   const step = opts.step ?? 4;
   const radius = opts.radius ?? 25;
@@ -416,7 +435,7 @@ export async function alignLine(coords: LngLat[], roads: RoadSet, opts: AlignOpt
   const from: Int16Array[] = new Array(n);
   let cost = new Float64Array(0);
   for (let i = 0; i < n; i++) {
-    if (i > 0 && i % 3000 === 0) await pause();
+    if (i > 0 && i % 3000 === 0) yield;
     const cs = candidates(roads, sm[i], radius, opts.kindAt?.(sm[i].s));
     cands[i] = cs;
     const next = new Float64Array(cs.length);
