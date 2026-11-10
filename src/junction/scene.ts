@@ -656,14 +656,17 @@ function findSplit(snap: LocalSnap, sM: number, cand: JunctionCandidate, step: S
     // Only service roads (car parks, petrol stations) going off a main road: probably not the split.
     const mainRoad = MAIN_ROAD.test(eIn.way.tags.highway ?? '');
     if (mainRoad && others.every((e) => !MAIN_ROAD.test(e.way.tags.highway ?? ''))) score += 45;
+    // An exit leaves a main road onto a ramp (and an entry ramp leaves the street): a node where
+    // the route comes in on a ramp, or goes on along the main road, is another split.
+    const link = (e: GEdge) => /_link$/.test(e.way.tags.highway ?? '');
+    if (cand.kind === 'exit' || cand.kind === 'entry') score += (link(eOut) ? 0 : 25) + (link(eIn) ? 25 : 0);
     if (want) {
-      // The route 40 m on, against the other road 40 m on: on the side the maneuver says?
-      const routeAt = frame.toXY(line.pointAt(Math.min(line.length, sN + 40)));
+      // The route and the other road, each 30 m on from the node: on the side the maneuver says?
+      const routeAt = frame.toXY(line.pointAt(Math.min(line.length, sN + 30)));
       const routeLat = lateralOf([routeAt[0] - n.p[0], routeAt[1] - n.p[1]], approachBrg);
       const sideOk = others.some((e) => {
-        const chain = g.walk(e, 40, true);
-        const end = g.nodes.get(chain[chain.length - 1].b)!.p;
-        const lat = lateralOf([end[0] - n.p[0], end[1] - n.p[1]], approachBrg);
+        const at = alongChain(g, g.walk(e, 30, true), 30);
+        const lat = lateralOf([at[0] - n.p[0], at[1] - n.p[1]], approachBrg);
         return want === 'left' ? routeLat < lat : routeLat > lat;
       });
       // The roads say the route goes the other way: not this node (the line found the wrong road).
@@ -672,6 +675,18 @@ function findSplit(snap: LocalSnap, sM: number, cand: JunctionCandidate, step: S
     if (!best || score < best.score) best = { s: sN, score };
   }
   return best && best.score < reach + 60 ? best.s : null;
+}
+
+/** The point `d` metres along a chain of edges from its start (its end if shorter). */
+function alongChain(g: RoadGraph, edges: GEdge[], d: number): XY {
+  let left = d;
+  for (const e of edges) {
+    const a = g.nodes.get(e.a)!.p;
+    const b = g.nodes.get(e.b)!.p;
+    if (left <= e.len) return [a[0] + ((b[0] - a[0]) * left) / e.len, a[1] + ((b[1] - a[1]) * left) / e.len];
+    left -= e.len;
+  }
+  return g.nodes.get(edges[edges.length - 1].b)!.p;
 }
 
 /** The side the taken lanes are drawn on against the others (null: no others, or between them). */

@@ -421,3 +421,44 @@ describe('TomTom search', () => {
     expect(list.map((x) => x.name)).toEqual(['Shell']);
   });
 });
+
+describe('the other branch of a TomTom split', () => {
+  it('lies on the side the route does not take', async () => {
+    const { normalizeTomTom } = await import('../src/tomtom/routing');
+    const { destination } = await import('../src/geo/geo');
+    for (const [maneuver, angle, bend] of [
+      ['KEEP_LEFT', -20, -12],
+      ['KEEP_RIGHT', 20, 12],
+      ['MOTORWAY_EXIT_LEFT', -25, -15],
+    ] as const) {
+      // North 400 m, then bending off by `bend` degrees for 400 m.
+      const pts: [number, number][] = [[101.7, 3.1]];
+      for (let i = 1; i <= 40; i++) pts.push(destination(pts[i - 1], i <= 20 ? 0 : bend, 20));
+      const tt = (p: [number, number]) => ({ latitude: p[1], longitude: p[0] });
+      const r = normalizeTomTom({
+        routes: [
+          {
+            summary: { lengthInMeters: 800, travelTimeInSeconds: 60 },
+            legs: [{ summary: { lengthInMeters: 800, travelTimeInSeconds: 60 }, points: pts.map(tt) }],
+            guidance: {
+              instructions: [
+                { point: tt(pts[0]), pointIndex: 0, maneuver: 'DEPART', routeOffsetInMeters: 0, travelTimeInSeconds: 0 },
+                { point: tt(pts[20]), pointIndex: 20, maneuver, turnAngleInDecimalDegrees: angle, junctionType: 'BIFURCATION', routeOffsetInMeters: 400, travelTimeInSeconds: 30, drivingSide: 'LEFT' },
+                { point: tt(pts[40]), pointIndex: 40, maneuver: 'ARRIVE', routeOffsetInMeters: 800, travelTimeInSeconds: 60 },
+              ],
+            },
+          },
+        ],
+      })[0];
+      const st = r.steps[1];
+      const ix = st.intersections[0];
+      expect(ix.bearings.length, maneuver).toBe(3);
+      const other = ix.bearings[2];
+      const d = ((other - st.bearingBefore + 540) % 360) - 180;
+      // Keep left: the other road keeps right (or straight on, for an exit), and the other way round.
+      if (maneuver === 'KEEP_LEFT') expect(d, maneuver).toBeGreaterThan(5);
+      if (maneuver === 'KEEP_RIGHT') expect(d, maneuver).toBeLessThan(-5);
+      if (maneuver === 'MOTORWAY_EXIT_LEFT') expect(Math.abs(d), maneuver).toBeLessThan(3);
+    }
+  });
+});

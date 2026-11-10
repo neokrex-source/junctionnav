@@ -118,3 +118,43 @@ describe('junction heights', () => {
     expect(approach.h[approach.h.length - 1]).toBeCloseTo(0, 5);
   });
 });
+
+describe('junction views on a route from another map (TomTom)', () => {
+  /** The demo route with its maneuver points moved along it, as another router might place them. */
+  function shifted(by: number) {
+    const r = normalizeOsrm(structuredClone(demo.osrm), 'Demo')[0];
+    for (const st of r.steps) if (st.type !== 'depart' && st.type !== 'arrive') st.s = Math.max(0, Math.min(r.line.length, st.s + by));
+    return r;
+  }
+  const side = (sc: ReturnType<typeof buildScene>) => {
+    const t = sc.signs.find((x) => x.taken)!;
+    const o = sc.signs.filter((x) => !x.taken);
+    return o.every((x) => t.lateral < x.lateral) ? 'left' : o.every((x) => t.lateral > x.lateral) ? 'right' : 'middle';
+  };
+
+  for (const by of [-30, 25]) {
+    it(`finds the split from the road data with the maneuver ${Math.abs(by)} m ${by < 0 ? 'early' : 'late'}`, () => {
+      const r = shifted(by);
+      for (const [i, j] of detectJunctions(r).entries()) {
+        if (j.kind === 'merge' || j.kind === 'entry') continue;
+        const want = r.steps[j.stepIndex].modifier?.includes('left') ? 'left' : 'right';
+        const sc = buildScene(r, j, demo.osm);
+        expect(sc.source, `junction ${i}`).toBe('osm');
+        // Centred on the split: moved back by about what the maneuver point was moved.
+        expect(Math.abs((sc.shift ?? 0) + by), `junction ${i} moved ${sc.shift}`).toBeLessThan(8);
+        expect(side(sc), `junction ${i}`).toBe(want);
+      }
+    });
+  }
+
+  it('a sketch without road data puts the route on its maneuver’s side', () => {
+    for (const j of js) {
+      if (j.kind === 'merge' || j.kind === 'entry') continue;
+      const step = route.steps[j.stepIndex];
+      const want = step.modifier?.includes('left') ? 'left' : 'right';
+      const sc = buildScene(route, j, null);
+      if (sc.signs.length < 2) continue;
+      expect(side(sc), `${j.kind} ${step.modifier}`).toBe(want);
+    }
+  });
+});
