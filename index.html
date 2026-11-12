@@ -9,7 +9,7 @@
     <meta name="author" content="Dr. Mohd Anuaruddin Ahmadon, Universiti Teknologi PETRONAS" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <style>
       /* Splash: shown by the HTML itself so it appears before the app code loads. */
@@ -17,17 +17,22 @@
         position: fixed; inset: 0; z-index: 1000;
         display: grid; place-content: center; justify-items: center; gap: 14px;
         padding: 24px; text-align: center;
-        background: radial-gradient(120% 80% at 50% 30%, #3b1d6e 0%, #1a0d2e 55%, #0b0910 100%); color: #fff;
+        background: radial-gradient(120% 80% at 50% 30%, #3b1b74 0%, #1c0d36 55%, #0b0910 100%); color: #fff;
         font-family: "Saira", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
         transition: opacity 0.35s ease, visibility 0.35s;
       }
       #splash.is-done { opacity: 0; visibility: hidden; }
-      #splash .sp-mark { width: 132px; height: 132px; overflow: visible; }
-      #splash .sp-mark path { fill: none; stroke: #fff; stroke-width: 56; stroke-linecap: round; stroke-linejoin: round; }
-      #splash .sp-trunk, #splash .sp-other, #splash .sp-taken { stroke-dasharray: 260; stroke-dashoffset: 260; animation: sp-draw 0.55s ease-out forwards; }
-      #splash .sp-other { stroke-opacity: 0.45; animation-delay: 0.45s; }
-      #splash .sp-taken { animation-delay: 0.45s; stroke: #c084fc; filter: drop-shadow(0 0 18px rgba(192, 132, 252, 0.6)); }
-      #splash .sp-head { fill: #c084fc; opacity: 0; transform-origin: 360px 160px; animation: sp-pop 0.3s 0.95s ease-out forwards; }
+      /* The mark (scripts/brand/mark.mjs): the road comes up from below, the two branches draw, the arrowhead lands. */
+      #splash .sp-mark { width: 148px; height: 148px; overflow: visible; }
+      /* The mark draws itself: the road comes up from below, the two branches run out from the
+         split, and the arrowhead lands on the one to take. */
+      #splash .sp-road { opacity: 0; transform-origin: 256px 512px; animation: sp-road 0.5s ease-out forwards; }
+      #splash .sp-dash { fill: #1c0d36; opacity: 0; animation: sp-fade 0.3s 0.3s ease-out forwards; }
+      #splash .sp-other, #splash .sp-taken { fill: none; stroke-linecap: round; stroke-dasharray: 170; stroke-dashoffset: 170; animation: sp-draw 0.5s 0.4s ease-out forwards; }
+      #splash .sp-other { stroke: #fff; stroke-opacity: 0.4; stroke-width: 40; }
+      #splash .sp-taken { stroke: url(#sp-take); stroke-width: 50; filter: drop-shadow(0 0 16px rgba(192, 132, 252, 0.55)); }
+      #splash .sp-head { fill: #fb923c; stroke: #fb923c; stroke-width: 6; stroke-linejoin: round; opacity: 0; transform-origin: 350px 180px; animation: sp-pop 0.3s 0.85s ease-out forwards; }
+      #splash .sp-horizon { stroke: #c4a1ff; stroke-opacity: 0.38; stroke-width: 4; stroke-linecap: round; opacity: 0; animation: sp-fade 0.4s 0.2s ease-out forwards; }
       #splash .sp-name { font: 700 48px/1 "Saira Condensed", "Arial Narrow", system-ui, sans-serif; letter-spacing: 0.02em; margin-top: 6px; }
       #splash .sp-tag { font-size: 16px; font-weight: 500; opacity: 0.86; max-width: 30ch; }
       #splash .sp-credit {
@@ -43,11 +48,13 @@
         background-size: 40px 6px; animation: sp-lane 0.6s linear infinite;
       }
       @keyframes sp-draw { to { stroke-dashoffset: 0; } }
+      @keyframes sp-road { from { opacity: 0; transform: scaleY(0.55); } to { opacity: 1; transform: scaleY(1); } }
+      @keyframes sp-fade { to { opacity: 1; } }
       @keyframes sp-pop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
       @keyframes sp-lane { to { background-position: 40px 0; } }
       @media (prefers-reduced-motion: reduce) {
-        #splash .sp-trunk, #splash .sp-other, #splash .sp-taken { animation: none; stroke-dashoffset: 0; }
-        #splash .sp-head { animation: none; opacity: 1; }
+        #splash .sp-other, #splash .sp-taken { animation: none; stroke-dashoffset: 0; }
+        #splash .sp-road, #splash .sp-dash, #splash .sp-head, #splash .sp-horizon { animation: none; opacity: 1; }
         #splash .sp-lane { animation: none; }
       }
     </style>
@@ -55,10 +62,16 @@
   <body>
     <div id="splash" role="status" aria-label="JunctionNav is starting">
       <svg class="sp-mark" viewBox="0 0 512 512" aria-hidden="true">
-        <path class="sp-trunk" d="M256 448V300" />
-        <path class="sp-other" d="M256 300L150 170" />
-        <path class="sp-taken" d="M256 300l106-130" />
-        <polygon class="sp-head" points="300,120 422,94 408,218" />
+        <defs>
+          <linearGradient id="sp-fade" gradientUnits="userSpaceOnUse" x1="0" y1="300" x2="0" y2="512"><stop offset=".45" stop-color="#fff" /><stop offset="1" stop-color="#fff" stop-opacity="0" /></linearGradient>
+          <linearGradient id="sp-take" gradientUnits="userSpaceOnUse" x1="256" y1="300" x2="390" y2="150"><stop offset="0" stop-color="#e9d5ff" /><stop offset=".45" stop-color="#c084fc" /><stop offset="1" stop-color="#fb923c" /></linearGradient>
+        </defs>
+        <path class="sp-horizon" d="M86 168H426" />
+        <path class="sp-other" d="M256 300C240 254 210 214 174 184" />
+        <path class="sp-road" d="M132 512L228 300H284L380 512Z" fill="url(#sp-fade)" />
+        <path class="sp-dash" d="M248.5 502h15l-2.6-64h-9.8zM251.2 410h9.6l-1.6-46h-6.4zM252.8 340h6.4l-1-28h-4.4z" />
+        <path class="sp-taken" d="M256 300C272 254 300 220 334 192" />
+        <path class="sp-head" d="M405 133.5L356.8 235.4L346.4 181.8L295.8 161.3Z" />
       </svg>
       <div class="sp-name">JunctionNav</div>
       <div class="sp-tag">See every split before you reach it.</div>

@@ -8,7 +8,7 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Plugin } from 'vite';
 
-const PUBLIC = ['manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+const PUBLIC = ['manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'];
 /** Public files the Android app's website mode also needs (the page Capacitor shows on a load error). */
 const APP_PUBLIC = [...PUBLIC, 'webview.html'];
 
