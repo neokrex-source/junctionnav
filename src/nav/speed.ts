@@ -333,8 +333,13 @@ export function lowerLimitAhead(spans: LimitSpan[], s: number, reach: number): {
 
 /** A camera on the road the route runs along may sit this far from the route line... */
 const CAM_ON_ROAD = 15;
-/** ...and one beside the road (no road known) this far. */
+/** ...and one beside the road (no road known) this far on the kerb side... */
 const CAM_BESIDE = 22;
+/**
+ * ...but only this far on the side of the oncoming carriageway: a pole in the median may be
+ * ours, one on the far shoulder of the other carriageway is theirs.
+ */
+const CAM_ACROSS = 16;
 /** Cameras this close along the route are one (both sides of the road, or mapped twice). */
 const SAME_CAMERA = 60;
 
@@ -378,9 +383,17 @@ export function matchCameras(route: Route, data: Pick<SpeedData, 'cameras' | 'ch
     const pr = line.project(at, Math.max(0, s0 - 200), s1 + 200);
     return pr.dist <= maxD && pr.s >= s0 - 1 && pr.s <= s1 + 1 ? pr : null;
   };
+  // Oncoming traffic is on the right where one drives on the left, and the other way round.
+  const acrossIsRight = (route.steps[0]?.drivingSide ?? 'left') === 'left';
+  /** Is a point beside the route on the side of the oncoming carriageway? */
+  const across = (at: LngLat, s: number) => {
+    const turn = angleDiff(line.bearingAt(s, 20), bearing(line.pointAt(s), at));
+    return acrossIsRight ? turn > 0 : turn < 0;
+  };
   for (const c of data.cameras) {
     const pr = place(c.at, c.road ? CAM_ON_ROAD : CAM_BESIDE);
     if (!pr || !facesRoute(c, line.bearingAt(pr.s, 20))) continue;
+    if (!c.road && pr.dist > CAM_ACROSS && across(c.at, pr.s)) continue;
     cams.push({ id: `cam:${c.id}`, s: pr.s, at: pr.point, limit: parseMaxspeed(c.tags.maxspeed) });
   }
   const checks: SpeedCheck[] = [];
@@ -400,6 +413,7 @@ export function matchCameras(route: Route, data: Pick<SpeedData, 'cameras' | 'ch
     for (const d of e.devices) {
       const pr = place(d, CAM_BESIDE);
       if (!pr || (e.from.length && (!from || from.s > pr.s + 5))) continue;
+      if (!e.from.length && pr.dist > CAM_ACROSS && across(d, pr.s)) continue;
       cams.push({ id: `cam:${e.id}:${Math.round(pr.s)}`, s: pr.s, at: pr.point, limit });
     }
   }

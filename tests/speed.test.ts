@@ -253,6 +253,15 @@ describe('speed cameras on the route’s own carriageway', () => {
     expect(fwd.cameras.map((c) => Math.round(c.s))).toEqual([1500]);
   });
 
+  it('takes a pole on the kerb side or in the median, not one across the other carriageway', () => {
+    // Driving east on the left of the road: the kerb is to the north (left), oncoming traffic to the south.
+    const pos = (off: number) => matchCameras(r, { cameras: [cam('x', at(2000, off))], checks: [] }, [0, 5000]).cameras.length;
+    expect(pos(20)).toBe(1); // on the kerb side, 20 m out
+    expect(pos(-8)).toBe(1); // in the median
+    expect(pos(-20)).toBe(0); // on the far shoulder of the other carriageway
+    expect(pos(30)).toBe(0); // too far to be this road's
+  });
+
   it('counts a camera right beside the road, and folds two at one spot into one', () => {
     const got = matchCameras(r, { cameras: [cam('side', at(2000, -12)), cam('pole', at(2030, 10), { maxspeed: '90' })], checks: [] }, [0, 5000]);
     expect(got.cameras).toHaveLength(1);

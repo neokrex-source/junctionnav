@@ -37,7 +37,7 @@ const TRIPS: [string, LngLat, LngLat][] = [
   ['Seremban to Ayer Keroh (E2)', [101.9381, 2.7259], [102.2864, 2.2737]],
   ['KL to Tanjung Malim (E1)', [101.67, 3.172], [101.5236, 3.6846]],
   // And back, on the other carriageway.
-  ['Tanjung Malim to KL (E1)', [101.5236, 3.6846], [101.67, 3.172]],
+  ['Seremban to KL (E2)', [101.9381, 2.7259], [101.7119, 3.1578]],
   ['Ayer Keroh to Seremban (E2)', [102.2864, 2.2737], [101.9381, 2.7259]],
   ['Karak to KL (E8)', [102.0328, 3.4116], [101.7119, 3.1578]],
   ['Kajang to Seremban (LEKAS)', [101.7906, 2.9935], [101.9381, 2.7259]],
@@ -95,7 +95,8 @@ describe.skipIf(!dir)('speed limits and cameras on real roads', () => {
         }
       }
       const values = [...new Set(limits.map((l) => Math.round(l.kmh)))].sort((a, b) => a - b).join(' ');
-      const camText = found.cameras.map((c) => `${(c.s / 1000).toFixed(1)} km${c.limit ? ` (${c.limit})` : ''}`).join(', ');
+      const onRoad = new Set(d.cameras.filter((c) => c.road).map((c) => `cam:${c.id}`));
+      const camText = found.cameras.map((c) => `${(c.s / 1000).toFixed(1)} km${c.limit ? ` (${c.limit})` : ''}${onRoad.has(c.id) ? '' : ' beside'}`).join(', ');
       cams += found.cameras.length;
       const withLimit = covered(limits, 0, len);
       const fromOsm = covered(osm, 0, len);
