@@ -10,6 +10,7 @@ import { isTomTomMapTile } from './tomtomMap';
 import { TT_SOURCE } from './tomtomStyle';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
 import { tollImage } from '../ui/tollIcon';
+import { cameraImage } from '../ui/cameraIcon';
 
 /** Puck and pin take their colours from the CSS theme (--route, --pin). */
 
@@ -732,6 +733,7 @@ export class MapView {
     m.addSource('maneuver', { type: 'geojson', data: this.arrow });
     m.addSource('tunnels', { type: 'geojson', data: this.tunnelFC() });
     m.addSource('tolls', { type: 'geojson', data: this.tollFC() });
+    m.addSource('cameras', { type: 'geojson', data: this.pointsFC(this.cameraPoints) });
     m.addSource('route-pulse', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     const before = this.beforeId();
     m.addLayer(
@@ -904,6 +906,19 @@ export class MapView {
         'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.55, 15, 0.9, 18, 1.1],
       },
     });
+    // Speed cameras on the route ahead.
+    if (!m.hasImage('speed-camera')) m.addImage('speed-camera', cameraImage(), { pixelRatio: 2 });
+    m.addLayer({
+      id: 'route-camera',
+      type: 'symbol',
+      source: 'cameras',
+      layout: {
+        'icon-image': 'speed-camera',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.55, 15, 0.9, 18, 1.1],
+      },
+    });
   }
 
   /** Route stretches through junctions: orange on the way in, dark orange at the split (metres along the route). */
@@ -1000,6 +1015,18 @@ export class MapView {
   setTolls(points: LngLat[]) {
     this.tollPoints = points;
     (this.map.getSource('tolls') as GeoJSONSource | undefined)?.setData(this.tollFC());
+  }
+
+  /** Speed cameras on the route being driven, shown as icons. */
+  private cameraPoints: LngLat[] = [];
+
+  setCameras(points: LngLat[]) {
+    this.cameraPoints = points;
+    (this.map.getSource('cameras') as GeoJSONSource | undefined)?.setData(this.pointsFC(points));
+  }
+
+  private pointsFC(points: LngLat[]): FeatureCollection {
+    return { type: 'FeatureCollection', features: points.map((p) => ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: p } })) };
   }
 
   private tollFC(): FeatureCollection {

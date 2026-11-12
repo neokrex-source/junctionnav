@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { rng, rightNormals, type XY } from '../geo/geo';
 import { inRing, type AreaKind, type SurroundScene } from './surroundings';
+import { inTheme } from '../theme/tint';
 
 export interface SurroundPalette {
   areas: Record<AreaKind, string>;
@@ -71,6 +72,12 @@ export const SURROUND_NIGHT: SurroundPalette = {
   hemiIntensity: 0.55,
   sunIntensity: 0.35,
 };
+
+/** The surroundings' colours in the current look (water stays water in the jet's green night). */
+export function surroundPalette(night: boolean): SurroundPalette {
+  if (!night) return inTheme(SURROUND_DAY, false);
+  return inTheme(SURROUND_NIGHT, true, { jet: { areas: { ...inTheme(SURROUND_NIGHT, true).areas, water: '#031019' }, river: '#0a2a3a', hemiSky: '#a3efc0' }, casual: { hemiSky: '#aab8ef' } });
+}
 
 /** World coordinates: x = east, y = up, z = south. */
 const W = (x: number, y: number, h: number): [number, number, number] => [x, h, -y];

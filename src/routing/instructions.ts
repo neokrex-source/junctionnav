@@ -1,5 +1,6 @@
 import type { LaneState } from '../nav/lanes';
 import type { TollPay, TollState } from '../nav/tolls';
+import type { SpeedPrompt } from '../nav/speedWatch';
 import { tunnelName, type TunnelSpan, type TunnelState } from '../nav/tunnels';
 import { parseDestinations, splitRefs, type Modifier, type Step } from './types';
 
@@ -868,6 +869,80 @@ export function tollSpeech(kind: 'early' | 'near', t: TollState, pay: TollPay, l
   const ready = pay === 'tng' ? 'Get your Touch n Go card ready.' : pay === 'etc' ? 'Check your ETC card.' : 'Have your toll payment ready.';
   if (kind === 'early') return `${title} in ${d}. ${ready}`;
   return `Toll plaza ahead.${pay === 'tng' ? ' Prepare your Touch n Go.' : ''}`;
+}
+
+/* ------------------------------------------------------------------ speed */
+
+/** A speed in the units of the settings (km/h, or mph). */
+export function speedIn(kmh: number, units: Units): number {
+  return Math.round(units === 'imperial' ? kmh / 1.609344 : kmh);
+}
+
+/**
+ * The speed warnings: "Approaching the speed limit of 110." "Slow down. The speed limit is 110."
+ * "Speed camera in 800 metres. Speed limit 110." "Average speed check for 12 kilometres."
+ */
+export function speedSpeech(p: SpeedPrompt, lang: LangCode, units: Units): string {
+  const L = LANGS[lang];
+  const lim = p.limit != null ? speedIn(p.limit, units) : null;
+  const d = p.dist != null ? L.spokenDistance(p.dist, units) : '';
+  if (lang === 'ms') {
+    const had = lim != null ? ` Had laju ${lim}.` : '';
+    switch (p.kind) {
+      case 'speedNear':
+        return `Hampir mencapai had laju ${lim}.`;
+      case 'speedOver':
+        return `Sila perlahankan. Had laju ${lim}.`;
+      case 'camera':
+        return `Kamera had laju dalam ${d}.${had}${p.over ? ' Sila perlahankan.' : ''}`;
+      case 'cameraOver':
+        return 'Kamera had laju di hadapan. Sila perlahankan.';
+      case 'checkStart':
+        return `Kawalan purata laju sejauh ${d}.${had}`;
+      case 'checkEnd':
+        return 'Tamat kawalan purata laju.';
+    }
+  }
+  if (lang === 'ja') {
+    const unit = units === 'imperial' ? 'マイル' : 'キロ';
+    const had = lim != null ? `制限速度は${lim}${unit}です。` : '';
+    switch (p.kind) {
+      case 'speedNear':
+        return `制限速度${lim}${unit}に近づいています。`;
+      case 'speedOver':
+        return `速度超過です。制限速度は${lim}${unit}です。`;
+      case 'camera':
+        return `${d}先、速度取締機があります。${had}${p.over ? '速度を落としてください。' : ''}`;
+      case 'cameraOver':
+        return 'この先、速度取締機です。速度を落としてください。';
+      case 'checkStart':
+        return `ここから${d}、区間速度取締りです。${had}`;
+      case 'checkEnd':
+        return '区間速度取締りが終わりました。';
+    }
+  }
+  const lim2 = lim != null ? ` Speed limit ${lim}.` : '';
+  switch (p.kind) {
+    case 'speedNear':
+      return `Approaching the speed limit of ${lim}.`;
+    case 'speedOver':
+      return `Slow down. The speed limit is ${lim}.`;
+    case 'camera':
+      return `Speed camera in ${d}.${lim2}${p.over ? ' Slow down.' : ''}`;
+    case 'cameraOver':
+      return 'Speed camera ahead. Slow down.';
+    case 'checkStart':
+      return `Average speed check for ${d}.${lim2}`;
+    case 'checkEnd':
+      return 'End of the average speed check.';
+  }
+}
+
+/** Words on the screen for the speed camera chip and the speed sign. */
+export function speedWords(lang: LangCode): { camera: string; check: string; average: string; limit: string; checkEnds: string } {
+  if (lang === 'ms') return { camera: 'Kamera had laju', check: 'Kawalan purata laju', average: 'purata', limit: 'Had laju', checkEnds: 'tamat dalam' };
+  if (lang === 'ja') return { camera: '速度取締機', check: '区間速度取締り', average: '平均', limit: '制限速度', checkEnds: '終了まで' };
+  return { camera: 'Speed camera', check: 'Average speed check', average: 'average', limit: 'Speed limit', checkEnds: 'ends in' };
 }
 
 /* ------------------------------------------------------------------ arrival */

@@ -36,6 +36,10 @@ export function demoPack(): DemoPack {
   const feats = [
     ...demo.pois.map((p) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: p.lngLat }, properties: p.tags })),
     ...demo.spots.map((s) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: s.lngLat }, properties: { name: s.name, place: 'suburb' } })),
+    // Speed cameras, as nodes of the road: the demo's on E35, and one on the southbound E1 (the
+    // other carriageway from the demo drive) with no limit mapped.
+    ...demo.speed.cameras.map((c) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: c.at }, properties: c.tags })),
+    { type: 'Feature', geometry: { type: 'Point', coordinates: demo.southCamera }, properties: { highway: 'speed_camera', name: 'AWAS Demo' } },
   ];
   writeFileSync(join(dir, 'places.geojsonseq'), feats.map((f) => JSON.stringify(f)).join('\n') + '\n');
 

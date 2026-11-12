@@ -9,7 +9,7 @@
  */
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { namedFlavor, type Flavor } from '@protomaps/basemaps';
-import { themeFor } from '../theme/palette';
+import { themeFor, themeId } from '../theme/palette';
 
 /* ------------------------------------------------------------------ offline (Protomaps) */
 
@@ -369,10 +369,10 @@ export function techOnlineStyle(night: boolean, lang = 'en'): StyleSpecification
   } as StyleSpecification;
 }
 
-/** One object per mode and language, so style comparisons by identity stay stable. */
+/** One object per theme, mode and language, so style comparisons by identity stay stable. */
 const cache = new Map<string, StyleSpecification>();
 export function techStyle(night: boolean, lang: string): StyleSpecification {
-  const k = `${night ? 'n' : 'd'}|${lang}`;
+  const k = `${themeId()}|${night ? 'n' : 'd'}|${lang}`;
   let s = cache.get(k);
   if (!s) cache.set(k, (s = techOnlineStyle(night, lang)));
   return s;

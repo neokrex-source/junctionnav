@@ -7,6 +7,7 @@ import { LocalFrame, xyBearing, type LngLat, type XY } from '../geo/geo';
 import type { OsrmResponse } from '../routing/osrm';
 import type { OsmData } from '../junction/osmdata';
 import type { FeatureCollection } from 'geojson';
+import type { SpeedData } from '../nav/speed';
 
 type Tags = Record<string, string>;
 type Pt = string | XY;
@@ -107,6 +108,10 @@ export interface DemoData {
   bounds: [LngLat, LngLat];
   /** The toll plaza on the expressway entrance ramp, for the toll reminder. */
   tolls: { id: string; at: LngLat; name: string }[];
+  /** A speed camera on E35 and an average speed check on E1, for the speed alerts. */
+  speed: SpeedData;
+  /** Where a camera on the southbound E1 would stand (the other carriageway from the demo drive), for tests. */
+  southCamera: LngLat;
 }
 
 let cached: DemoData | null = null;
@@ -151,7 +156,7 @@ export function buildDemo(): DemoData {
   net.node('XAm', 592.4, 4720);
   net.node('XAr', 557.2, 4720);
 
-  const trunk = (o: Tags) => T({ highway: 'trunk', oneway: 'yes', name: 'Jalan Demo', ref: '5', ...o });
+  const trunk = (o: Tags) => T({ highway: 'trunk', oneway: 'yes', name: 'Jalan Demo', ref: '5', maxspeed: '80', ...o });
   // --- Approach: Jalan Demo through Bukit Demo in twin tunnel tubes
   const tube = { tunnel: 'yes', layer: '-1', 'tunnel:name': 'Terowong Bukit Demo', 'tunnel:name:en': 'Bukit Demo Tunnel', 'tunnel:name:ja': 'ブキッデモトンネル' };
   net.way(['P0', [0, -1300], 'Tu0'], trunk({ lanes: '3', maxspeed: '80' }), 20);
@@ -183,12 +188,13 @@ export function buildDemo(): DemoData {
     highway: 'motorway_link',
     oneway: 'yes',
     lanes: '1',
+    maxspeed: '60',
     destination: 'Kuala Lumpur;Ipoh',
     'destination:ref': 'E1',
   }, 12);
 
   // --- Section C: expressway E1 northbound, merge with acceleration lane
-  const e1 = (o: Tags) => T({ highway: 'motorway', oneway: 'yes', ref: 'E1', name: 'Lebuhraya Demo', toll: 'yes', ...o });
+  const e1 = (o: Tags) => T({ highway: 'motorway', oneway: 'yes', ref: 'E1', name: 'Lebuhraya Demo', toll: 'yes', maxspeed: '110', ...o });
   net.way(['E0', [300, 1800], 'M2'], e1({ lanes: '3' }), 25);
   net.way(['M2', 'E_a'], e1({ lanes: '4' }), 25);
   net.way(['E_a', 'E_b'], e1({ lanes: '3' }), 25);
@@ -197,7 +203,7 @@ export function buildDemo(): DemoData {
 
   // --- Section D: JCT fork, E1 to Ipoh (left) and E35 to Kuala Lumpur (right)
   net.way(['J3', [297, 3360], [286, 3460], [256, 3580], [212, 3720], [152, 3900], [100, 4100]], e1({ lanes: '2', destination: 'Ipoh;Rawang' }), 15);
-  const e35 = (o: Tags) => T({ highway: 'motorway', oneway: 'yes', ref: 'E35', name: 'Lebuhraya Demo Timur', toll: 'yes', ...o });
+  const e35 = (o: Tags) => T({ highway: 'motorway', oneway: 'yes', ref: 'E35', name: 'Lebuhraya Demo Timur', toll: 'yes', maxspeed: '90', ...o });
   net.way(['J3', [303, 3360], [318, 3460], [350, 3580], [402, 3710], [462, 3860], [522, 4010], 'K1'], e35({ lanes: '2', destination: 'Kuala Lumpur;Sungai Buloh' }), 15);
   net.way(['K1', [579, 4320], 'J4'], e35({ lanes: '3', 'turn:lanes': 'slight_left|through|through' }), 18);
 
@@ -209,13 +215,14 @@ export function buildDemo(): DemoData {
     highway: 'motorway_link',
     oneway: 'yes',
     lanes: '1',
+    maxspeed: '60',
     destination: 'Sungai Buloh;Kuala Selangor',
     'destination:ref': 'B27',
   }, 10);
-  net.way(['Tn0', 'XAr', 'Tn1'], { highway: 'motorway_link', oneway: 'yes', lanes: '1', tunnel: 'yes', layer: '-1' }, 10);
-  net.way(['Tn1', [528, 4840], [505, 4930], [470, 5040], [432, 5135], 'T1'], { highway: 'motorway_link', oneway: 'yes', lanes: '1' }, 10);
+  net.way(['Tn0', 'XAr', 'Tn1'], { highway: 'motorway_link', oneway: 'yes', lanes: '1', tunnel: 'yes', layer: '-1', maxspeed: '60' }, 10);
+  net.way(['Tn1', [528, 4840], [505, 4930], [470, 5040], [432, 5135], 'T1'], { highway: 'motorway_link', oneway: 'yes', lanes: '1', maxspeed: '60' }, 10);
   net.way(['XA0', 'XAr', 'XAm', 'XA1'], { highway: 'secondary', lanes: '2', name: 'Jalan Atas' }, 25);
-  net.way([[100, 5200], 'DEST', 'T1', [800, 5200]], { highway: 'secondary', lanes: '2', name: 'Jalan Sungai Buloh', ref: 'B27' }, 25);
+  net.way([[100, 5200], 'DEST', 'T1', [800, 5200]], { highway: 'secondary', lanes: '2', name: 'Jalan Sungai Buloh', ref: 'B27', maxspeed: '60' }, 25);
 
   // Remove the shared node Xam/XAr from the tunnel and bridge ways' crossing: they pass over/under,
   // so the crossing road must not connect to them. Re-create private nodes for the bridge/tunnel ways.
@@ -515,7 +522,15 @@ export function buildDemo(): DemoData {
   ];
   // The plaza sits on the E1 entrance ramp, as Malaysian expressway entrances do.
   const tolls = [{ id: 'demo/toll', at: frame.toLngLat(130, 2160), name: 'Plaza Tol Demo' }];
-  cached = { pois, spots, osm, osrm, geojson, start: coords[0], end: coords[coords.length - 1], bounds, tolls };
+  // A speed camera on E35 (on its road, so it counts for this direction only), and an average
+  // speed check over the E1 stretch from the merge to the JCT.
+  const e35Way = osm.ways.find((w) => w.tags.ref === 'E35' && w.nodes[0] === net.named.get('J3'))!;
+  const speed: SpeedData = {
+    ways: osm.ways.filter((w) => w.tags.maxspeed).map((w) => ({ id: `demo/${w.id}`, coords: w.geometry.map((g) => [g.lon, g.lat] as LngLat), tags: w.tags })),
+    cameras: [{ id: 'demo/cam', at: frame.toLngLat(462, 3860), tags: { highway: 'speed_camera', maxspeed: '90' }, road: { coords: e35Way.geometry.map((g) => [g.lon, g.lat] as LngLat), oneway: 1 } }],
+    checks: [{ id: 'demo/avg', tags: { type: 'enforcement', enforcement: 'average_speed', maxspeed: '110' }, devices: [], from: [frame.toLngLat(300, 2470)], to: [frame.toLngLat(300, 3240)] }],
+  };
+  cached = { pois, spots, osm, osrm, geojson, start: coords[0], end: coords[coords.length - 1], bounds, tolls, speed, southCamera: frame.toLngLat(330, 2400) };
   return cached;
 }
 

@@ -8,7 +8,8 @@ import { clamp, distToPolyline, lerp, LocalFrame, rightNormals, rng, xyAt, type 
 import type { GroundMap } from './groundMap';
 import { cameraPose, groundAt, type JunctionScene, type RoadStrip, type SceneGround } from './scene';
 import { signCanvas, type SignTheme } from './signs';
-import { buildSurroundings, SURROUND_DAY, SURROUND_NIGHT } from './surroundRender';
+import { buildSurroundings, surroundPalette } from './surroundRender';
+import { inTheme } from '../theme/tint';
 
 export interface JvPalette {
   skyTop: string;
@@ -83,6 +84,21 @@ export const NIGHT: JvPalette = {
   gantry: '#463d57',
   fog: '#2a1650',
 };
+
+/** The sky, fog and route arrow of the other looks (the rest takes the look's cast, src/theme/tint.ts). */
+const DAY_SET: Parameters<typeof inTheme<JvPalette>>[2] = {
+  jet: { skyTop: '#86a596', skyHorizon: '#e6ece6', fog: '#e6ece6', arrow: '#d97706' },
+  casual: { skyTop: '#7cc4f2', skyHorizon: '#fff3e4', fog: '#fff3e4', arrow: '#f97316' },
+};
+const NIGHT_SET: Parameters<typeof inTheme<JvPalette>>[2] = {
+  jet: { skyTop: '#010302', skyHorizon: '#0a2a18', fog: '#0a2a18', arrow: '#ffb020', arrowEdge: '#fff1c9', marking: '#c8ffd9' },
+  casual: { skyTop: '#0a0f20', skyHorizon: '#2a3462', fog: '#2a3462' },
+};
+
+/** The junction view's colours in the current look. */
+export function jvPalette(night: boolean): JvPalette {
+  return night ? inTheme(NIGHT, true, NIGHT_SET) : inTheme(DAY, false, DAY_SET);
+}
 
 const CAM_HEIGHT = 15;
 const CAM_PITCH = (5.5 * Math.PI) / 180;
@@ -183,6 +199,7 @@ export class JunctionRenderer {
   private camera = new THREE.PerspectiveCamera(45, 16 / 9, 0.5, 4000);
   private jv: JunctionScene | null = null;
   private palette: JvPalette = DAY;
+  private night = false;
   private theme: SignTheme | null = null;
   private dist = 200;
   private arrowGroup = new THREE.Group();
@@ -221,7 +238,7 @@ export class JunctionRenderer {
     });
     this.canvas.addEventListener('webglcontextrestored', () => {
       this.lost = false;
-      if (this.jv && this.theme) this.setScene(this.jv, this.theme, this.palette === NIGHT);
+      if (this.jv && this.theme) this.setScene(this.jv, this.theme, this.night);
     });
   }
 
@@ -232,7 +249,8 @@ export class JunctionRenderer {
   setScene(jv: JunctionScene, theme: SignTheme, night = false) {
     this.jv = jv;
     this.theme = theme;
-    this.palette = night ? NIGHT : DAY;
+    this.night = night;
+    this.palette = jvPalette(night);
     this.clear();
     this.build();
     this.arrowFrom = Infinity;
@@ -459,7 +477,7 @@ export class JunctionRenderer {
     let blocked: ((p: XY) => boolean) | undefined;
     if (jv.surround) {
       const pose = cameraPose(jv, MAX_DIST);
-      const built = buildSurroundings(jv.surround, this.palette === NIGHT ? SURROUND_NIGHT : SURROUND_DAY, jv.seed, { pos: pose.pos, heading: pose.heading }, (x, y) => groundAt(jv.ground, x, y), {
+      const built = buildSurroundings(jv.surround, surroundPalette(this.night), jv.seed, { pos: pose.pos, heading: pose.heading }, (x, y) => groundAt(jv.ground, x, y), {
         flat: !gm,
       });
       for (const o of built.objects) this.scene3.add(o);

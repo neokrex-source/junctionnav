@@ -15,6 +15,7 @@ on:
       - 'src/nav/**'
       - 'tests/drives.real.test.ts'
       - 'tests/junctionSides.real.test.ts'
+      - 'tests/speed.real.test.ts'
       - 'src/tomtom/routing.ts'
       - 'tests/terrainPack.real.test.ts'
   workflow_run:
@@ -55,4 +56,4 @@ jobs:
       - name: Drive the KL test drives
         env:
           PACK_DIR: pack
-        run: npx vitest run tests/drives.real.test.ts tests/terrainPack.real.test.ts tests/junctionSides.real.test.ts --reporter=verbose
+        run: npx vitest run tests/drives.real.test.ts tests/terrainPack.real.test.ts tests/junctionSides.real.test.ts tests/speed.real.test.ts --reporter=verbose

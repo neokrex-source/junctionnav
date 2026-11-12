@@ -82,14 +82,29 @@ The build uses relative paths, so it works at `https://<user>.github.io/<repo>/`
 
 Trip links work the same on the hosted site, e.g. `https://<user>.github.io/junctionnav/?to=Suria%20KLCC&sim`.
 
-## Look: light purple by day, dark purple by night
+## Look: three themes, each by day and by night
 
-Purple with white, light grey and black. By day the app is light purple: white panels on light grey, black text, and the guidance banner in violet with white lettering. At night it is dark purple: near-black ground, deep purple panels, white text, and the banner in dark plum with a lilac arrow. In both a lit lane line runs along the banner's lower edge, and the route line is the brightest thing on the map: violet by day, glowing lilac by night. Warnings use amber, confirmations green.
+Settings → Map → *Theme* has three looks. Each has a bright day version and a dark night version, and each changes everything together: the page, the map, the route line, the speed instrument and the 3D junction views.
+
+| Theme | Day | Night | Type | Speed instrument |
+| --- | --- | --- | --- | --- |
+| **JunctionNav** (the default) | White panels on light grey, violet banner and route | Near-black, deep purple panels, glowing lilac route | Saira, Saira Condensed | A round bubble, the limit as a road sign on its corner |
+| **Fighter jet** | Dark inks on a light grey-green moving map | Phosphor green on black, like a head-up display | B612, the typeface Airbus drew for cockpit displays | A HUD speed tape (below) |
+| **Casual** | Cream map with mint parks and peach expressways, coral accents | Cosy navy with warm roads | Nunito, rounded | A dial with green, amber and red zones |
+
+- **Fighter jet.** The instruments of a fighter's head-up display. The speed is a **speed tape**: the scale runs past a boxed readout of your speed, and the speed limit is the red and white "barber pole" band an aircraft's tape has above its maximum speed, with an amber band below it for the warning margin. `LIM 110` and `HDG 284` (your heading) are printed on it. The box turns amber near the limit and blinks red over it. The route on the map is the **magenta line** of a flight plan over green vector roads, amber through junctions; panels are dark glass with thin lit outlines and square corners; a speed camera's chip carries a threat diamond.
+- **Casual.** Warm and friendly: pill-shaped buttons, a rounded banner in coral, a teal route, and the speed on a small dial whose green, amber and red zones end at your limit.
+- **JunctionNav.** Purple with white, light grey and black, as before: the guidance banner in violet with white lettering by day and dark plum with a lilac arrow by night, a lit lane line along its lower edge, and the route line the brightest thing on the map. Warnings use amber, confirmations green.
+- **Junction views.** The 3D views take the look too: the greys of roads, decks and buildings carry each look's cast (purple, green, warm cream or navy), under its own sky. The route through a junction stays orange in every look (amber in the jet's), so the junction view and the map always match (`src/theme/tint.ts`).
 
 - **Day and night switch on their own.** With Settings → Appearance on *Automatic*, the app turns dark at sunset and bright at sunrise where you are (worked out from the sun's position, so it is right in Kuala Lumpur in June and in Tokyo in December). It checks every minute and switches everything at once: the page, the map, the route line, the junction views and the map under them. *Always bright* and *Always dark* are there too.
-- **Map.** The default map is drawn in the same palette from OpenFreeMap's free vector tiles online and from the offline pack's Protomaps tiles offline: quiet grey land, water and parks, and roads in three tiers with expressways tinted purple: white by day, and at night soft lavender greys that get brighter with the size of the road, so streets, main roads and expressways each stand out clearly from the dark ground and from one another while the glowing route line stays the brightest thing on the map. Labels have no icons. The junction views (3D and map) use the same hues.
-- **Type.** Saira for the interface and Saira Condensed for distances, times and road names, bundled with the app so they also work offline. Road signs in the junction view keep their own condensed lettering.
-- **Code.** CSS tokens at the top of `src/styles/app.css`; the same colours for the map and route line in `src/theme/palette.ts`; map styles in `src/map/techStyle.ts`; the sun in `src/state/daylight.ts`.
+- **Map.** The JunctionNav map style is drawn in the theme's palette from TomTom's or OpenFreeMap's vector tiles online and from the offline pack's Protomaps tiles offline: quiet grey land, water and parks, and roads in three tiers with expressways tinted purple: white by day, and at night soft lavender greys that get brighter with the size of the road, so streets, main roads and expressways each stand out clearly from the dark ground and from one another while the glowing route line stays the brightest thing on the map. Labels have no icons. The junction views (3D and map) use the same hues.
+- **Type.** Each theme's typefaces are bundled with the app so they also work offline (the browser fetches only the ones of the theme in use). Road signs in the junction view keep their own condensed lettering.
+- **Code.** JunctionNav's CSS tokens at the top of `src/styles/app.css`, the other two themes' in `src/styles/themes.css` (under `:root[data-skin="jet"]` and `:root[data-skin="casual"]`); the same colours for the map and route line in `src/theme/palette.ts` (`THEMES`); map styles in `src/map/techStyle.ts` and `src/map/tomtomStyle.ts`; the speed instrument in `src/ui/speedMeter.ts`; the sun in `src/state/daylight.ts`. `scripts/dev/speed-check.cjs` opens all six looks in a browser and checks colours, typefaces, instruments and that nothing overlaps.
+
+### Logo
+
+The mark is the road ahead from the driver's seat, splitting at the horizon: the approach in perspective with its lane dashes, the branch not taken fading off to the left, and the branch taken curving right, lit from lilac into the orange the app gives every junction, ending in an arrowhead. It is drawn once, in `scripts/brand/mark.mjs`, which writes the app icon (`public/icon.svg`), a maskable version and the mark on its own; `scripts/brand/icons.cjs` makes every bitmap from those (web icons, the Android launcher icons with their adaptive and themed layers, and the Android launch screens). The web splash draws the same mark stroke by stroke. To change the logo, edit `mark.mjs` and run `node scripts/brand/mark.mjs && node scripts/brand/icons.cjs`.
 
 ## Search and directions
 
@@ -166,7 +181,7 @@ Every drive also checks that the route is planned, junction views appear and arr
 
 Each drive is a trip link (`src/sim/drives.ts`) with named coordinates, so it plans with the normal router or the offline maps. The checks live in `src/sim/testRun.ts` and are fed by the same events the screen shows.
 
-`.github/workflows/drives.yml` replays every drive on the real Peninsular Malaysia pack (after each pack build and whenever the navigation, junction or simulator code changes) the way the simulator drives it: same speeds, GPS cut in tunnels with dead reckoning filling in, the navigation engine's prompts, and the junction views built from the offline road data and terrain. It feeds the same checklist and fails if any of a drive's checks would not tick. The report lists every junction view (what the road does, how high, how steep), each check with where it ticked, other functions the drive happens to show, and a suggested shorter version of the drive.
+`.github/workflows/drives.yml` replays every drive on the real Peninsular Malaysia pack (after each pack build and whenever the navigation, junction or simulator code changes) the way the simulator drives it: same speeds, GPS cut in tunnels with dead reckoning filling in, the navigation engine's prompts, and the junction views built from the offline road data and terrain. It feeds the same checklist and fails if any of a drive's checks would not tick. The report lists every junction view (what the road does, how high, how steep), each check with where it ticked, other functions the drive happens to show, and a suggested shorter version of the drive. The same run measures the speed data on real roads (`tests/speed.real.test.ts`): 15 trips around KL and along the North–South, LEKAS, Guthrie and Karak expressways, with how much of each has a limit from OpenStreetMap or the national one, and the speed cameras on the route's own carriageway.
 
 ### Lane alerts
 
@@ -196,6 +211,19 @@ Before each toll plaza on the route the app reminds you to have the toll card re
 - **On screen.** From where the reminder starts until the plaza is passed, a slim amber line over the arrival time shows the plaza, the distance counting down and "Touch 'n Go", and the plaza has an amber booth icon on the map.
 - **Data.** Toll gates TomTom reports on its routes, and OSM toll booths (`barrier=toll_booth`, one Overpass query per 20 km of route ahead, within 35 m of the route line), grouped into one plaza per 300 m with the plaza's name from OSM. Offline, the named toll plazas in the offline maps take over. The demo drive has one, Plaza Tol Demo, on the E1 entrance ramp.
 - **Settings.** *Toll plazas: Remind me to get Touch 'n Go ready* turns the voice, the line and the map icons off.
+
+### Speed limits and speed cameras
+
+The speed limit shows beside your speed, the app warns as you come up to it and when you pass it, and speed cameras are announced ahead.
+
+- **The limit.** Beside the speed, as a round road sign (in the Fighter jet theme: `LIM 110` and the red band on the speed tape). It comes from, in order: TomTom's own speed limits on its routes; OpenStreetMap's `maxspeed` on the road the route runs along (matched by position and direction, so a crossing road, a frontage road or the other carriageway does not count); and where neither has one, the national limit on expressways, **110 km/h in Malaysia** (100 in Japan). Ramps get no national limit, since they are signed lower.
+- **Approaching the limit.** Within 5 km/h of it (3 or 10 in Settings) the speed turns amber, with one soft tone and "Approaching the speed limit of 110". Once per stretch: it comes again only after you have been well below the limit for 20 seconds, or on a new limit.
+- **Over the limit.** After a second and a half over it: red and pulsing, three quick beeps and "Slow down. The speed limit is 110", again every 30 seconds while it lasts (four times at most on one limit). A moment over the limit, while overtaking say, does not count.
+- **Speed cameras.** 800 m before a camera on fast roads (300 m in town): a falling two-tone and "Speed camera in 800 metres. Speed limit 110", with "Slow down" when you are over it, and once more 300 m out if you still are. The camera shows on the map and in a slim red line over the arrival time with the distance counting down. Only cameras on your own carriageway count: on the road the route runs along, in your direction.
+- **Average speed checks.** Where the map has one (a stretch between two cameras): "Average speed check for 12 kilometres" as it starts, your average so far on the screen while you are in it, and "End of the average speed check".
+- **Data.** Cameras are OpenStreetMap's (`highway=speed_camera`, and `enforcement` relations for fixed cameras and average speed checks), which holds the fixed AWAS cameras people have mapped; police speed traps set up for a day are not in any map. One Overpass query per 20 km of route ahead fetches limits, cameras and the toll booths together (`src/nav/speed.ts`). Without internet both come from the offline maps. The limit can be out of date where a sign changed and the map did not: the sign on the road is the one that counts.
+- **Settings.** Drive → *Speed limits*: warnings by tone and voice, tone only, the sign only, or off; how far before the limit to warn; and speed cameras on or off. Malay and Japanese prompts follow the app language ("Hampir mencapai had laju 110", 「制限速度は110キロです」), and with miles as the unit everything is in mph.
+- **Try it.** The demo drive's road has limits (80, 110, 90), a camera on E35 and an average speed check on E1. Its simulated driver creeps over the limit now and then (the **Speeding** button in the simulator bar turns that on and off in any simulated drive).
 
 ### Tunnel signs
 
@@ -319,6 +347,7 @@ Avoid options use OSRM's `exclude` parameter. Public servers may not support it,
 | Junction detail | `overpass-api.de`, `overpass.kumi.systems` | Shared public servers with rate limits. Fine for testing and personal use. |
 | Search | TomTom (with a key, *TomTom first*), else `photon.komoot.io` | Photon is OSM-based and allows search-as-you-type, fair use only. The category buttons use TomTom, else Overpass. |
 | Places around you | Overture Maps places merged with OpenStreetMap, built weekly by a GitHub job | 699k places for Malaysia, Singapore and Brunei, published with the site; the app keeps the area within 100 km. |
+| Speed limits and cameras | TomTom's limits on its routes; OpenStreetMap `maxspeed`, speed cameras and enforcement relations by Overpass; the offline maps | Checked against the national 110 km/h on Malaysian expressways. Fixed cameras only, as far as they are mapped. |
 | Terrain | AWS Terrain Tiles (Terrarium) | One or two small images per junction, for hills and valleys in junction views. |
 | Offline maps | Geofabrik OSM extract, Protomaps tiles | Built monthly on GitHub Actions, served from your GitHub Pages site (soft limit 100 GB of traffic a month, so roughly 350 full downloads). |
 | Live traffic | TomTom Traffic and Routing APIs | Optional, with a free key per user (or one for the site). Congestion tiles, incidents, travel times with traffic. |
@@ -362,7 +391,7 @@ Copy `.env.example` to `.env`. Every value is optional.
 | `VITE_TRAFFIC_NEWS_URL` | set by the Pages and Android builds to the `traffic-news` branch's `news.json` |
 | `VITE_PLACES_URL` | the site's `places/` folder (from `VITE_WEB_APP_URL`); set it to use places data published elsewhere |
 
-Users can also change map style, sign style, language (English, Bahasa Melayu, Japanese), units, voice, junction-view mode and server URLs in **Settings**, which is in five tabs: *Map* (map style, appearance, signboards), *Drive* (voice, lane alerts, close-up at splits, junction view, surroundings, tunnels, tolls), *Traffic* (TomTom key, routing and place search, live traffic, traffic voice and news), *Downloads* (places around you, offline maps) and *App* (account, language, units, app version, servers). Save and Cancel stay at the bottom whichever tab is open, the arrow keys move between tabs, and Settings opens on the tab used last.
+Users can also change map style, sign style, language (English, Bahasa Melayu, Japanese), units, voice, junction-view mode and server URLs in **Settings**, which is in five tabs: *Map* (map style, theme, appearance, signboards), *Drive* (voice, lane alerts, speed limits, close-up at splits, junction view, surroundings, tunnels, tolls), *Traffic* (TomTom key, routing and place search, live traffic, traffic voice and news), *Downloads* (places around you, offline maps) and *App* (account, language, units, app version, servers). Save and Cancel stay at the bottom whichever tab is open, the arrow keys move between tabs, and Settings opens on the tab used last.
 
 ## Project layout
 
@@ -384,6 +413,8 @@ src/
   nav/lanes.ts            lane advisor: target lanes, advice distance, GPS lane estimate
   nav/tunnels.ts          tunnel stretches (router classes + OSM ways), loading ahead, state
   nav/tolls.ts            toll plazas (TomTom toll gates + OSM toll booths), loading ahead, how the toll is paid
+  nav/speed.ts            speed limits (TomTom, OSM maxspeed, national) and speed cameras on the route, loading ahead
+  nav/speedWatch.ts       the speed against the limit: near, over, cameras and average speed checks, and their warnings
   nav/sources.ts          GPS, simulator, speech, screen wake lock
   offline/                offline maps: pack storage and download, road graph, router, place index,
                           worker, offline map style, online/offline provider switch
@@ -399,13 +430,18 @@ src/
   junction/zoomMap.ts     tilted map close-up
   junction/zoom3d.ts      3D decks, ramps, underpasses and route ribbon on the map close-up
   junction/groundMap.ts   map snapshot laid on the ground of the 3D view
-  ui/                     banner, junction panel and preview, tunnel card, steps list, icons, settings
+  ui/                     banner, junction panel and preview, tunnel card, speed instrument (speedMeter.ts),
+                          steps list, icons, settings
+  theme/                  the three themes' map and route colours (palette.ts), junction view tints (tint.ts)
+  styles/                 app.css (layout and the JunctionNav theme), themes.css (Fighter jet, Casual, speed), fonts
   demo/                   synthetic OSM + OSRM data and offline providers for the demo and tests
   lab/lab.ts              Junction View Lab page
 scripts/offline/          offline pack builder (run by the Pages workflow)
 scripts/traffic/          traffic news collector (run every 20 minutes by the Traffic news workflow)
 scripts/places/           places data builder: Overture Maps + OpenStreetMap into cells (run weekly by the Places workflow)
 scripts/android/          emulator check for the Android app (run by the Android workflow)
+scripts/brand/            the logo: mark.mjs draws it, icons.cjs makes every icon and launch screen from it
+scripts/dev/              browser checks (TomTom, traffic, places, pins, voice, route alignment, speed and themes)
 android/                  the Android app's native project (Capacitor; web assets are synced in at build)
 src/platform.ts           browser or Android app, and the addresses that differ between them
 scripts/sw-plugin.ts      writes the service worker that keeps the app shell for offline use
@@ -420,8 +456,9 @@ tests/                    vitest suites
 ## Tests
 
 ```bash
-npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, toll plazas, places, scene builder,
-                  # offline pack (builds a pack from the demo network with the real scripts, then routes, searches and reads junctions)
+npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, toll plazas, speed limits and
+                  # cameras, the three themes, places, scene builder, offline pack (builds a pack from the demo network with the real
+                  # scripts, then routes, searches, reads junctions, speed limits and cameras)
 npm run typecheck
 ```
 
@@ -433,7 +470,8 @@ npm run typecheck
 - **Data quality follows OSM tagging.** Where `lanes`, `turn:lanes` or `destination` tags are missing, the view falls back to typical lane counts and signs that show road names or refs.
 - **Public servers are not for production.** Long routes trigger several Overpass queries; the app batches, caches and backs off, but self-hosting is the reliable path.
 - **Phone GPS cannot tell levels apart and only roughly tells lanes apart.** Off-route detection on a flyover vs. the road below only triggers once the roads separate horizontally; the lane check stays quiet when GPS is not clearly good enough (see Lane alerts).
-- Not yet: roundabout junction views, traffic, offline maps, speed limits, OSM `destination_sign` relations for real gantry layouts, and lazy-loading three.js to shrink the first load (about 300 KB gzipped for the app plus 150 KB for the 3D view).
+- Speed cameras are the fixed ones mapped in OpenStreetMap; mobile speed traps and time-of-day limits (school zones) are not known to the app.
+- Not yet: roundabout junction views, OSM `destination_sign` relations for real gantry layouts, and lazy-loading three.js to shrink the first load (about 300 KB gzipped for the app plus 150 KB for the 3D view).
 - iOS Safari needs a tap before speech works (handled by the Start button) and pauses GPS when the screen locks.
 
 Keep your eyes on the road: set the destination before driving, mount the phone, and follow actual road signs where they differ from the app.

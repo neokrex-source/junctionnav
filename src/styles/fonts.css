@@ -64,3 +64,63 @@
   font-weight: 700;
   src: url('@fontsource/barlow-condensed/files/barlow-condensed-latin-700-normal.woff2') format('woff2');
 }
+
+/* Fighter jet theme: B612, the typeface Airbus drew for cockpit displays, and its mono cut for
+   the instruments. Casual theme: Nunito, rounded and friendly. Browsers fetch these only when a
+   theme that uses them is on. */
+@font-face {
+  font-family: 'B612';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/b612/files/b612-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'B612';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/b612/files/b612-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'B612 Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/b612-mono/files/b612-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'B612 Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/b612-mono/files/b612-mono-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/nunito/files/nunito-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/nunito/files/nunito-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/nunito/files/nunito-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nunito';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 800;
+  src: url('@fontsource/nunito/files/nunito-latin-800-normal.woff2') format('woff2');
+}

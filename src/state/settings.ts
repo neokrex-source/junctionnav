@@ -4,6 +4,8 @@ import type { Avoid } from '../routing/types';
 import type { JvMode, JvSize } from '../ui/junctionPanel';
 import type { PlacesUpdate } from '../places/schedule';
 import { isDaylight } from './daylight';
+import type { ThemeId } from '../theme/palette';
+import type { SpeedAlertMode } from '../nav/speedWatch';
 
 export interface Settings {
   mapStyle: string;
@@ -19,6 +21,8 @@ export interface Settings {
   voiceId: string;
   jvMode: JvMode;
   appearance: 'auto' | 'day' | 'night';
+  /** The app's look: JunctionNav (purple), Fighter jet (HUD instruments) or Casual, each by day and night. */
+  theme: ThemeId;
   routerUrl: string;
   overpassUrls: string;
   photonUrl: string;
@@ -34,6 +38,12 @@ export interface Settings {
   tunnelAlerts: boolean;
   /** Voice reminder and a chip before toll plazas (get the Touch 'n Go card ready). */
   tollAlerts: boolean;
+  /** The speed limit beside the speed, and warnings near and over it: tone and voice, tone only, the sign only, or off. */
+  speedAlerts: SpeedAlertMode;
+  /** Warn this many km/h before the limit. */
+  speedMargin: number;
+  /** Warnings before speed cameras and average speed checks. */
+  speedCams: boolean;
   /** With offline maps downloaded: use them only without internet ('auto') or all the time. */
   offlineUse: 'auto' | 'always';
   /** Version of the app's look the settings were saved with (moves old default map styles on). */
@@ -89,6 +99,7 @@ export const DEFAULTS: Settings = {
   voiceId: '',
   jvMode: 'illustration',
   appearance: 'auto',
+  theme: 'junction',
   routerUrl: env.VITE_ROUTER_URL || 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
   overpassUrls:
     env.VITE_OVERPASS_URLS || 'https://overpass-api.de/api/interpreter\nhttps://overpass.kumi.systems/api/interpreter',
@@ -100,6 +111,9 @@ export const DEFAULTS: Settings = {
   laneAlerts: 'gps',
   tunnelAlerts: true,
   tollAlerts: true,
+  speedAlerts: 'voice',
+  speedMargin: 5,
+  speedCams: true,
   offlineUse: 'auto',
   look: 2,
   mapScale: 'auto',
@@ -136,6 +150,7 @@ export function loadSettings(): Settings {
       const saved = JSON.parse(raw) as Partial<Settings> & { avoidTolls?: boolean };
       const merged = { ...DEFAULTS, ...saved, avoid: { ...DEFAULTS.avoid, ...(saved.avoid ?? {}) } };
       if (saved.avoidTolls) merged.avoid.tolls = true; // older versions
+      if (!['junction', 'jet', 'casual'].includes(merged.theme)) merged.theme = DEFAULTS.theme;
       // The old default map follows the app to its new look; a style picked on purpose stays.
       if ((saved.look ?? 1) < LOOK && (!saved.mapStyle || saved.mapStyle === 'ofm-liberty')) merged.mapStyle = DEFAULTS.mapStyle;
       merged.look = LOOK;

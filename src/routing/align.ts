@@ -622,6 +622,7 @@ export async function alignRoute(route: Route, roads: RoadSet, pause?: () => Pro
     const s = map(g.s);
     return { ...g, s, at: line.pointAt(s) };
   });
+  const speedLimits = route.speedLimits?.map((x) => ({ ...x, s0: map(x.s0), s1: map(x.s1) })).filter((x) => x.s1 > x.s0);
   return {
     ...route,
     geometry: res.coords,
@@ -629,6 +630,7 @@ export async function alignRoute(route: Route, roads: RoadSet, pause?: () => Pro
     steps,
     legs,
     ...(tollGates ? { tollGates } : {}),
+    ...(speedLimits ? { speedLimits } : {}),
     aligned: res.unknown > 0.002 ? 'partial' : 'full',
   };
 }

@@ -5,6 +5,8 @@ import type { Route, Step } from '../routing/types';
 import { LaneTracker, laneState, signedOffset, upcomingTarget, type LaneState } from './lanes';
 import { tollAhead, type TollPlaza, type TollState } from './tolls';
 import { TUNNEL_MIN_VOICE, tunnelStateAt, type TunnelSpan, type TunnelState } from './tunnels';
+import type { SpeedInfo } from './speed';
+import { SpeedWatch, type SpeedPrompt, type SpeedState } from './speedWatch';
 
 /** "You have reached your destination" is said this far before the end of the route. */
 export const ARRIVAL_RADIUS = 300;
@@ -54,13 +56,15 @@ export interface Progress {
   tunnel: TunnelState | null;
   /** The next toll plaza within about 1.5 km on fast roads (600 m in town). */
   toll: TollState | null;
+  /** The speed limit here, how the speed stands against it, and speed cameras and checks ahead. */
+  speedo: SpeedState;
   /** Position estimated without GPS. */
   dr: boolean;
   /** Within the arrival radius of the final destination: arrival is announced, voice guidance ends. */
   nearDestination: boolean;
 }
 
-export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollNear';
+export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollNear' | 'speed';
 
 export interface Prompt {
   key: string;
@@ -73,6 +77,8 @@ export interface Prompt {
   tunnel?: TunnelState;
   /** For toll prompts: the plaza and how far it is. */
   toll?: TollState;
+  /** For speed prompts: near or over the limit, a speed camera, an average speed check. */
+  speed?: SpeedPrompt;
   /**
    * On the first heads-up for a turn the router gave no lanes for: the side of the road to move
    * to ("Move into the left lane").
@@ -125,6 +131,8 @@ export class NavEngine {
   tollAlerts = true;
   /** When each plaza's early reminder was said (the near one is skipped right after it). */
   private tollSaid = new Map<string, number>();
+  /** Speed limits, speed cameras and average speed checks, and the warnings for them. */
+  readonly speed = new SpeedWatch();
   /** Last good GPS position on the route, the starting point for dead reckoning. */
   private real: { s: number; speed: number; time: number } | null = null;
   /** The last update used an estimate; the next real fix may correct it backwards. */
@@ -143,6 +151,9 @@ export class NavEngine {
     this.tunnels = [];
     this.tolls = [];
     this.tollSaid.clear();
+    const { mode, margin, cameras } = this.speed;
+    this.speed.reset();
+    Object.assign(this.speed, { mode, margin, cameras });
     this.real = null;
     this.estimating = false;
     // The app says the first instruction itself as guidance starts: no short-leg repeat of it.
@@ -168,6 +179,10 @@ export class NavEngine {
 
   setTolls(plazas: TollPlaza[]) {
     this.tolls = [...plazas].sort((a, b) => a.s - b.s);
+  }
+
+  setSpeedInfo(info: SpeedInfo) {
+    this.speed.info = info;
   }
 
   private tunnelNear(s: number, before = 60, after = 30): TunnelSpan | undefined {
@@ -277,6 +292,7 @@ export class NavEngine {
     const tunnel = tunnelStateAt(this.tunnels, s, fastRoad ? 1000 : 400);
     const inTunnel = !!this.tunnelNear(s, 0, 0);
     const toll = tollAhead(this.tolls, s, fastRoad ? 1500 : 600);
+    const speedo = this.speed.update(s, speed, fix.time, fastRoad);
 
     // Lane advice: smoothed lateral position against the lanes needed for the next decision.
     // No lane check on estimated positions or inside tunnels, where GPS is unreliable.
@@ -316,6 +332,7 @@ export class NavEngine {
       lane,
       tunnel,
       toll,
+      speedo,
       dr: !!fix.dr,
       nearDestination: remaining <= arrivalRadius(route),
     };
@@ -338,7 +355,17 @@ export class NavEngine {
     if (!finalLeg) out.push(...this.lanePrompts(p, out));
     out.push(...this.tunnelPrompts(p, out));
     out.push(...this.tollPrompts(p, out));
+    out.push(...this.speedPrompts(p));
     return out;
+  }
+
+  /** Speed warnings (src/nav/speedWatch.ts); none on estimated positions. */
+  private speedPrompts(p: Progress): Prompt[] {
+    if (p.dr) return [];
+    const cur = this.route?.steps[p.next.index - 1];
+    const roadSpeed = cur && cur.duration > 0 ? cur.distance / cur.duration : 0;
+    const fast = Math.max(p.speed, roadSpeed) > 16;
+    return this.speed.prompts(p.speedo, p.s, this.now, fast).map((sp) => ({ key: sp.key, step: p.next, distance: sp.dist ?? null, kind: 'speed' as const, speed: sp }));
   }
 
   /**

@@ -15,7 +15,7 @@ const KEEP = {
   place: null, // any
   aeroway: new Set(['aerodrome', 'terminal']),
   railway: new Set(['station', 'halt']),
-  highway: new Set(['services', 'rest_area', 'motorway_junction', 'toll_gantry']),
+  highway: new Set(['services', 'rest_area', 'motorway_junction', 'toll_gantry', 'speed_camera']),
   barrier: new Set(['toll_booth']),
   amenity: null,
   shop: null,
@@ -60,6 +60,11 @@ const GENERIC = {
   'amenity=parking': (p) => p.operator ?? 'Parking',
   'highway=services': () => 'Rest area',
   'highway=rest_area': () => 'Rest area',
+  // The speed alerts read the limit back from the name (src/offline/queries.ts).
+  'highway=speed_camera': (p) => {
+    const m = /^(\d+)$/.exec(String(p.maxspeed ?? '').trim());
+    return m ? `Speed camera ${m[1]} km/h` : 'Speed camera';
+  },
 };
 const clean = (s) => String(s).replace(/[\t\n\r]+/g, ' ').trim();
 
@@ -68,7 +73,9 @@ const add = (name, alt, lon, lat, kind) => {
   name = clean(name);
   alt = alt ? clean(alt) : '';
   if (!name) return;
-  const key = `${name.toLowerCase()}|${Math.round(lon / 0.002)}|${Math.round(lat / 0.002)}`;
+  // Places of one name within ~200 m are one place; speed cameras on the two carriageways are not.
+  const grid = kind === 'highway=speed_camera' ? 0.00002 : 0.002;
+  const key = `${name.toLowerCase()}|${Math.round(lon / grid)}|${Math.round(lat / grid)}`;
   if (seen.has(key)) return;
   seen.add(key);
   entries.push([name, alt && alt !== name ? alt : '', lon, lat, kindOf(kind)]);
@@ -94,7 +101,8 @@ for await (const line of createInterface({ input: createReadStream(geojsonPath),
     }
   }
   if (!kind) continue;
-  const name = p.name ?? GENERIC[kind]?.(p);
+  // Speed cameras keep the generic name (with the limit) even when mapped with a name.
+  const name = kind === 'highway=speed_camera' ? GENERIC[kind](p) : p.name ?? GENERIC[kind]?.(p);
   if (!name) continue;
   const c = centroid(f.geometry);
   if (!c) continue;

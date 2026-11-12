@@ -35,7 +35,7 @@ rm -f "$WORK/roads.opl" "$WORK/roads.osm.pbf" "$WORK/roads-loc.osm.pbf"
 osmium tags-filter "$WORK/pen.osm.pbf" \
   nwr/place nwr/amenity nwr/shop nwr/tourism nwr/leisure nwr/healthcare nwr/office \
   nwr/building=commercial,retail,hospital,university,school,mosque,temple,church,train_station \
-  nwr/railway=station,halt nwr/aeroway=aerodrome,terminal nwr/highway=services,rest_area,motorway_junction,toll_gantry \
+  nwr/railway=station,halt nwr/aeroway=aerodrome,terminal nwr/highway=services,rest_area,motorway_junction,toll_gantry,speed_camera \
   nwr/barrier=toll_booth \
   -o "$WORK/places.osm.pbf" --overwrite
 osmium export "$WORK/places.osm.pbf" -f geojsonseq -x print_record_separator=false --geometry-types=point,polygon -o "$WORK/places.geojsonseq" --overwrite

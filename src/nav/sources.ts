@@ -59,14 +59,17 @@ export function currentPosition(timeout = 8000): Promise<LngLat> {
   });
 }
 
-/** Simulated speed at along-route position s: the router's speed for the step, slowing for turns. */
-export function simSpeedAt(route: Route, s: number): number {
+/**
+ * Simulated speed at along-route position s: the router's speed for the step (or `cruise`, m/s,
+ * when given), slowing for turns.
+ */
+export function simSpeedAt(route: Route, s: number, cruise?: number): number {
   const steps = route.steps;
   let k = 0;
   while (k < steps.length - 1 && steps[k + 1].s <= s) k++;
   const st = steps[k];
-  let v = st.duration > 0 ? st.distance / st.duration : 12;
-  v = Math.max(6, Math.min(33, v));
+  let v = cruise ?? (st.duration > 0 ? st.distance / st.duration : 12);
+  v = Math.max(6, Math.min(cruise != null ? 45 : 33, v));
   const next = steps[k + 1];
   if (next) {
     const d = next.s - s;
@@ -88,6 +91,15 @@ export class Simulator implements LocationSource {
   autoLanes = true;
   /** Along-route stretches with no GPS, like inside tunnels. */
   outages: [number, number][] = [];
+  /**
+   * A driver who drives to the speed limit and now and then creeps over it, to try the speed
+   * alerts: below it, then near it, then a little over it, in turn every 2.4 km.
+   */
+  speeding = false;
+  /** The speed limit at a position (km/h), for the speeding driver. */
+  limitAt: ((s: number) => number | null) | null = null;
+  /** The speed now (m/s): the speeding driver speeds up and slows down gradually. */
+  private v = -1;
   private laneF = 1;
   private timer = 0;
   private last = 0;
@@ -100,8 +112,20 @@ export class Simulator implements LocationSource {
     this.factor = factor;
   }
 
-  private speedAt(s: number): number {
-    return simSpeedAt(this.route, s);
+  private speedAt(s: number, dt = 0): number {
+    const limit = this.speeding ? this.limitAt?.(s) ?? null : null;
+    if (limit == null) {
+      this.v = -1;
+      return simSpeedAt(this.route, s);
+    }
+    const phase = (s % 2400) / 2400;
+    const target = (limit + (phase < 0.35 ? -12 : phase < 0.6 ? -3 : phase < 0.8 ? 7 : -8)) / 3.6;
+    const want = simSpeedAt(this.route, s, target);
+    if (this.v < 0) this.v = want;
+    // About 2 m/s² either way, faster when braking for a turn.
+    const rate = (want < this.v ? 3.5 : 2) * dt * this.factor;
+    this.v += Math.max(-rate, Math.min(rate, want - this.v));
+    return this.v;
   }
 
   start(onFix: (f: Fix) => void) {
@@ -116,7 +140,7 @@ export class Simulator implements LocationSource {
     const dt = Math.min(0.5, (now - this.last) / 1000);
     this.last = now;
     if (this.paused) return;
-    const v = this.speedAt(this.s);
+    const v = this.speedAt(this.s, dt);
     this.s = Math.min(this.route.line.length, this.s + v * dt * this.factor);
     // Glide sideways to the chosen lane (about 2.5 s per lane at normal speed).
     const step = (dt * this.factor) / 2.5;
@@ -157,6 +181,7 @@ export class Simulator implements LocationSource {
 
   jumpTo(s: number) {
     this.s = Math.max(0, Math.min(this.route.line.length, s));
+    this.v = -1;
     this.emit(this.speedAt(this.s));
   }
 
@@ -294,6 +319,31 @@ export class Voice {
       o.start(t0 + i * 0.18);
       o.stop(t0 + i * 0.18 + 0.18);
     });
+  }
+
+  /**
+   * The speed alert sounds: one soft tone near the limit, three quick high beeps over it, and a
+   * falling pair before a speed camera.
+   */
+  alert(kind: 'near' | 'over' | 'camera') {
+    if (!this.enabled || !this.audio) return;
+    const ctx = this.audio;
+    const t0 = ctx.currentTime + 0.02;
+    const tones: [number, number, number][] =
+      kind === 'near' ? [[740, 0, 0.32]] : kind === 'over' ? [[1320, 0, 0.11], [1320, 0.16, 0.11], [1320, 0.32, 0.11]] : [[1175, 0, 0.16], [880, 0.2, 0.22]];
+    for (const [f, at, len] of tones) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.frequency.value = f;
+      o.type = kind === 'over' ? 'square' : 'sine';
+      const vol = kind === 'over' ? 0.12 : 0.24;
+      g.gain.setValueAtTime(0.0001, t0 + at);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + at + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
+      o.connect(g).connect(ctx.destination);
+      o.start(t0 + at);
+      o.stop(t0 + at + len + 0.02);
+    }
   }
 
   /** Call from a user gesture (iOS needs it before speech works). */

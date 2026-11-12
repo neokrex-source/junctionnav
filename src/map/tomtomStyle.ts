@@ -16,7 +16,7 @@
  * of the app (traffic layer order, the 3D junction ground, the places layer) treats both alike.
  */
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
-import { themeFor } from '../theme/palette';
+import { themeFor, themeId } from '../theme/palette';
 
 type Expr = ExpressionSpecification;
 const e = (x: unknown) => x as Expr;
@@ -296,10 +296,10 @@ export function tomtomMapStyle(night: boolean, lang: string, tiles: string): Sty
   } as StyleSpecification;
 }
 
-/** One object per mode, language and tile address, so style comparisons by identity stay stable. */
+/** One object per theme, mode, language and tile address, so style comparisons by identity stay stable. */
 const cache = new Map<string, StyleSpecification>();
 export function tomtomStyle(night: boolean, lang: string, tiles: string): StyleSpecification {
-  const k = `${night ? 'n' : 'd'}|${lang}|${tiles}`;
+  const k = `${themeId()}|${night ? 'n' : 'd'}|${lang}|${tiles}`;
   let s = cache.get(k);
   if (!s) cache.set(k, (s = tomtomMapStyle(night, lang, tiles)));
   return s;

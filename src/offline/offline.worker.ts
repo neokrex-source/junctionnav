@@ -6,7 +6,7 @@
 import type { LngLat } from '../geo/geo';
 import { OfflineGraph } from './graph';
 import { PlaceIndex } from './places';
-import { junctionData, roadWays, tunnelWays } from './queries';
+import { junctionData, roadWays, speedData, tunnelWays } from './queries';
 import { OfflineRouter, type OfflineRouteRequest } from './router';
 
 export type WorkerRequest =
@@ -17,7 +17,8 @@ export type WorkerRequest =
   | { type: 'search'; q: string; near: LngLat | null; limit: number }
   | { type: 'nearest'; p: LngLat }
   | { type: 'pois'; kinds: string[]; points: LngLat[]; radius: number }
-  | { type: 'roads'; names: string[]; center: LngLat; radius: number };
+  | { type: 'roads'; names: string[]; center: LngLat; radius: number }
+  | { type: 'speed'; path: LngLat[] };
 
 let graph: OfflineGraph | null = null;
 let router: OfflineRouter | null = null;
@@ -59,6 +60,9 @@ async function handle(msg: WorkerRequest): Promise<unknown> {
     case 'roads':
       if (!graph) throw new Error('Offline data is not loaded');
       return roadWays(graph, msg.names, msg.center, msg.radius);
+    case 'speed':
+      if (!graph) throw new Error('Offline data is not loaded');
+      return speedData(graph, places, msg.path);
   }
 }
 

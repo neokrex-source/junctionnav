@@ -213,7 +213,9 @@ describe('TomTom route', () => {
     expect(u.pathname).toMatch(/^\/routing\/1\/calculateRoute\/3\.1\d+,101\.69\d*:3\.18\d+,101\.69\d*\/json$/);
     expect(u.searchParams.get('traffic')).toBe('true');
     expect(u.searchParams.get('instructionsType')).toBe('coded');
-    expect(u.searchParams.getAll('sectionType')).toEqual(['lanes', 'motorway', 'toll', 'tunnel', 'ferry', 'traffic']);
+    expect(u.searchParams.getAll('sectionType')).toEqual(['lanes', 'motorway', 'toll', 'tunnel', 'ferry', 'traffic', 'speedLimit']);
+    // Without the speed limits, for a TomTom service that does not have them.
+    expect(new URL(routeUrl('classic', 'K', req, { avoid: [], alternatives: 0, lang: 'en-GB', limits: false })).searchParams.getAll('sectionType')).not.toContain('speedLimit');
     expect(u.searchParams.get('maxAlternatives')).toBe('2');
     expect(u.searchParams.get('vehicleHeading')).toBe('5');
     expect(u.searchParams.getAll('avoid')).toEqual(['tollRoads']);
@@ -263,6 +265,43 @@ describe('TomTom router', () => {
     urls.length = 0;
     await new TomTomRouter(() => 'K').route({ origin: P(0, 0), destination: P(-200, 6900) });
     expect(urls.every((u) => u.includes('/maps/orbis/'))).toBe(true);
+  });
+
+  it('keeps TomTom’s speed limits on the route, stretch by stretch', () => {
+    const { route, at } = sampleRoute();
+    route.sections!.push(
+      { startPointIndex: 0, endPointIndex: at[1], sectionType: 'SPEED_LIMIT', maxSpeedLimitInKmh: 60 },
+      { startPointIndex: at[1], endPointIndex: at[3], sectionType: 'SPEED_LIMIT', maxSpeedLimitInKmh: 110 },
+      { startPointIndex: at[3], endPointIndex: at[3] + 4, sectionType: 'SPEED_LIMIT', maxSpeedLimitInKmh: 0 },
+    );
+    const r = normalizeTomTom({ routes: [route] })[0];
+    expect(r.speedLimits?.map((x) => x.kmh)).toEqual([60, 110]);
+    expect(r.speedLimits![0].s0).toBe(0);
+    expect(r.speedLimits![0].s1).toBeCloseTo(r.speedLimits![1].s0, 3);
+    expect(r.speedLimits![1].s1).toBeCloseTo(r.steps[2].s, 0);
+    // A route without them has none.
+    expect(normalizeTomTom({ routes: [sampleRoute().route] })[0].speedLimits).toBeUndefined();
+  });
+
+  it('asks again without speed limits when the request with them is refused, and remembers', async () => {
+    const urls: string[] = [];
+    const { route } = sampleRoute();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        if (new URL(url).searchParams.getAll('sectionType').includes('speedLimit')) return new Response('{"error":{"description":"Invalid sectionType"}}', { status: 400 });
+        return new Response(JSON.stringify({ routes: [route] }), { status: 200 });
+      }),
+    );
+    const router = new TomTomRouter(() => 'K');
+    const r = await router.route({ origin: P(0, 0), destination: P(-200, 6900) });
+    expect(r.routes).toHaveLength(1);
+    expect(urls).toHaveLength(2);
+    urls.length = 0;
+    await router.route({ origin: P(0, 0), destination: P(-200, 6900) });
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).not.toContain('speedLimit');
   });
 
   it('says what TomTom said when it cannot route', async () => {

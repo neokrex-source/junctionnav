@@ -1,6 +1,7 @@
 /** Talks to the offline worker. */
 import type { LngLat } from '../geo/geo';
 import type { OsmData, OsmWay } from '../junction/osmdata';
+import type { SpeedData } from '../nav/speed';
 import type { OsrmResponse } from '../routing/osrm';
 import OfflineWorker from './offline.worker?worker&inline';
 import type { WorkerRequest } from './offline.worker';
@@ -86,6 +87,11 @@ export class OfflineClient {
   async roads(names: string[], center: LngLat, radius: number): Promise<OsmWay[]> {
     await this.loading;
     return this.call({ type: 'roads', names, center, radius });
+  }
+  /** Roads with speed limits and speed cameras along a path (src/nav/speed.ts). */
+  async speed(path: LngLat[]): Promise<SpeedData> {
+    await this.loading;
+    return this.call({ type: 'speed', path });
   }
   async pois(kinds: string[], points: LngLat[], radius: number): Promise<(OfflinePlace & { dist: number })[]> {
     await this.loading;

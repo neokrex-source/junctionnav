@@ -64,21 +64,41 @@ function straitLat(lon: number): number {
   return s[s.length - 1][1];
 }
 
+/** The country a point is in, roughly, for the few things that differ by country. */
+export type Region = 'MY' | 'SG' | 'JP' | 'other';
+
 /**
- * Touch 'n Go across Malaysia (a line down the Strait of Malacca keeps Sumatra out, the Johor
- * Strait keeps Singapore out), ETC in Japan, nothing to get ready in Singapore (its road pricing
- * is automatic), a plain reminder elsewhere (Korea included, which shares Japan's box).
+ * Malaysia (a line down the Strait of Malacca keeps Sumatra out, the Johor Strait keeps
+ * Singapore out, Brunei is cut out of Borneo), Singapore, Japan (Korea, which shares its box,
+ * is cut out), or elsewhere.
  */
-export function tollPayment(p: LngLat): TollPay {
+export function regionAt(p: LngLat): Region {
   const [lon, lat] = p;
   const inBox = (w: number, s: number, e: number, n: number) => lon >= w && lon <= e && lat >= s && lat <= n;
-  if (inBox(103.55, 1.15, 104.15, 1.48) && lat < straitLat(lon)) return 'none';
+  if (inBox(103.55, 1.15, 104.15, 1.48) && lat < straitLat(lon)) return 'SG';
   const peninsula = inBox(99.6, 1.2, 104.6, 6.75) && lon > 100.1 + (5 - lat) * 0.5;
   const borneo = inBox(109.5, 0.85, 119.3, 7.4) && !inBox(114.0, 4.0, 115.4, 5.1);
-  if (peninsula || borneo) return 'tng';
+  if (peninsula || borneo) return 'MY';
   const korea = lon < 129.6 && lat > 33 && lat < 38.7 && lon > 124 && !(lon > 128.5 && lat < 34.75);
-  if (inBox(122.9, 24, 146.0, 45.6) && !korea) return 'etc';
-  return 'generic';
+  if (inBox(122.9, 24, 146.0, 45.6) && !korea) return 'JP';
+  return 'other';
+}
+
+/**
+ * Touch 'n Go across Malaysia, ETC in Japan, nothing to get ready in Singapore (its road pricing
+ * is automatic), a plain reminder elsewhere.
+ */
+export function tollPayment(p: LngLat): TollPay {
+  const r = regionAt(p);
+  return r === 'MY' ? 'tng' : r === 'JP' ? 'etc' : r === 'SG' ? 'none' : 'generic';
+}
+
+/**
+ * The stretch of route a 20 km lookup covers, simplified for the Overpass query (the toll and
+ * speed lookups share it, so one query answers both).
+ */
+export function chunkPath(route: Route, s0: number, s1: number): LngLat[] {
+  return simplifyPath(route.line.slice(Math.max(0, s0 - 50), s1 + 50), 6).slice(0, 600);
 }
 
 export function buildTollQuery(path: LngLat[], radius = ON_ROUTE): string {
@@ -86,13 +106,25 @@ export function buildTollQuery(path: LngLat[], radius = ON_ROUTE): string {
   return `[out:json][timeout:25];(node(around:${radius},${coords})["barrier"="toll_booth"];way(around:${radius},${coords})["barrier"="toll_booth"];);out center tags;`;
 }
 
-type OverpassElement = { type: string; id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> };
+type OverpassElement = {
+  type: string;
+  id: number;
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  geometry?: ({ lat: number; lon: number } | null)[];
+  tags?: Record<string, string>;
+};
 
+/** The toll booths in an Overpass answer (only them: the answer may hold the speed lookup too). */
 export function parseTollAnswer(json: { elements?: OverpassElement[] }): TollPoint[] {
   const out: TollPoint[] = [];
   for (const e of json.elements ?? []) {
-    const lat = e.lat ?? e.center?.lat;
-    const lon = e.lon ?? e.center?.lon;
+    if (e.tags?.barrier !== 'toll_booth') continue;
+    const pts = (e.geometry ?? []).filter((g): g is { lat: number; lon: number } => !!g);
+    const mid = pts.length ? { lat: pts.reduce((a, g) => a + g.lat, 0) / pts.length, lon: pts.reduce((a, g) => a + g.lon, 0) / pts.length } : undefined;
+    const lat = e.lat ?? e.center?.lat ?? mid?.lat;
+    const lon = e.lon ?? e.center?.lon ?? mid?.lon;
     if (lat == null || lon == null) continue;
     const name = e.tags?.name || e.tags?.['name:en'];
     out.push({ id: `${e.type}/${e.id}`, at: [lon, lat], ...(name ? { name } : {}) });
@@ -226,7 +258,7 @@ export class TollLoader {
       if (st === 'loading' || st === 'done' || (typeof st === 'number' && Date.now() - st < 60_000)) continue;
       this.chunks.set(i, 'loading');
       const s1 = Math.min(route.line.length, s0 + TollLoader.CHUNK);
-      const path = simplifyPath(route.line.slice(Math.max(0, s0 - 50), s1 + 50), 6).slice(0, 600);
+      const path = chunkPath(route, s0, s1);
       const signal = this.ctrl?.signal;
       this.provider
         .fetch(path, signal)

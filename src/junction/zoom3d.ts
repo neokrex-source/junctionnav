@@ -9,6 +9,7 @@ import type { CustomLayerInterface, CustomRenderMethodInput, Map as MlMap } from
 import * as THREE from 'three';
 import { clamp, lerp, LocalFrame, rightNormals, xyAt, type LngLat, type XY } from '../geo/geo';
 import { groundAt, type JunctionScene, type RoadStrip } from './scene';
+import { inTheme } from '../theme/tint';
 
 /** Heights are shown 1.8× on the map so a 7 m deck reads at junction-view zoom on a phone. */
 const EXAGGERATE = 1.8;
@@ -182,7 +183,7 @@ export class JunctionLayer3D implements CustomLayerInterface {
     // Local metres (x east, y north, z up) to MapLibre's mercator units (y grows southward).
     const [mx, my, s] = mercator(sc.origin);
     this.model = new THREE.Matrix4().makeTranslation(mx, my, 0).scale(new THREE.Vector3(s, -s, s));
-    const P = night ? NIGHT : DAY;
+    const P = inTheme(night ? NIGHT : DAY, night);
     const ground = (p: XY) => groundAt(sc.ground, p[0], p[1]);
     const deck = new Acc();
     const deckEdge = new Acc();

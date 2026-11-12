@@ -50,6 +50,8 @@ export interface TtSection {
   sectionType: string;
   lanes?: { directions?: string[]; follow?: string }[];
   delayInSeconds?: number;
+  /** On SPEED_LIMIT sections: the legal limit. */
+  maxSpeedLimitInKmh?: number;
 }
 
 export interface TtRoute {
@@ -366,6 +368,13 @@ function toRoute(r: TtRoute, provider: string): Route {
     tollGates.push({ s: pr.dist < 60 ? pr.s : Math.min(line.length, guess), at: pr.dist < 60 ? pr.point : at, ...(name ? { name } : {}) });
   }
 
+  // The legal speed limits, stretch by stretch.
+  const speedLimits = (r.sections ?? [])
+    .filter((x) => x.sectionType === 'SPEED_LIMIT' && (x.maxSpeedLimitInKmh ?? 0) > 0)
+    .map((x) => ({ s0: sAt(x.startPointIndex), s1: sAt(x.endPointIndex), kmh: x.maxSpeedLimitInKmh! }))
+    .filter((x) => x.s1 > x.s0)
+    .sort((a, b) => a.s0 - b.s0);
+
   const legs: Leg[] = r.legs.map((leg, i) => ({ distance: leg.summary.lengthInMeters, duration: leg.summary.travelTimeInSeconds, endS: i === r.legs.length - 1 ? line.length : sAt(legEnds[i]) }));
   const tollDistance = lengthOf('toll');
   const motorwayDistance = lengthOf('motorway');
@@ -396,6 +405,7 @@ function toRoute(r: TtRoute, provider: string): Route {
     trafficAware: true,
     trafficDelay: Math.max(0, r.summary.trafficDelayInSeconds ?? 0),
     ...(tollGates.length ? { tollGates } : {}),
+    ...(speedLimits.length ? { speedLimits } : {}),
   };
 }
 
@@ -448,7 +458,7 @@ const AVOID_TT: Record<keyof Avoid, string> = { tolls: 'tollRoads', motorways: '
 const AVOID_NAME: Record<keyof Avoid, string> = { tolls: 'toll roads', motorways: 'highways', ferries: 'ferries' };
 
 /** The request's address for either TomTom family. */
-export function routeUrl(family: 'classic' | 'orbis', key: string, req: RouteRequest, opts: { avoid: (keyof Avoid)[]; alternatives: number; lang: string }): string {
+export function routeUrl(family: 'classic' | 'orbis', key: string, req: RouteRequest, opts: { avoid: (keyof Avoid)[]; alternatives: number; lang: string; limits?: boolean }): string {
   const pts = [req.origin, ...(req.via ?? []), req.destination];
   const locs = pts.map((p) => `${p[1].toFixed(6)},${p[0].toFixed(6)}`).join(':');
   const q = new URLSearchParams({ key, travelMode: 'car', routeType: 'fastest', instructionsType: 'coded', computeTravelTimeFor: 'all', language: opts.lang });
@@ -457,6 +467,7 @@ export function routeUrl(family: 'classic' | 'orbis', key: string, req: RouteReq
     q.set('traffic', 'live');
   } else q.set('traffic', 'true');
   for (const t of ['lanes', 'motorway', 'toll', 'tunnel', 'ferry', 'traffic']) q.append('sectionType', t);
+  if (opts.limits !== false) q.append('sectionType', 'speedLimit');
   if (opts.alternatives > 0 && pts.length === 2) q.set('maxAlternatives', String(opts.alternatives));
   if (req.bearing != null && Number.isFinite(req.bearing)) q.set('vehicleHeading', String(((Math.round(req.bearing) % 360) + 360) % 360));
   for (const a of opts.avoid) q.append('avoid', AVOID_TT[a]);
@@ -477,10 +488,22 @@ export class TomTomRouter implements Router {
     return this.lang() === 'ms' ? 'ms-MY' : 'en-GB';
   }
 
+  /** TomTom refused the speed limit sections once (a service without them): routes come without. */
+  private noLimits = false;
+
   private async fetch(req: RouteRequest, avoid: (keyof Avoid)[], alternatives: number, signal?: AbortSignal): Promise<Route[]> {
     const key = this.key().trim();
     if (!key) throw new TomTomError('No TomTom key.', 401);
-    const json = await ttEither<TtRouteResponse>('routing', (f) => routeUrl(f, key, req, { avoid, alternatives, lang: this.langTag() }), {}, signal);
+    const ask = (limits: boolean) => ttEither<TtRouteResponse>('routing', (f) => routeUrl(f, key, req, { avoid, alternatives, lang: this.langTag(), limits }), {}, signal);
+    let json: TtRouteResponse;
+    try {
+      json = await ask(!this.noLimits);
+    } catch (e) {
+      // A request refused as malformed may be the speed limit sections: once more without them.
+      if (this.noLimits || !(e instanceof TomTomError) || e.status !== 400 || e.code === 'NO_ROUTE_FOUND') throw e;
+      json = await ask(false);
+      this.noLimits = true;
+    }
     return normalizeTomTom(json, this.name);
   }
 

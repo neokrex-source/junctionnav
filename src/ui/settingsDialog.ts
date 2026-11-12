@@ -16,6 +16,7 @@ import { offlinePanel } from './offlinePanel';
 import type { PlacesService } from '../places/service';
 import type { PlacesUpdate } from '../places/schedule';
 import { placesPanel } from './placesPanel';
+import { THEMES, type ThemeId } from '../theme/palette';
 
 function select(id: string, value: string, options: [string, string][]) {
   const s = h('select', { id, name: id }) as HTMLSelectElement;
@@ -72,6 +73,34 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['day', 'Always bright'],
       ['night', 'Always dark'],
     ]);
+    // The look: three cards, each with its day and night colours; picking one shows it at once
+    // (Cancel puts the old one back).
+    const root = document.documentElement;
+    const skinBefore = root.dataset.skin;
+    let themeValue: ThemeId = current.theme;
+    const themeCards = h('div', { class: 'theme-pick', role: 'radiogroup', 'aria-label': 'Theme' });
+    const THEME_NOTES: Record<ThemeId, string> = {
+      junction: 'Purple and white by day, deep purple by night',
+      jet: 'Head-up display instruments: speed tape, heading, the route as a magenta line',
+      casual: 'Warm cream and coral by day, cosy navy by night, rounded and friendly',
+    };
+    for (const id of Object.keys(THEMES) as ThemeId[]) {
+      const t = THEMES[id];
+      const sw = (th: typeof t.day) => h('span', { class: 'tp-sw', style: `--a:${th.map.land};--b:${th.route};--c:${th.map.highway};--d:${th.junction}` });
+      const card = h(
+        'button',
+        { type: 'button', class: 'theme-card', role: 'radio', 'aria-checked': String(id === themeValue), 'data-theme-id': id, id: `theme-${id}` },
+        h('span', { class: 'tc-swatches', 'aria-hidden': 'true' }, sw(t.day), sw(t.night)),
+        h('span', { class: 'tc-name' }, t.label),
+        h('span', { class: 'tc-note' }, THEME_NOTES[id]),
+      ) as HTMLButtonElement;
+      card.addEventListener('click', () => {
+        themeValue = id;
+        root.dataset.skin = id;
+        for (const c of themeCards.children) c.setAttribute('aria-checked', String((c as HTMLElement).dataset.themeId === id));
+      });
+      themeCards.append(card);
+    }
     const signTheme = select('signTheme', current.signTheme, [['auto', 'Auto (by location)'], ...Object.values(SIGN_THEMES).map((t) => [t.id, t.label] as [string, string])]);
     const lang = select('lang', current.lang, [
       ['en', 'English'],
@@ -149,6 +178,20 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     tunnels.checked = current.tunnelAlerts;
     const tolls = h('input', { id: 'tollAlerts', type: 'checkbox' }) as HTMLInputElement;
     tolls.checked = current.tollAlerts;
+    const speedAlerts = select('speedAlerts', current.speedAlerts, [
+      ['voice', 'Tone and voice'],
+      ['tone', 'Tone only'],
+      ['sign', 'Show the limit only'],
+      ['off', 'Off'],
+    ]);
+    const imperial = current.units === 'imperial';
+    const speedMargin = select(
+      'speedMargin',
+      String(current.speedMargin),
+      [3, 5, 10].map((v) => [String(v), imperial ? `${Math.round(v / 1.609) || 1} mph before the limit` : `${v} km/h before the limit`] as [string, string]),
+    );
+    const speedCams = h('input', { id: 'speedCams', type: 'checkbox' }) as HTMLInputElement;
+    speedCams.checked = current.speedCams;
     const surround = h('input', { id: 'jvSurround', type: 'checkbox' }) as HTMLInputElement;
     surround.checked = current.jvSurround;
     const mapGround = h('input', { id: 'jvMapGround', type: 'checkbox' }) as HTMLInputElement;
@@ -381,6 +424,18 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       h('label', { class: 'toggle' }, tolls, "Remind me to get Touch 'n Go ready"),
       h('div', { class: 'hint' }, 'Says "Get your Touch n Go card ready" about 1 km before a toll plaza on expressways (400 m in town) and "Prepare your Touch n Go" just before it, with the plaza over the arrival time and on the map. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.'),
     );
+    const speedGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'speedAlerts' }, 'Speed limits'),
+      h('div', { class: 'row' }, grp('Warnings', speedAlerts), grp('Warn me', speedMargin)),
+      h('label', { class: 'toggle' }, speedCams, 'Speed cameras and average speed checks'),
+      h(
+        'div',
+        { class: 'hint' },
+        'The limit shows beside your speed: from TomTom and OpenStreetMap, and 110 km/h on Malaysian expressways where neither has one. Near the limit your speed turns amber with one tone and "Approaching the speed limit"; over it, red with three beeps and "Slow down", again every 30 seconds while it lasts. Speed cameras are announced 800 m ahead on expressways (300 m in town), and average speed checks when they start and end.',
+      ),
+    );
     const surroundGrp = h(
       'div',
       { class: 'grp' },
@@ -454,11 +509,12 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           opts.preview ? null : grp('Map style', style),
           opts.preview ? null : grp('Custom style URL', customStyleUrl),
           opts.preview ? null : grp('MapTiler key', maptilerKey),
+          h('div', { class: 'grp' }, h('label', { for: 'theme-junction' }, 'Theme'), themeCards, h('div', { class: 'hint' }, 'Each theme has a bright day look and a dark night look; Appearance picks between them.')),
           h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
           pinsGrp,
         ],
       },
-      { id: 'drive', label: 'Drive', items: [voiceGrp, laneGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp, tollGrp] },
+      { id: 'drive', label: 'Drive', items: [voiceGrp, laneGrp, speedGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp, tollGrp] },
       { id: 'traffic', label: 'Traffic', items: [traffic] },
       { id: 'downloads', label: 'Downloads', items: [places?.el, pack?.el] },
       { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers, about] },
@@ -522,13 +578,18 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       pack?.dispose();
       places?.dispose();
       dlg.remove();
-      if (!ok) return resolve(null);
+      if (!ok) {
+        if (skinBefore) root.dataset.skin = skinBefore;
+        else delete root.dataset.skin;
+        return resolve(null);
+      }
       resolve({
         ...current,
         mapStyle: style.value,
         customStyleUrl: customStyleUrl.value.trim(),
         maptilerKey: maptilerKey.value.trim(),
         appearance: appearance.value as Settings['appearance'],
+        theme: themeValue,
         signTheme: signTheme.value as Settings['signTheme'],
         lang: lang.value as Settings['lang'],
         units: units.value as Settings['units'],
@@ -544,6 +605,9 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
         tollAlerts: tolls.checked,
+        speedAlerts: speedAlerts.value as Settings['speedAlerts'],
+        speedMargin: Number(speedMargin.value) || 5,
+        speedCams: speedCams.checked,
         ...(places
           ? {
               placesUpdate: places.update.value as PlacesUpdate,

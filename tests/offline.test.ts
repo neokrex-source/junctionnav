@@ -5,7 +5,9 @@ import { tunnelsFromRoute } from '../src/nav/tunnels';
 import { OfflineGraph } from '../src/offline/graph';
 import { PlaceIndex } from '../src/offline/places';
 import { kindsOf } from '../src/offline/providers';
-import { junctionData, roadWays, tunnelWays } from '../src/offline/queries';
+import { junctionData, roadWays, speedData, tunnelWays } from '../src/offline/queries';
+import { limitAt, matchCameras, matchLimits } from '../src/nav/speed';
+import { densifyPath } from '../src/nav/tolls';
 import { parseTripLink, resolveTrip } from '../src/trip/tripLink';
 import { OfflineRouter } from '../src/offline/router';
 import { normalizeOsrm, type OsrmResponse } from '../src/routing/osrm';
@@ -193,6 +195,41 @@ describe('offline trip links', () => {
     expect(r.code).toBe('Ok');
     const route = routeOf(r);
     expect(route.steps.some((s) => s.type === 'off ramp' && s.exits === '114')).toBe(true);
+  });
+});
+
+describe('offline speed limits and cameras', () => {
+  const route = () => routeOf(new OfflineRouter(graph()).route({ coords: [demo.start, demo.end], bearings: [0, null] }));
+
+  it('gives the limits of the roads along the route, as Overpass would', () => {
+    const r = route();
+    const d = speedData(graph(), new PlaceIndex(demoPack().places), densifyPath(r.geometry, 20));
+    expect(d.ways.length).toBeGreaterThan(8);
+    expect(d.ways.every((w) => !!w.tags.maxspeed)).toBe(true);
+    const limits = matchLimits(r, d.ways, [0, r.line.length]);
+    expect(limits.map((l) => l.kmh)).toEqual([80, 60, 110, 90, 60]);
+    // The same stretches as the map data the demo drives on.
+    const ref = matchLimits(r, demo.speed.ways, [0, r.line.length]);
+    expect(limits.map((l) => [Math.round(l.s0 / 50), Math.round(l.s1 / 50)])).toEqual(ref.map((l) => [Math.round(l.s0 / 50), Math.round(l.s1 / 50)]));
+  });
+
+  it('keeps speed cameras with their limit and the road each stands on', () => {
+    const r = route();
+    const P = new PlaceIndex(demoPack().places);
+    // Both cameras are in the pack, the one without a mapped limit too.
+    const names = P.byKind(['highway=speed_camera'], [demo.speed.cameras[0].at, demo.southCamera], 50).map((c) => c.name).sort();
+    expect(names).toEqual(['Speed camera', 'Speed camera 90 km/h']);
+    const d = speedData(graph(), P, densifyPath(r.geometry, 20));
+    const south = d.cameras.find((c) => haversine(c.at, demo.southCamera) < 3);
+    const e35 = d.cameras.find((c) => haversine(c.at, demo.speed.cameras[0].at) < 3)!;
+    expect(e35.tags.maxspeed).toBe('90');
+    expect(e35.road?.oneway).toBe(1);
+    // On the route: the E35 camera only (the southbound one is on the other carriageway).
+    expect(south).toBeTruthy();
+    const on = matchCameras(r, { cameras: d.cameras, checks: [] }, [0, r.line.length]);
+    expect(on.cameras).toHaveLength(1);
+    expect(on.cameras[0].limit).toBe(90);
+    expect(limitAt(matchLimits(r, d.ways, [0, r.line.length]), on.cameras[0].s)?.kmh).toBe(90);
   });
 });
 

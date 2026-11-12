@@ -2,7 +2,8 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/fonts.css';
 import './styles/app.css';
-import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSurroundProvider, demoTerrain, DemoTollProvider, DemoTunnelProvider } from './demo/providers';
+import './styles/themes.css';
+import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSpeedProvider, DemoSurroundProvider, demoTerrain, DemoTollProvider, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
 import { angleDiff, hashString, haversine, type LngLat } from './geo/geo';
 import { detectJunctions, JUNCTION_CORE, type JunctionCandidate } from './junction/detect';
@@ -22,15 +23,16 @@ import { TT_SOURCE } from './map/tomtomStyle';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
-import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridTerrain, HybridTolls, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
+import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridSpeed, HybridTerrain, HybridTolls, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
 import { OfflineTerrainProvider, TerrainPackReader } from './offline/offlineTerrain';
 import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
 import { distinctAlternatives, matchAlternative } from './nav/alternatives';
 import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from './nav/tunnels';
-import { OverpassTollProvider, TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
+import { TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
+import { limitAt, OverpassRoadsAhead, SpeedLoader, type SpeedInfo } from './nav/speed';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
-import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
+import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, speedIn, speedSpeech, speedWords, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
 import { AligningRouter, RouteAligner, routeData } from './routing/aligner';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
@@ -39,7 +41,7 @@ import { attachSearch, parseCoordinates, PhotonSearch, type Place, type PlaceSea
 import { parsePlusCode } from './search/pluscode';
 import { PlaceStore } from './state/places';
 import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
-import { themeFor } from './theme/palette';
+import { setThemeId, themeFor, THEMES } from './theme/palette';
 import { Banner } from './ui/banner';
 import { escapeHtml, h, toast } from './ui/dom';
 import { JunctionPanel } from './ui/junctionPanel';
@@ -68,6 +70,8 @@ import type { PlaceInfo } from './places/format';
 import { incidentColor, incidentIconUrl, TrafficLayer, TRAFFIC_ATTRIBUTION } from './map/trafficLayer';
 import { jamSvg } from './ui/trafficIcon';
 import { tollSvg } from './ui/tollIcon';
+import { cameraSvg } from './ui/cameraIcon';
+import { SpeedMeter } from './ui/speedMeter';
 import { fasterAlternative, TrafficService } from './traffic/service';
 import { incidentDelayAhead, routeTimeFrom, trafficRemaining } from './traffic/onRoute';
 import { clearSpeech, etaChangeSpeech, fasterSpeech, kindName, minutes, nearSpeech, newsKindName, newsSpeech, summarySpeech, tt, warningSpeech, worthWarning } from './traffic/texts';
@@ -261,8 +265,14 @@ class App {
   private authScreen: AuthScreen | null = null;
   tunnelCard = new TunnelCard();
   tunnels = new TunnelLoader(new OverpassTunnelProvider(() => overpassList(this.settings)), (spans) => this.onTunnels(spans));
+  /** Toll booths and speed data share one Overpass query per stretch of route. */
+  private roadsAhead = new OverpassRoadsAhead(() => overpassList(this.settings));
   /** Toll plazas on the route being driven (TomTom's toll gates, OSM toll booths, the offline maps). */
-  tolls = new TollLoader(new OverpassTollProvider(() => overpassList(this.settings)), (plazas) => this.onTolls(plazas));
+  tolls = new TollLoader(this.roadsAhead.tolls, (plazas) => this.onTolls(plazas));
+  /** Speed limits, speed cameras and average speed checks on the route being driven. */
+  speedData = new SpeedLoader(this.roadsAhead.speed, (info) => this.onSpeedInfo(info));
+  /** The speed and the limit, drawn as the chosen look draws its instruments. */
+  private meter = new SpeedMeter();
   private drTimer = 0;
   voice = new Voice();
   wake = new ScreenWake();
@@ -371,7 +381,7 @@ class App {
     foot: h('div', { class: 'foot', hidden: true }),
     etaMain: h('div', { class: 'eta-main' }),
     etaSub: h('div', { class: 'eta-sub' }),
-    speed: h('div', { class: 'speed card' }),
+    speed: this.meter.el,
     mute: h('button', { class: 'icon-btn', type: 'button' }) as HTMLButtonElement,
     recenter: h('button', { class: 'recenter', type: 'button', hidden: true }) as HTMLButtonElement,
     sim: h('div', { class: 'sim card', hidden: true }),
@@ -382,6 +392,7 @@ class App {
     trafficChip: h('button', { class: 'traffic-chip card', type: 'button', hidden: true }) as HTMLButtonElement,
     trafficCard: h('div', { class: 'traffic-card card', hidden: true, role: 'status', 'aria-live': 'polite' }),
     tollChip: h('div', { class: 'toll-chip card', hidden: true, role: 'status' }),
+    camChip: h('div', { class: 'cam-chip card', hidden: true, role: 'status' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -412,8 +423,10 @@ class App {
     this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
     const tunnels = new OverpassTunnelProvider(overpass);
     this.tunnels.provider = new HybridTunnels(() => tunnels, sw);
-    const tolls = new OverpassTollProvider(overpass);
-    this.tolls.provider = new HybridTolls(() => tolls, sw);
+    this.roadsAhead = new OverpassRoadsAhead(overpass);
+    const ahead = this.roadsAhead;
+    this.tolls.provider = new HybridTolls(() => ahead.tolls, sw);
+    this.speedData.provider = new HybridSpeed(() => ahead.speed, sw);
     const places = () => (this.placesSvc.available ? this.placesSvc.client : null);
     this.cats = new CategorySearch(new MergedPois(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw), places));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
@@ -2026,6 +2039,7 @@ class App {
     this.surr = new SurroundCache(new DemoSurroundProvider());
     this.tunnels.provider = new DemoTunnelProvider();
     this.tolls.provider = new DemoTollProvider();
+    this.speedData.provider = new DemoSpeedProvider();
     this.terrain = new TerrainCache(demoTerrain());
     this.terrainReady.clear();
     this.surroundReady.clear();
@@ -2136,7 +2150,7 @@ class App {
     e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
-      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
       e.speed,
     );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
@@ -2192,12 +2206,18 @@ class App {
       this.sim.autoLanes = !this.sim.autoLanes;
       this.paintSimLane();
     });
+    this.simSpeeding.addEventListener('click', () => {
+      if (!this.sim) return;
+      this.sim.speeding = !this.sim.speeding;
+      this.paintSimSpeeding();
+    });
     e.sim.append(
       h('span', { class: 'sim-label' }, 'Sim'),
       e.simPlay,
       e.simSpeed,
       jump,
       h('span', { class: 'sim-lanes', role: 'group', 'aria-label': 'Simulated lane' }, laneLeft, this.simLaneLabel, laneRight, this.simAuto),
+      this.simSpeeding,
       this.testCard.button,
       this.testCard.panel,
     );
@@ -2359,6 +2379,12 @@ class App {
 
   private simLaneLabel = h('span', { class: 'sim-lane-label' }, 'Lane');
   private simAuto = h('button', { type: 'button', 'aria-pressed': 'true', title: 'Simulated driver follows lane advice' }, 'Auto') as HTMLButtonElement;
+  /** The simulated driver drives to the speed limit and now and then a little over it. */
+  private simSpeeding = h('button', { type: 'button', 'aria-pressed': 'false', title: 'Simulated driver drives to the speed limit and sometimes over it' }, 'Speeding') as HTMLButtonElement;
+
+  private paintSimSpeeding() {
+    this.simSpeeding.setAttribute('aria-pressed', String(!!this.sim?.speeding));
+  }
   private simLaneStep = -1;
   private simLaneT0 = 0;
   private simLaneLast = 0;
@@ -2427,6 +2453,8 @@ class App {
       case 'toll':
       case 'tollNear':
         return tollSpeech(pr.kind === 'toll' ? 'early' : 'near', pr.toll!, this.tollPay(pr.toll!.plaza), this.L, units);
+      case 'speed':
+        return speedSpeech(pr.speed!, this.L, units);
       default: {
         const base = spokenInstruction(pr.step, pr.distance, this.L, units);
         if (pr.distance == null) return base;
@@ -2523,6 +2551,9 @@ class App {
   private applyTheme() {
     const root = document.documentElement;
     this.themeMutating = true;
+    // The look (JunctionNav, Fighter jet, Casual): the page's colours and type, and from here on the map's.
+    setThemeId(this.settings.theme);
+    root.dataset.skin = this.settings.theme;
     if (ARTIFACT && this.settings.appearance === 'auto') {
       // Leave the viewer's own theme alone; only undo an override this page set.
       if (this.themeSetByApp) delete root.dataset.theme;
@@ -2532,7 +2563,8 @@ class App {
       this.themeSetByApp = true;
     }
     // The browser bar matches the instrument panel.
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isNight(this.settings) ? '#1a0d2e' : '#7c3aed');
+    const bar = THEMES[this.settings.theme]?.bar ?? THEMES.junction.bar;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isNight(this.settings) ? bar.night : bar.day);
     this.themeMutating = false;
     this.syncSystemBars();
   }
@@ -2582,9 +2614,11 @@ class App {
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
     this.engine.tollAlerts = this.settings.tollAlerts;
+    this.syncSpeedSettings();
     this.tunnelCard.hide();
     this.tunnels.setRoute(route);
     this.tolls.setRoute(route);
+    this.speedData.setRoute(route);
     this.simLaneStep = -1;
     this.prefetch(0);
     this.voice.unlock();
@@ -2618,6 +2652,10 @@ class App {
     if (simulate) {
       this.sim = new Simulator(route, this.settings.simSpeed);
       this.sim.outages = this.outagesFor(this.tunnels.spans);
+      // The demo's driver creeps over the limit now and then, so the speed alerts can be seen.
+      this.sim.limitAt = (s) => limitAt(this.speedData.info.limits, s)?.kmh ?? null;
+      this.sim.speeding = this.demo;
+      this.paintSimSpeeding();
       this.source = this.sim;
       this.el.simPlay.textContent = 'Pause';
       this.el.simSpeed.textContent = `×${this.sim.factor}`;
@@ -2660,6 +2698,9 @@ class App {
     this.tolls.stop();
     this.map.setTolls([]);
     this.el.tollChip.hidden = true;
+    this.speedData.stop();
+    this.map.setCameras([]);
+    this.el.camChip.hidden = true;
     this.wake.off();
     this.voice.stop();
     this.engine.route = null;
@@ -2693,6 +2734,88 @@ class App {
   private onTolls(plazas: TollPlaza[]) {
     this.engine.setTolls(plazas);
     this.map.setTolls(this.settings.tollAlerts ? plazas.map((p) => p.at) : []);
+  }
+
+  /** Speed alerts as Settings has them: how warnings come, the margin, and the camera warnings. */
+  private syncSpeedSettings() {
+    const w = this.engine.speed;
+    w.mode = this.settings.speedAlerts;
+    w.margin = this.settings.speedMargin;
+    w.cameras = this.settings.speedCams;
+  }
+
+  /** New speed data for the active route: the engine's warnings and the cameras on the map. */
+  private onSpeedInfo(info: SpeedInfo) {
+    this.engine.setSpeedInfo(info);
+    this.map.setCameras(this.settings.speedCams ? info.cameras.map((c) => c.at) : []);
+  }
+
+  /** The speed, the limit and how they stand, in the look's own instrument. */
+  private paintMeter(p: Progress) {
+    this.meter.update({
+      kmh: p.speed * 3.6,
+      units: this.settings.units,
+      state: this.settings.speedAlerts === 'off' ? null : p.speedo,
+      theme: this.settings.theme,
+      margin: this.settings.speedMargin,
+      heading: p.heading,
+      label: { limit: speedWords(this.L).limit },
+    });
+  }
+
+  /** A speed warning: its sound, then the words (unless Settings wants the sound only). */
+  private sayAlert(pr: Prompt, text: string) {
+    const k = pr.speed!.kind;
+    this.voice.alert(k === 'speedOver' || k === 'cameraOver' ? 'over' : k === 'speedNear' ? 'near' : 'camera');
+    if (this.settings.speedAlerts === 'tone' && (k === 'speedNear' || k === 'speedOver')) return;
+    window.setTimeout(() => this.say(text, k === 'speedOver' || k === 'cameraOver'), k === 'speedOver' || k === 'cameraOver' ? 520 : 420);
+  }
+
+  /**
+   * The speed camera or average speed check coming up, as a slim line over the arrival time:
+   * "Speed camera · 600 m · 110", or "Average speed check · average 104 · ends in 3.2 km".
+   */
+  private paintCamChip(p: Progress) {
+    const chip = this.el.camChip;
+    const sp = p.speedo;
+    const words = speedWords(this.L);
+    const units = this.settings.units;
+    let key = '';
+    let parts: (string | HTMLElement)[] = [];
+    let label = '';
+    let state = 'ok';
+    if (this.settings.speedCams && sp.check && (sp.check.inside || sp.check.dist < 800)) {
+      const c = sp.check;
+      const lim = c.check.limit ?? sp.limit?.kmh ?? null;
+      const avg = c.average != null ? speedIn(c.average, units) : null;
+      const dist = formatDistance(c.dist, units);
+      state = avg != null && lim != null && c.average! > lim ? 'over' : 'ok';
+      key = `chk|${c.check.id}|${c.inside}|${dist}|${avg}|${state}`;
+      const what = c.inside ? (avg != null ? `${words.average} ${avg}` : '') : dist;
+      parts = [h('span', { class: 'cam-title' }, words.check), what ? h('span', { class: 'cam-dist' }, what) : '', c.inside ? h('span', { class: 'cam-ends' }, `${words.checkEnds} ${dist}`) : ''];
+      if (lim != null) parts.push(h('span', { class: 'cam-limit' }, String(speedIn(lim, units))));
+      label = `${words.check}, ${what}${lim != null ? `, ${words.limit} ${speedIn(lim, units)}` : ''}`;
+    } else if (this.settings.speedCams && sp.camera) {
+      const c = sp.camera;
+      const lim = c.cam.limit ?? sp.limit?.kmh ?? null;
+      const dist = formatDistance(c.dist, units);
+      state = sp.speeding === 'over' ? 'over' : 'ok';
+      key = `cam|${c.cam.id}|${dist}|${lim}|${state}`;
+      parts = [h('span', { class: 'cam-title' }, words.camera), h('span', { class: 'cam-dist' }, dist)];
+      if (lim != null) parts.push(h('span', { class: 'cam-limit' }, String(speedIn(lim, units))));
+      label = `${words.camera}, ${dist}${lim != null ? `, ${words.limit} ${speedIn(lim, units)}` : ''}`;
+    }
+    if (!key) {
+      if (!chip.hidden) chip.hidden = true;
+      return;
+    }
+    if (chip.dataset.key !== key) {
+      chip.dataset.key = key;
+      chip.dataset.state = state;
+      chip.replaceChildren(h('span', { class: 'cam-ico-wrap', html: cameraSvg() }), h('span', { class: 'cam-line' }, ...parts));
+      chip.setAttribute('aria-label', label);
+    }
+    if (chip.hidden) chip.hidden = false;
   }
 
   /**
@@ -2830,13 +2953,14 @@ class App {
     this.banner.update(p.next, p.after, p.distToNext, this.L, units, true, p.lane, p.timeToNext * slower);
     this.paintEta(p, tr);
     this.tunnelCard.update(this.settings.tunnelAlerts ? p.tunnel : null, { lang: this.L, units, theme: this.themeFor(route), dr: p.dr });
-    const kmh = Math.round(p.speed * 3.6);
-    this.el.speed.innerHTML = `<div>${units === 'imperial' ? Math.round(kmh / 1.609) : kmh}<small>${units === 'imperial' ? 'mph' : 'km/h'}</small></div>`;
+    this.paintMeter(p);
 
     const prompts = this.engine.prompts(p);
     for (const pr of prompts) {
       const text = this.promptText(pr);
-      if (pr.kind === 'laneWrong') {
+      if (pr.kind === 'speed') {
+        this.sayAlert(pr, text);
+      } else if (pr.kind === 'laneWrong') {
         if (!this.simLaneWarnedAt) this.simLaneWarnedAt = performance.now();
         this.voice.chime();
         window.setTimeout(() => this.say(text), 420);
@@ -2851,6 +2975,7 @@ class App {
     if (!prompts.length) this.trafficVoice(p);
     this.paintTrafficChip(p);
     this.paintTollChip(p);
+    this.paintCamChip(p);
     if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
@@ -2895,6 +3020,7 @@ class App {
     this.lastPrefetch = Date.now();
     this.tunnels.ensure(s);
     this.tolls.ensure(s);
+    this.speedData.ensure(s);
     // Surroundings are heavier: only the next junctions within a few kilometres.
     for (const j of this.engine.junctions.filter((c) => c.s >= s - 50 && c.s - s <= 4000).slice(0, 3)) {
       const redraw = () => {
@@ -2987,8 +3113,10 @@ class App {
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
     this.engine.tollAlerts = this.settings.tollAlerts;
+    this.syncSpeedSettings();
     this.tunnels.setRoute(r);
     this.tolls.setRoute(r);
+    this.speedData.setRoute(r);
     this.traffic.setRoute(r, startS);
     this.pendingSwap = null;
     this.finishAlignment([r]);
@@ -3087,6 +3215,7 @@ class App {
     this.engine.replaceRoute(r, detectJunctions(r), s);
     this.tunnels.setRoute(r);
     this.tolls.setRoute(r);
+    this.speedData.setRoute(r);
     const eta = this.traffic.eta;
     this.traffic.setRoute(r, s);
     if (eta) this.traffic.seed(eta);
@@ -3830,6 +3959,12 @@ class App {
     const prev = this.settings;
     this.settings = next;
     saveSettings(next);
+    this.syncSpeedSettings();
+    if (this.view === 'nav') {
+      this.onSpeedInfo(this.speedData.info);
+      // The speed instrument in the new look and units at once, not at the next GPS fix.
+      if (this.engine.progress) this.paintMeter(this.engine.progress);
+    }
     if (prev.placesOnMap !== next.placesOnMap) this.placesLayer.refresh(0);
     if (prev.placesRadius !== next.placesRadius || prev.placesUpdate !== next.placesUpdate || prev.placesWifiOnly !== next.placesWifiOnly) this.placesSvc.check();
     this.map.setUnits(next.units);
@@ -3840,7 +3975,7 @@ class App {
       this.layoutJv();
       this.refollow();
     }
-    if (prev.appearance !== next.appearance) this.applyDayNight();
+    if (prev.appearance !== next.appearance || prev.theme !== next.theme) this.applyDayNight();
     else this.applyTheme();
     // TomTom first or not, or a new key: ask TomTom again at once, and plan again with it.
     if (tomtomKey(prev) !== tomtomKey(next) || prev.services !== next.services || prev.mapStyle !== next.mapStyle) this.ttMap.reset();

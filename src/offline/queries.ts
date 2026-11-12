@@ -3,7 +3,9 @@ import { haversine, type LngLat } from '../geo/geo';
 import type { OsmData, OsmNode, OsmWay } from '../junction/osmdata';
 import type { OfflineGraph } from './graph';
 import { wayLevel } from '../junction/vertical';
-import { CLASSES, F_BRIDGE, F_LINK, F_TUNNEL } from './graphLayout';
+import { CLASSES, D_BWD, D_FWD, F_BRIDGE, F_LINK, F_TUNNEL } from './graphLayout';
+import type { PlaceIndex } from './places';
+import type { CameraPoint, LimitWay, SpeedData } from '../nav/speed';
 
 function wayOf(G: OfflineGraph, seg: number): OsmWay {
   const pts = G.points(seg);
@@ -112,4 +114,58 @@ export function roadWays(G: OfflineGraph, names: string[], center: LngLat, radiu
       }
     }
   return [...segs].map((s) => wayOf(G, s));
+}
+
+/**
+ * The speed data along a path, as the Overpass lookup gives it: roads with a speed limit within
+ * 15 m of the path, and the speed cameras within 45 m with the road each stands on. Speed cameras
+ * are in the place index as "Speed camera 110 km/h" (the limit, when the map has one).
+ */
+export function speedData(G: OfflineGraph, places: PlaceIndex | null, path: LngLat[]): SpeedData {
+  const segs = new Set<number>();
+  let last: LngLat | null = null;
+  for (const p of path) {
+    if (last && haversine(last, p) < 10) continue;
+    last = p;
+    for (const s of G.segmentsNear(p, 15)) {
+      if (segs.has(s)) continue;
+      const t = G.tags(G.segWay[s]);
+      if (!t.maxspeed && !t['maxspeed:forward'] && !t['maxspeed:backward']) continue;
+      if (near(G, s, p, 40)) segs.add(s);
+    }
+  }
+  const ways: LimitWay[] = [...segs].map((s) => ({ id: `seg${s}`, coords: G.points(s), tags: G.tags(G.segWay[s]) }));
+  const cameras: CameraPoint[] = [];
+  for (const c of places?.byKind(['highway=speed_camera'], path, 45) ?? []) {
+    const m = /(\d+)\s*km\/h/.exec(c.name);
+    // The road it stands on: the nearest segment within a few metres.
+    let road: CameraPoint['road'];
+    let bestD = 4;
+    for (const s of G.segmentsNear(c.lngLat, 10)) {
+      const pts = G.points(s);
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const d = pointSegDist(c.lngLat, pts[i], pts[i + 1]);
+        if (d < bestD) {
+          bestD = d;
+          const fwd = (G.segDir[s] & D_FWD) !== 0;
+          const bwd = (G.segDir[s] & D_BWD) !== 0;
+          road = { coords: pts, oneway: fwd && !bwd ? 1 : bwd && !fwd ? -1 : 0 };
+        }
+      }
+    }
+    cameras.push({ id: `p${c.lngLat[0].toFixed(6)},${c.lngLat[1].toFixed(6)}`, at: c.lngLat, tags: { highway: 'speed_camera', ...(m ? { maxspeed: m[1] } : {}) }, ...(road ? { road } : {}) });
+  }
+  return { ways, cameras, checks: [] };
+}
+
+function pointSegDist(p: LngLat, a: LngLat, b: LngLat): number {
+  const kx = 111_320 * Math.cos((p[1] * Math.PI) / 180);
+  const ky = 110_540;
+  const ax = (a[0] - p[0]) * kx;
+  const ay = (a[1] - p[1]) * ky;
+  const dx = (b[0] - a[0]) * kx;
+  const dy = (b[1] - a[1]) * ky;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+  return Math.hypot(ax + dx * t, ay + dy * t);
 }

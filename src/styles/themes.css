@@ -1,0 +1,453 @@
+/* The three looks (Settings → Map → Theme), each with a day and a night version, plus the parts
+   every look shares: the speed instrument with the speed limit, the speed camera chip and the
+   theme picker.
+
+   JunctionNav  purple, the tokens in app.css.
+   Fighter jet  a fighter's head-up display: phosphor green on black by night, dark inks on a
+                light grey-green by day, B612 (the typeface Airbus drew for cockpit displays),
+                square corners, thin lit outlines, and the speed as a HUD speed tape.
+   Casual       warm and friendly: cream and coral by day, cosy navy by night, Nunito, round
+                pill shapes and a dial for the speed.
+   The map's colours for each look are in src/theme/palette.ts. */
+
+/* ================================================================ speed and limit (all looks) */
+.speed { position: relative; display: grid; place-items: center; }
+.speed > .spd-gauge, .speed > .spd-num { grid-area: 1 / 1; }
+.spd-gauge:empty { display: none; }
+.spd-gauge svg { display: block; }
+.spd-num { display: grid; justify-items: center; line-height: 0.9; }
+.spd-num b { font: 700 24px/0.9 var(--font-cond); font-variant-numeric: tabular-nums; }
+.spd-num small { display: block; font: 600 10px var(--font-ui); color: var(--muted); margin-top: 1px; }
+/* The limit as a road sign (white, red ring, black figures), on the instrument's upper corner. */
+.spd-sign {
+  position: absolute;
+  z-index: 1;
+  left: -18px;
+  top: -30px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 4.5px solid #e0162b;
+  color: #111111;
+  display: grid;
+  place-items: center;
+  font: 700 17px/1 "Saira Condensed", "Arial Narrow", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+.spd-sign[data-digits="3"] { font-size: 15px; letter-spacing: -0.03em; }
+.spd-sign[hidden] { display: none; }
+.speed[data-state="near"] { box-shadow: var(--shadow), 0 0 0 3px var(--amber), 0 0 16px color-mix(in srgb, var(--amber) 55%, transparent); }
+.speed[data-state="near"] .spd-num b { color: color-mix(in srgb, var(--amber) 70%, var(--ink)); }
+.app[data-view] .speed[data-state="over"] { background: var(--danger); box-shadow: 0 0 0 3px #ffffff, 0 0 22px color-mix(in srgb, var(--danger) 70%, transparent); animation: spd-over 0.9s ease-in-out infinite; }
+.speed[data-state="over"] .spd-num b, .speed[data-state="over"] .spd-num small { color: #ffffff; }
+.speed[data-state="over"] .spd-sign { animation: spd-sign 0.9s ease-in-out infinite; }
+@keyframes spd-over { 50% { box-shadow: 0 0 0 3px #ffffff, 0 0 6px color-mix(in srgb, var(--danger) 40%, transparent); } }
+@keyframes spd-sign { 50% { transform: scale(1.12); } }
+
+/* The map controls over the speed step up to leave room for the speed limit sign. */
+.app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 118px); }
+.app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 192px); }
+@media (max-width: 480px) {
+  .app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 178px); }
+  .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 252px); }
+}
+
+/* The speed camera or average speed check coming up: a slim line over the arrival time. */
+.cam-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: max(36px, 5vh);
+  padding: 0 6px 0 5px;
+  border-radius: 999px;
+  color: var(--ink);
+  box-shadow: var(--shadow), var(--edge), inset 0 0 0 2px #dc2626;
+}
+/* (Over the nav view's solid panels.) */
+.app[data-view] .cam-chip { background: color-mix(in srgb, #dc2626 10%, var(--surface-solid)); }
+.cam-chip[hidden] { display: none; }
+.app[data-view] .cam-chip[data-state="over"] { animation: spd-over 0.9s ease-in-out infinite; background: color-mix(in srgb, #dc2626 26%, var(--surface-solid)); }
+.cam-ico-wrap { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #dc2626; color: #ffffff; }
+.cam-ico { width: 19px; height: 19px; display: block; }
+.cam-line { min-width: 0; display: flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; font: 700 15px/1 var(--font-cond); }
+.cam-title { overflow: hidden; text-overflow: ellipsis; }
+.cam-dist { flex: none; font-size: 17px; font-variant-numeric: tabular-nums; color: #b91c1c; }
+:root[data-theme="dark"] .cam-dist { color: #fca5a5; }
+.cam-ends { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cam-limit {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3.5px solid #e0162b;
+  color: #111111;
+  display: grid;
+  place-items: center;
+  font: 700 13px/1 "Saira Condensed", "Arial Narrow", sans-serif;
+  letter-spacing: -0.03em;
+}
+.app:has(.sheet.is-nav:not([hidden])) .cam-chip { visibility: hidden; }
+@media (max-width: 480px) {
+  .cam-chip { margin-right: 66px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .speed[data-state="over"], .speed[data-state="over"] .spd-sign, .cam-chip[data-state="over"] { animation: none; }
+}
+
+/* The theme picker in Settings: a card per look with its day and night colours. */
+.theme-pick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.theme-card {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  text-align: left;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--surface-solid);
+  color: var(--ink);
+}
+.theme-card[aria-checked="true"] { border-color: var(--route); box-shadow: 0 0 0 3px color-mix(in srgb, var(--route) 30%, transparent); }
+.tc-swatches { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.tp-sw {
+  height: 34px;
+  border-radius: 7px;
+  background:
+    linear-gradient(115deg, transparent 0 46%, var(--b) 46% 56%, transparent 56%),
+    linear-gradient(60deg, transparent 0 30%, var(--c) 30% 38%, transparent 38%),
+    radial-gradient(circle at 78% 30%, var(--d) 0 4px, transparent 5px),
+    var(--a);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.tc-name { font: 700 15px/1.1 var(--font-cond); }
+.tc-note { font-size: 11.5px; line-height: 1.3; color: var(--muted); }
+@media (max-width: 420px) {
+  .theme-pick { grid-template-columns: 1fr; }
+  .theme-card { grid-template-columns: 96px 1fr; grid-template-rows: auto 1fr; column-gap: 10px; }
+  .theme-card .tc-swatches { grid-row: span 2; }
+}
+
+/* ================================================================ Fighter jet */
+:root[data-skin="jet"] {
+  --font-ui: "B612", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+  --font-cond: "B612", "Arial Narrow", "Noto Sans JP", sans-serif;
+  --font-mono: "B612 Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* Day: dark inks on light grey-green, the instruments in deep HUD green. */
+  --bg: #dfe3dc;
+  --surface: rgba(236, 240, 234, 0.9);
+  --surface-solid: #eef1ec;
+  --surface-2: #dde3da;
+  --ink: #0d1a12;
+  --muted: #4c5e52;
+  --line: rgba(16, 60, 32, 0.22);
+  --sign: #101a14;
+  --sign-2: #1a2a20;
+  --sign-ink: #e3ffe9;
+  --sign-fg: #2fd66e;
+  --hud: #2fd66e;
+  --hud-ink: #0b6b33;
+  --cue: #2fd66e;
+  --cue-ink: #04140a;
+  --route: #0f8a45;
+  --route-ink: #ffffff;
+  --route-glow: rgba(15, 138, 69, 0.25);
+  --soft: #d3e8d9;
+  --overlay: rgba(10, 20, 14, 0.72);
+  --ok: #0f7a3c;
+  --warn: #a35a00;
+  --amber: #e08a00;
+  --danger: #d4202f;
+  --pin: #d4202f;
+  --user-pin: #0b7fa8;
+  --down: #101a14;
+  --down-ink: #e3ffe9;
+  --scrim: rgba(6, 12, 8, 0.5);
+  --shadow: 0 6px 18px rgba(10, 30, 16, 0.18);
+  --edge: inset 0 0 0 1px rgba(15, 138, 69, 0.45);
+  --radius: 4px;
+}
+:root[data-skin="jet"][data-theme="dark"] {
+  /* Night: phosphor green on black. */
+  --bg: #030604;
+  --surface: rgba(4, 12, 7, 0.8);
+  --surface-solid: #06100a;
+  --surface-2: #0b1a11;
+  --ink: #c8ffd9;
+  --muted: #6fae86;
+  --line: rgba(70, 255, 140, 0.22);
+  --sign: #020804;
+  --sign-2: #062012;
+  --sign-ink: #b9ffcf;
+  --sign-fg: #46ff8c;
+  --hud: #46ff8c;
+  --hud-ink: #46ff8c;
+  --cue: #46ff8c;
+  --cue-ink: #031007;
+  --route: #46ff8c;
+  --route-ink: #031007;
+  --route-glow: rgba(70, 255, 140, 0.4);
+  --soft: rgba(70, 255, 140, 0.12);
+  --overlay: rgba(2, 6, 3, 0.8);
+  --ok: #46ff8c;
+  --warn: #ffcc33;
+  --amber: #ffc21a;
+  --danger: #ff3b3b;
+  --pin: #ff5c5c;
+  --user-pin: #4ce0ff;
+  --down: #c8ffd9;
+  --down-ink: #031007;
+  --scrim: rgba(0, 0, 0, 0.7);
+  --shadow: 0 0 18px rgba(0, 0, 0, 0.65);
+  --edge: inset 0 0 0 1px rgba(70, 255, 140, 0.42);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin="jet"]:not([data-theme="light"]) {
+    --bg: #030604;
+    --surface: rgba(4, 12, 7, 0.8);
+    --surface-solid: #06100a;
+    --surface-2: #0b1a11;
+    --ink: #c8ffd9;
+    --muted: #6fae86;
+    --line: rgba(70, 255, 140, 0.22);
+    --sign: #020804;
+    --sign-2: #062012;
+    --sign-ink: #b9ffcf;
+    --sign-fg: #46ff8c;
+    --hud: #46ff8c;
+    --hud-ink: #46ff8c;
+    --cue: #46ff8c;
+    --cue-ink: #031007;
+    --route: #46ff8c;
+    --route-ink: #031007;
+    --route-glow: rgba(70, 255, 140, 0.4);
+    --soft: rgba(70, 255, 140, 0.12);
+    --ok: #46ff8c;
+    --amber: #ffc21a;
+    --danger: #ff3b3b;
+    --edge: inset 0 0 0 1px rgba(70, 255, 140, 0.42);
+    color-scheme: dark;
+  }
+}
+/* Thin lit outlines and square corners. */
+:root[data-skin="jet"] .card { border-radius: 4px; }
+:root[data-skin="jet"] .btn { border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; font-size: 13.5px; }
+:root[data-skin="jet"] .btn-primary { background: color-mix(in srgb, var(--route) 18%, transparent); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--route), 0 0 14px var(--route-glow); }
+:root[data-skin="jet"] .icon-btn { border-radius: 4px; }
+:root[data-skin="jet"] .icon-btn.danger { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1.5px var(--danger), 0 0 12px color-mix(in srgb, var(--danger) 35%, transparent); }
+/* The banner as the HUD's upper readout: dark glass, lit green figures, a fine bracket frame. */
+:root[data-skin="jet"] .banner {
+  background:
+    linear-gradient(var(--hud), var(--hud)) left 10px bottom 8px / 14px 1.5px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) left 10px bottom 8px / 1.5px 10px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) right 10px bottom 8px / 14px 1.5px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) right 10px bottom 8px / 1.5px 10px no-repeat,
+    linear-gradient(180deg, var(--sign-2), var(--sign) 75%);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--hud) 45%, transparent);
+}
+:root[data-skin="jet"] .b-dist, :root[data-skin="jet"] .b-time, :root[data-skin="jet"] .eta-main { font-family: var(--font-mono); letter-spacing: 0; }
+:root[data-skin="jet"] .b-dist { font-size: 21px; color: var(--sign-fg); }
+:root[data-skin="jet"] .b-primary { font-size: clamp(19px, 4.6vw, 27px); letter-spacing: 0.01em; }
+:root[data-skin="jet"] .eta-main { font-size: 22px; color: var(--hud-ink); }
+:root[data-skin="jet"] .eta-main small, :root[data-skin="jet"] .eta-sub { text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+:root[data-skin="jet"] .traffic-chip, :root[data-skin="jet"] .toll-chip, :root[data-skin="jet"] .cam-chip, :root[data-skin="jet"] .faster, :root[data-skin="jet"] .traffic-card { border-radius: 4px; }
+:root[data-skin="jet"] .cam-ico-wrap { border-radius: 3px; transform: rotate(45deg) scale(0.86); }
+:root[data-skin="jet"] .cam-ico-wrap .cam-ico { transform: rotate(-45deg); }
+:root[data-skin="jet"] .cam-line, :root[data-skin="jet"] .toll-line { text-transform: uppercase; letter-spacing: 0.04em; font-size: 13px; }
+:root[data-skin="jet"] .cam-dist, :root[data-skin="jet"] .toll-dist { font-family: var(--font-mono); font-size: 15px; }
+:root[data-skin="jet"] .recenter { border-radius: 4px; }
+:root[data-skin="jet"] .sim .sim-label { color: var(--hud-ink); }
+:root[data-skin="jet"] .theme-card, :root[data-skin="jet"] .settings select, :root[data-skin="jet"] .settings input { border-radius: 4px; }
+
+/* The speed as a HUD speed tape. */
+:root[data-skin="jet"] .speed {
+  width: 84px;
+  height: 150px;
+  border-radius: 4px;
+  padding: 0;
+  font: inherit;
+  background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
+  color: var(--hud-ink);
+  box-shadow: var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--hud-ink) 40%, transparent);
+  animation: none;
+}
+:root[data-skin="jet"] .speed .spd-num, :root[data-skin="jet"] .speed .spd-sign { display: none; }
+/* Near and over the limit the tape itself says so (amber band, red box); the panel only glows. */
+:root[data-skin="jet"] .app[data-view] .speed[data-state="near"] { box-shadow: var(--shadow), inset 0 0 0 1.5px var(--amber), 0 0 14px color-mix(in srgb, var(--amber) 40%, transparent); }
+:root[data-skin="jet"] .app[data-view] .speed[data-state="over"] {
+  background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
+  box-shadow: var(--shadow), inset 0 0 0 1.5px var(--danger), 0 0 18px color-mix(in srgb, var(--danger) 55%, transparent);
+  animation: none;
+}
+:root[data-skin="jet"] .spd-tape { width: 84px; height: 150px; overflow: visible; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--hud-ink) 50%, transparent)); }
+.spd-tape .tp-scale path, .spd-tape .tp-frame { stroke: currentColor; stroke-width: 1.4; fill: none; }
+.spd-tape text { fill: currentColor; font: 700 11px var(--font-mono, monospace); }
+.spd-tape .tp-labels text { font-weight: 400; font-size: 10.5px; }
+.spd-tape .tp-num { font-size: 21px; font-weight: 700; }
+.spd-tape .tp-box { fill: color-mix(in srgb, var(--surface-solid) 92%, transparent); stroke: currentColor; stroke-width: 1.6; }
+.spd-tape .tp-pole { fill: url(#tp-stripes); }
+.spd-tape .tp-amber { fill: var(--amber); }
+.spd-tape .tp-dim { opacity: 0.5; }
+.spd-tape .tp-unit, .spd-tape .tp-hdg { font-weight: 400; font-size: 10px; }
+.spd-tape[data-state="near"] .tp-box { stroke: var(--amber); }
+.spd-tape[data-state="near"] .tp-num, .spd-tape[data-state="near"] .tp-lim { fill: var(--amber); }
+.spd-tape[data-state="over"] .tp-box { stroke: var(--danger); fill: color-mix(in srgb, var(--danger) 30%, var(--surface-solid)); animation: tp-blink 0.8s steps(2, jump-none) infinite; }
+.spd-tape[data-state="over"] .tp-num, .spd-tape[data-state="over"] .tp-lim { fill: var(--danger); }
+:root[data-skin="jet"][data-theme="dark"] .spd-tape[data-state="over"] .tp-num { fill: #ffffff; }
+@keyframes tp-blink { 50% { fill: transparent; } }
+@media (prefers-reduced-motion: reduce) { .spd-tape[data-state="over"] .tp-box { animation: none; } }
+/* Beside the arrival card on wide screens, clear of the map's credit line. */
+@media (min-width: 481px) {
+  :root[data-skin="jet"] .foot .speed { margin-bottom: 16px; }
+}
+/* Room for the taller instrument. */
+:root[data-skin="jet"] .app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 188px); }
+:root[data-skin="jet"] .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 256px); }
+@media (max-width: 480px) {
+  :root[data-skin="jet"] .foot .speed { width: 84px; height: 150px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); }
+  :root[data-skin="jet"] .app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 246px); }
+  :root[data-skin="jet"] .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 314px); }
+  :root[data-skin="jet"] :is(.traffic-chip, .traffic-card, .toll-chip, .cam-chip, .faster, .nav-stack > .sim) { margin-right: 96px; }
+}
+
+/* ================================================================ Casual */
+:root[data-skin="casual"] {
+  --font-ui: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+  --font-cond: "Nunito", "Arial Narrow", "Noto Sans JP", sans-serif;
+  /* Day: cream and coral. */
+  --bg: #fff6ec;
+  --surface: rgba(255, 255, 255, 0.94);
+  --surface-solid: #ffffff;
+  --surface-2: #fff0e2;
+  --ink: #2b2320;
+  --muted: #7a6a62;
+  --line: rgba(120, 60, 30, 0.13);
+  --sign: #ff6b4a;
+  --sign-2: #ff8f5e;
+  --sign-ink: #ffffff;
+  --sign-fg: #e8553a;
+  --hud: #fff1e8;
+  --cue: #ffffff;
+  --cue-ink: #e8553a;
+  --route: #ff6b4a;
+  --route-ink: #ffffff;
+  --route-glow: rgba(255, 107, 74, 0.3);
+  --soft: #ffe4d6;
+  --overlay: rgba(43, 35, 32, 0.6);
+  --ok: #16a34a;
+  --warn: #c2410c;
+  --amber: #f59e0b;
+  --danger: #e11d48;
+  --pin: #e11d48;
+  --user-pin: #0ea5e9;
+  --down: #2b2320;
+  --down-ink: #ffffff;
+  --scrim: rgba(43, 35, 32, 0.4);
+  --shadow: 0 10px 26px rgba(160, 80, 40, 0.16), 0 2px 4px rgba(160, 80, 40, 0.08);
+  --edge: inset 0 0 0 1px rgba(160, 80, 40, 0.06);
+  --radius: 22px;
+}
+:root[data-skin="casual"][data-theme="dark"] {
+  /* Night: cosy navy with warm accents. */
+  --bg: #121829;
+  --surface: rgba(28, 35, 60, 0.92);
+  --surface-solid: #1c233c;
+  --surface-2: #262f4e;
+  --ink: #fdf3ea;
+  --muted: #b3aec6;
+  --line: rgba(255, 200, 170, 0.15);
+  --sign: #232b4a;
+  --sign-2: #313c66;
+  --sign-ink: #fff4ea;
+  --sign-fg: #ffa587;
+  --hud: #ff9b7a;
+  --cue: #ff8a66;
+  --cue-ink: #141a2e;
+  --route: #ff8a66;
+  --route-ink: #141a2e;
+  --route-glow: rgba(255, 138, 102, 0.35);
+  --soft: rgba(255, 138, 102, 0.16);
+  --overlay: rgba(10, 14, 26, 0.76);
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --amber: #fbbf24;
+  --danger: #fb7185;
+  --pin: #fb7185;
+  --user-pin: #38bdf8;
+  --down: #fdf3ea;
+  --down-ink: #141a2e;
+  --scrim: rgba(6, 8, 16, 0.6);
+  --shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --edge: inset 0 0 0 1px rgba(255, 200, 170, 0.1);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-skin="casual"]:not([data-theme="light"]) {
+    --bg: #121829;
+    --surface: rgba(28, 35, 60, 0.92);
+    --surface-solid: #1c233c;
+    --surface-2: #262f4e;
+    --ink: #fdf3ea;
+    --muted: #b3aec6;
+    --line: rgba(255, 200, 170, 0.15);
+    --sign: #232b4a;
+    --sign-2: #313c66;
+    --sign-ink: #fff4ea;
+    --sign-fg: #ffa587;
+    --hud: #ff9b7a;
+    --cue: #ff8a66;
+    --cue-ink: #141a2e;
+    --route: #ff8a66;
+    --route-ink: #141a2e;
+    --route-glow: rgba(255, 138, 102, 0.35);
+    --soft: rgba(255, 138, 102, 0.16);
+    --ok: #4ade80;
+    --amber: #fbbf24;
+    --danger: #fb7185;
+    --edge: inset 0 0 0 1px rgba(255, 200, 170, 0.1);
+    color-scheme: dark;
+  }
+}
+:root[data-skin="casual"] .btn { border-radius: 999px; }
+:root[data-skin="casual"] .icon-btn { border-radius: 50%; }
+:root[data-skin="casual"] .banner { border-radius: 0 0 26px 26px; }
+:root[data-skin="casual"] .banner::after { border-radius: 0 0 26px 26px; }
+:root[data-skin="casual"] .b-primary { font-weight: 800; font-size: clamp(20px, 5vw, 29px); }
+:root[data-skin="casual"] .b-dist, :root[data-skin="casual"] .eta-main { font-weight: 800; }
+:root[data-skin="casual"] .b-icon > .ico { color: #ffffff; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.12)); }
+:root[data-skin="casual"][data-theme="dark"] .b-icon > .ico { color: var(--hud); }
+:root[data-skin="casual"] .recenter { border-radius: 22px; }
+:root[data-skin="casual"] .theme-card { border-radius: 18px; }
+
+/* The speed as a friendly dial: green, amber and red zones round the edge. */
+:root[data-skin="casual"] .speed { width: 72px; height: 72px; border-radius: 50%; }
+:root[data-skin="casual"] .spd-dial { width: 72px; height: 72px; }
+:root[data-skin="casual"] .spd-num { margin-top: 2px; }
+:root[data-skin="casual"] .spd-num b { font: 800 23px/0.9 var(--font-cond); }
+.spd-dial path { fill: none; stroke-linecap: round; }
+.spd-dial .dl-track { stroke: color-mix(in srgb, var(--ink) 10%, transparent); stroke-width: 5; }
+.spd-dial .dl-fill { stroke: #0d9488; stroke-width: 5; }
+:root[data-theme="dark"] .spd-dial .dl-fill { stroke: #4fe3d2; }
+.spd-dial .dl-z-ok { stroke: #22c55e; stroke-width: 2.5; opacity: 0.75; }
+.spd-dial .dl-z-near { stroke: #f59e0b; stroke-width: 2.5; }
+.spd-dial .dl-z-over { stroke: #ef4444; stroke-width: 2.5; }
+.spd-dial[data-state="near"] .dl-fill { stroke: #f59e0b; }
+.spd-dial[data-state="over"] .dl-fill { stroke: #ffffff; }
+:root[data-skin="casual"] .speed[data-state="over"] .dl-track { stroke: rgba(255, 255, 255, 0.3); }
+:root[data-skin="casual"] .speed[data-state="over"] .dl-z-over { stroke: #ffffff; }
+:root[data-skin="casual"] .app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 126px); }
+:root[data-skin="casual"] .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 200px); }
+@media (max-width: 480px) {
+  :root[data-skin="casual"] .app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 188px); }
+  :root[data-skin="casual"] .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 262px); }
+  :root[data-skin="casual"] .foot .speed { width: 64px; height: 64px; }
+  :root[data-skin="casual"] .spd-dial { width: 64px; height: 64px; }
+  :root[data-skin="casual"] .spd-num b { font-size: 21px; }
+}
