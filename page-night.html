@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/node_modules/maplibre-gl/dist/maplibre-gl.css">
+<style>html,body,#m{margin:0;width:100%;height:100%}</style><div id="m"></div>
+<script src="/node_modules/maplibre-gl/dist/maplibre-gl.js"></script>
+<script>
+const map = new maplibregl.Map({ container: 'm', style: '/map-check/style-night.json', center: [101.7, 3.145], zoom: 14.2, pitch: 0, attributionControl: false });
+map.on('load', () => {
+  const coords = [[101.6865,3.1302],[101.6930,3.1360],[101.7010,3.1420],[101.7080,3.1490],[101.7119,3.1578]];
+  map.addSource('r', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } });
+  map.addLayer({ id: 'g', type: 'line', source: 'r', layout: { 'line-cap': 'round' }, paint: { 'line-color': 'rgba(183, 123, 255, 0.36)', 'line-width': 30, 'line-blur': 10 } });
+  map.addLayer({ id: 'c', type: 'line', source: 'r', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#2e0f57', 'line-width': 14 } });
+  map.addLayer({ id: 'l', type: 'line', source: 'r', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#b77bff', 'line-width': 10 } });
+  map.once('idle', () => (window.done = true));
+});
+map.on('error', (e) => console.error(String(e.error && e.error.message)));
+</script>
