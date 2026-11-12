@@ -134,6 +134,22 @@ describe('limits on the road the route runs along', () => {
     expect(spans(matchLimits(r, ways, [0, 3000]))).toEqual([[0, 3000, 90, 'osm']]);
   });
 
+  it('does not take a toll lane’s or a car park’s walking pace for the road’s limit', () => {
+    // 10 km/h mapped on a stretch of expressway (a toll booth lane), 20 on a primary road.
+    const ways = [
+      way('a', [at(0), at(1000)], { highway: 'motorway', maxspeed: '110' }),
+      way('booth', [at(1000), at(1200)], { highway: 'motorway', maxspeed: '10' }),
+      way('b', [at(1200), at(2000)], { highway: 'primary', maxspeed: '20' }),
+      // On a side street 20 is a real limit; 5 is a gate.
+      way('c', [at(2000), at(2600)], { highway: 'residential', maxspeed: '20' }),
+      way('d', [at(2600), at(3000)], { highway: 'service', maxspeed: '5' }),
+    ];
+    expect(spans(matchLimits(r, ways, [0, 3000]))).toEqual([
+      [0, 1000, 110, 'osm'],
+      [2000, 2600, 20, 'osm'],
+    ]);
+  });
+
   it('leaves a gap where no road with a limit is known', () => {
     const got = matchLimits(r, [way('a', [at(0), at(800)], { maxspeed: '60' }), way('b', [at(2000), at(3000)], { maxspeed: '90' })], [0, 3000]).map((x) => ({ ...x }));
     expect(spans(got)).toEqual([

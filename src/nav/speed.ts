@@ -140,11 +140,21 @@ interface Seg {
   oneway: -1 | 0 | 1;
 }
 
+/**
+ * Limits below this are not the road's speed limit: walking-pace figures are mapped on toll
+ * booth lanes, car parks and gates, and anything under 30 on a main road is one of those too.
+ */
+function floorFor(t: Record<string, string>): number {
+  return /^(motorway|trunk|primary)(_link)?$/.test(t.highway ?? '') ? 30 : 15;
+}
+
 function segIndex(ways: LimitWay[]): Map<string, Seg[]> {
   const grid = new Map<string, Seg[]>();
   for (const w of ways) {
-    const fwd = wayLimit(w.tags, true);
-    const bwd = wayLimit(w.tags, false);
+    const floor = floorFor(w.tags);
+    const real = (v: number | null) => (v != null && v >= floor ? v : null);
+    const fwd = real(wayLimit(w.tags, true));
+    const bwd = real(wayLimit(w.tags, false));
     if (fwd == null && bwd == null) continue;
     const oneway = onewayOf(w.tags);
     for (let i = 0; i + 1 < w.coords.length; i++) {
