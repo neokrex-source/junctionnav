@@ -81,6 +81,11 @@ const state = (page) =>
       number: el.querySelector('.spd-num b').textContent,
       chip: chip.hidden ? null : chip.textContent,
       chipState: chip.dataset.state,
+      // Nothing of the chip's line is cut off (its limit sign is the last thing in it).
+      chipFits: chip.hidden || (() => {
+        const line = chip.querySelector('.cam-line');
+        return line.scrollWidth <= line.clientWidth + 1;
+      })(),
       spoken: window.__spoken.slice(),
       tones: window.__tones.slice(),
       camerasOnMap: a.map.map.getSource('cameras')?._data?.features?.length ?? a.map.map.getSource('cameras')?.serialize?.().data?.features?.length ?? null,
@@ -114,9 +119,9 @@ const state = (page) =>
     await said(page, 'Average speed check');
     st = await state(page);
     check('the average speed check is announced and shown', st.spoken.some((t) => /^Average speed check for 800 metres\. Speed limit 110\.$/.test(t)) && /Average speed check/.test(st.chip ?? ''), st);
-    await page.waitForFunction(() => /average \d+/.test(window.__app.el.camChip.textContent), null, { timeout: 15_000 }).catch(() => {});
+    await page.waitForFunction(() => /Average speed\d+/.test(window.__app.el.camChip.textContent), null, { timeout: 15_000 }).catch(() => {});
     st = await state(page);
-    check('with the average so far', /average 10[3-5]/.test(st.chip ?? ''), st.chip);
+    check('with the average so far, and all of it in view', /^Average speed10[3-5]\d+ m110$/.test(st.chip ?? '') && st.chipFits, st);
     await page.screenshot({ path: join(OUT, 'alert-check.png') });
 
     // Towards the camera on E35 (90) at 101 km/h: the camera, then "slow down".
@@ -200,6 +205,10 @@ const state = (page) =>
           dial: !!el.querySelector('.spd-dial'),
           signShown: !!el.querySelector('.spd-sign') && getComputedStyle(el.querySelector('.spd-sign')).display !== 'none',
           size: [Math.round(el.getBoundingClientRect().width), Math.round(el.getBoundingClientRect().height)],
+          chipFits: (() => {
+            const line = a.el.camChip.querySelector('.cam-line');
+            return !!line && line.scrollWidth <= line.clientWidth + 1;
+          })(),
           overlap: (() => {
             const r = el.getBoundingClientRect();
             const hit = (o) => o && !o.hidden && o.getBoundingClientRect().width && !(o.getBoundingClientRect().right <= r.left || o.getBoundingClientRect().left >= r.right || o.getBoundingClientRect().bottom <= r.top || o.getBoundingClientRect().top >= r.bottom);
@@ -221,6 +230,7 @@ const state = (page) =>
   check('Casual: a dial with the limit as a road sign', looks['casual-day'].dial && looks['casual-night'].dial && looks['casual-day'].signShown && !looks['casual-day'].tape, looks['casual-day']);
   check('JunctionNav: the speed bubble with the limit as a road sign', !looks['junction-day'].tape && !looks['junction-day'].dial && looks['junction-day'].signShown, looks['junction-day']);
   check('the speed instrument does not cover the map controls or the cards in any look', all.every((l) => l.overlap.length === 0), Object.fromEntries(Object.entries(looks).map(([k, l]) => [k, l.overlap])));
+  check('the speed camera chip shows in full in every look', all.every((l) => l.chipFits), Object.fromEntries(Object.entries(looks).map(([k, l]) => [k, l.chipFits])));
   check('the browser bar takes each look’s colour', new Set(all.map((l) => l.bar)).size === 6, all.map((l) => l.bar));
 
   /* ---------------------------------------------------------------- choosing a theme in Settings */

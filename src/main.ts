@@ -2773,7 +2773,7 @@ class App {
 
   /**
    * The speed camera or average speed check coming up, as a slim line over the arrival time:
-   * "Speed camera · 600 m · 110", or "Average speed check · average 104 · ends in 3.2 km".
+   * "Speed camera · 600 m · 110", or inside an average speed check "Average speed 104 · 3.2 km · 110".
    */
   private paintCamChip(p: Progress) {
     const chip = this.el.camChip;
@@ -2791,10 +2791,12 @@ class App {
       const dist = formatDistance(c.dist, units);
       state = avg != null && lim != null && c.average! > lim ? 'over' : 'ok';
       key = `chk|${c.check.id}|${c.inside}|${dist}|${avg}|${state}`;
-      const what = c.inside ? (avg != null ? `${words.average} ${avg}` : '') : dist;
-      parts = [h('span', { class: 'cam-title' }, words.check), what ? h('span', { class: 'cam-dist' }, what) : '', c.inside ? h('span', { class: 'cam-ends' }, `${words.checkEnds} ${dist}`) : ''];
+      // Before it: "Average speed check · 400 m". Inside: "Average speed 104 · 3.2 km" (what is left of it).
+      parts = c.inside
+        ? [h('span', { class: 'cam-title' }, avg != null ? words.average : words.check), avg != null ? h('span', { class: 'cam-dist' }, String(avg)) : '', h('span', { class: 'cam-ends' }, dist)]
+        : [h('span', { class: 'cam-title' }, words.check), h('span', { class: 'cam-dist' }, dist)];
       if (lim != null) parts.push(h('span', { class: 'cam-limit' }, String(speedIn(lim, units))));
-      label = `${words.check}, ${what}${lim != null ? `, ${words.limit} ${speedIn(lim, units)}` : ''}`;
+      label = `${words.check}, ${c.inside && avg != null ? `${words.average} ${avg}, ` : ''}${dist}${lim != null ? `, ${words.limit} ${speedIn(lim, units)}` : ''}`;
     } else if (this.settings.speedCams && sp.camera) {
       const c = sp.camera;
       const lim = c.cam.limit ?? sp.limit?.kmh ?? null;

@@ -939,10 +939,10 @@ export function speedSpeech(p: SpeedPrompt, lang: LangCode, units: Units): strin
 }
 
 /** Words on the screen for the speed camera chip and the speed sign. */
-export function speedWords(lang: LangCode): { camera: string; check: string; average: string; limit: string; checkEnds: string } {
-  if (lang === 'ms') return { camera: 'Kamera had laju', check: 'Kawalan purata laju', average: 'purata', limit: 'Had laju', checkEnds: 'tamat dalam' };
-  if (lang === 'ja') return { camera: '速度取締機', check: '区間速度取締り', average: '平均', limit: '制限速度', checkEnds: '終了まで' };
-  return { camera: 'Speed camera', check: 'Average speed check', average: 'average', limit: 'Speed limit', checkEnds: 'ends in' };
+export function speedWords(lang: LangCode): { camera: string; check: string; average: string; limit: string } {
+  if (lang === 'ms') return { camera: 'Kamera had laju', check: 'Kawalan purata laju', average: 'Purata laju', limit: 'Had laju' };
+  if (lang === 'ja') return { camera: '速度取締機', check: '区間速度取締り', average: '平均速度', limit: '制限速度' };
+  return { camera: 'Speed camera', check: 'Average speed check', average: 'Average speed', limit: 'Speed limit' };
 }
 
 /* ------------------------------------------------------------------ arrival */

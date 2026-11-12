@@ -634,6 +634,7 @@ describe('what the warnings say', () => {
     expect(speedSpeech(p('speedOver'), 'en', 'imperial')).toBe('Slow down. The speed limit is 68.');
     expect(speedSpeech(p('camera', { dist: 800, limit: null }), 'en', 'metric')).toBe('Speed camera in 800 metres.');
     expect(speedWords('ms').camera).toBe('Kamera had laju');
+    expect(speedWords('en').average).toBe('Average speed');
     expect(speedWords('ja').limit).toBe('制限速度');
   });
 });
