@@ -11,7 +11,8 @@
    The map's colours for each look are in src/theme/palette.ts. */
 
 /* ================================================================ speed and limit (all looks) */
-.speed { position: relative; display: grid; place-items: center; }
+/* (Above the simulator bar and the chips beside it, which its limit sign may reach over.) */
+.speed { position: relative; z-index: 5; display: grid; place-items: center; }
 .speed > .spd-gauge, .speed > .spd-num { grid-area: 1 / 1; }
 .spd-gauge:empty { display: none; }
 .spd-gauge svg { display: block; }
