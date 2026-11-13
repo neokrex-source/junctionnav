@@ -58,6 +58,8 @@ export interface Settings {
   appMode: 'built-in' | 'web';
   /** The user's own TomTom key for live traffic ('' = the one built into the site, if any). */
   tomtomKey: string;
+  /** A Google Cloud key for Google Maps places in search ('' = the one built into the site, if any). */
+  googleKey: string;
   /**
    * Routing, alternatives, place search and the category buttons: TomTom first (with the usual
    * services taking over whenever TomTom cannot answer), or the OpenStreetMap services only.
@@ -121,6 +123,7 @@ export const DEFAULTS: Settings = {
   closeUp: true,
   appMode: 'built-in',
   tomtomKey: '',
+  googleKey: '',
   services: 'tomtom',
   trafficMap: true,
   trafficAlerts: true,
@@ -137,6 +140,13 @@ export const BUILT_IN_TOMTOM_KEY: string = env.VITE_TOMTOM_KEY || '';
 
 export function tomtomKey(s: Settings): string {
   return s.tomtomKey.trim() || BUILT_IN_TOMTOM_KEY;
+}
+
+/** A Google key for everyone, set by the site's build (optional); a key in Settings takes its place. */
+export const BUILT_IN_GOOGLE_KEY: string = env.VITE_GOOGLE_MAPS_KEY || '';
+
+export function googleKey(s: Settings): string {
+  return (s.googleKey ?? '').trim() || BUILT_IN_GOOGLE_KEY;
 }
 
 const KEY = 'junctionnav.settings.v1';

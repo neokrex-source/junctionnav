@@ -22,6 +22,22 @@ export interface Place {
   placeId?: string;
   /** One of your pins on the map (src/pins/pins.ts). */
   pinId?: string;
+  /** A place someone registered in the app (src/community): yours, or a public one. */
+  shared?: SharedRef;
+}
+
+/** What the place card needs of a registered place (src/community/types.ts). */
+export interface SharedRef {
+  id: string;
+  /** One of your places (else someone's public place, or one shared with you by a link). */
+  own: boolean;
+  visibility: 'private' | 'public';
+  ownerName: string;
+  note: string;
+  /** Hidden from others after reports. */
+  hidden?: boolean;
+  /** From a shared link, not saved anywhere yet. */
+  link?: boolean;
 }
 
 interface PhotonFeature {
@@ -91,13 +107,16 @@ export function attachSearch(
     onInput?: (v: string) => void;
     /** Adds a note (e.g. distance) to each result. */
     decorate?: (p: Place) => Place;
+    /** A last row under the results for what was typed (e.g. searching Google Maps for it). */
+    footer?: (q: string) => HTMLElement | null;
   },
 ) {
   let timer = 0;
   let ctrl: AbortController | null = null;
-  const render = (places: Place[]) => {
+  const render = (places: Place[], q = '') => {
     list.innerHTML = '';
-    list.hidden = places.length === 0;
+    const foot = q ? (opts.footer?.(q) ?? null) : null;
+    list.hidden = places.length === 0 && !foot;
     for (const p of places) {
       // A note (a link that cannot be read here, a hint) explains rather than goes somewhere.
       if (!Number.isFinite(p.lngLat[0])) {
@@ -118,6 +137,7 @@ export function attachSearch(
       });
       list.append(h('li', {}, b));
     }
+    if (foot) list.append(h('li', { class: 's-foot' }, foot));
   };
   input.addEventListener('input', () => {
     opts.onInput?.(input.value);
@@ -132,9 +152,9 @@ export function attachSearch(
       ctrl = new AbortController();
       try {
         const found = await opts.engine.search(q, opts.near(), opts.lang(), ctrl.signal);
-        render(opts.decorate ? found.map(opts.decorate) : found);
+        render(opts.decorate ? found.map(opts.decorate) : found, q);
       } catch (e) {
-        if ((e as Error).name !== 'AbortError') render([{ name: 'Search is unavailable', sub: (e as Error).message, lngLat: [NaN, NaN] }]);
+        if ((e as Error).name !== 'AbortError') render([{ name: 'Search is unavailable', sub: (e as Error).message, lngLat: [NaN, NaN] }], q);
       }
     }, 280);
   });

@@ -2,7 +2,7 @@
  * Supabase Auth over its REST API (no SDK): email + password accounts that work on every
  * device. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY at build time to use it.
  */
-import { AuthError, normalizeEmail, validateEmail, validateName, validatePassword, type AuthProvider, type KV, type SignUpResult, type User } from './types';
+import { AuthError, normalizeEmail, validateEmail, validateName, validatePassword, type AuthProvider, type KV, type SignUpResult, type SocialProvider, type User } from './types';
 
 interface StoredSession {
   access_token: string;
@@ -27,6 +27,28 @@ interface GoTrueSession {
 }
 
 const KEY = 'junctionnav.supabase.session.v1';
+/** Set while signing in with Google or Apple: whether to keep the session ('1') or not ('0'). */
+const SOCIAL = 'junctionnav.supabase.social';
+const SOCIALS: SocialProvider[] = ['google', 'apple'];
+
+/** The parameters of a link's #fragment and ?query together (the fragment wins). */
+function linkParams(url: string): URLSearchParams {
+  const hashAt = url.indexOf('#');
+  const qAt = url.indexOf('?');
+  const out = new URLSearchParams(qAt >= 0 ? url.slice(qAt + 1, hashAt > qAt ? hashAt : undefined) : '');
+  if (hashAt >= 0) for (const [k, v] of new URLSearchParams(url.slice(hashAt + 1))) out.set(k, v);
+  return out;
+}
+
+/** Wording for what a sign-in page can come back with. */
+function redirectProblem(p: URLSearchParams): string | null {
+  const err = p.get('error');
+  if (!err) return null;
+  const desc = (p.get('error_description') ?? '').replace(/\+/g, ' ');
+  if (err === 'access_denied' && !/provider is not enabled|not enabled/i.test(desc)) return 'Sign-in was cancelled.';
+  if (/provider is not enabled|unsupported provider/i.test(desc)) return 'That way of signing in is not turned on for this site yet.';
+  return desc || 'Sign-in did not finish. Try again.';
+}
 
 function toUser(u: GoTrueUser): User {
   const email = u.email ?? '';
@@ -48,13 +70,16 @@ function explain(status: number, body: Record<string, unknown>): AuthError {
 export class SupabaseAuth implements AuthProvider {
   readonly kind = 'supabase' as const;
   private recovery: StoredSession | null = null;
+  private redirectErr: string | null = null;
+  private providers: Promise<SocialProvider[]> | null = null;
+  private refreshing: Promise<StoredSession | null> | null = null;
 
   constructor(
     private url: string,
     private anonKey: string,
     private local: KV,
     private session: KV,
-    private opts: { fetch?: typeof fetch; now?: () => number; hash?: () => string; clearHash?: () => void; redirectTo?: string } = {},
+    private opts: { fetch?: typeof fetch; now?: () => number; hash?: () => string; search?: () => string; clearHash?: () => void; redirectTo?: string } = {},
   ) {
     this.url = url.replace(/\/$/, '');
     this.readRedirect();
@@ -119,27 +144,101 @@ export class SupabaseAuth implements AuthProvider {
     };
   }
 
-  /** Links from confirmation and reset emails land with tokens in the URL hash. */
-  private readRedirect() {
-    const hash = this.opts.hash?.() ?? (typeof location !== 'undefined' ? location.hash : '');
-    if (!hash || !hash.includes('access_token=')) return;
-    const p = new URLSearchParams(hash.replace(/^#/, ''));
+  /** The tokens a sign-in link came back with, kept as a session to finish (its user is fetched next). */
+  private pendingFrom(p: URLSearchParams): StoredSession | null {
     const access = p.get('access_token');
     const refresh = p.get('refresh_token');
-    if (!access || !refresh) return;
-    const pending: StoredSession = {
+    if (!access || !refresh) return null;
+    return {
       access_token: access,
       refresh_token: refresh,
       expires_at: Number(p.get('expires_at')) || this.nowS() + Number(p.get('expires_in') || 3600),
       user: { id: '', name: '', email: '' },
     };
-    if (p.get('type') === 'recovery') this.recovery = pending;
-    else this.local.set(KEY, JSON.stringify(pending));
-    if (this.opts.clearHash) this.opts.clearHash();
-    else if (typeof history !== 'undefined') history.replaceState(null, '', location.pathname + location.search);
   }
 
-  async current(): Promise<User | null> {
+  /** Whether the Google or Apple sign-in that just came back should be kept on this device. */
+  private takeRemember(): boolean {
+    const v = this.local.get(SOCIAL);
+    this.local.remove(SOCIAL);
+    return v !== '0';
+  }
+
+  /**
+   * Links from confirmation and reset emails, and the Google and Apple sign-in pages, land with
+   * tokens in the URL hash (or an error in the hash or the query).
+   */
+  private readRedirect() {
+    const hash = this.opts.hash?.() ?? (typeof location !== 'undefined' ? location.hash : '');
+    const search = this.opts.search?.() ?? (typeof location !== 'undefined' ? location.search : '');
+    const p = linkParams(`${search || '?'}${hash}`);
+    const problem = redirectProblem(p);
+    const pending = this.pendingFrom(p);
+    if (!problem && !pending) return;
+    if (problem) {
+      this.redirectErr = problem;
+      this.local.remove(SOCIAL);
+    } else if (pending) {
+      if (p.get('type') === 'recovery') this.recovery = pending;
+      else this.store(pending, this.takeRemember());
+    }
+    if (this.opts.clearHash) this.opts.clearHash();
+    else if (typeof history !== 'undefined') {
+      // Keep the rest of the query (a trip or place link) and drop what the sign-in added.
+      const q = new URLSearchParams(location.search);
+      for (const k of ['error', 'error_code', 'error_description', 'sb']) q.delete(k);
+      const rest = q.toString();
+      history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+    }
+  }
+
+  takeRedirectError(): string | null {
+    const e = this.redirectErr;
+    this.redirectErr = null;
+    return e;
+  }
+
+  socialProviders(): Promise<SocialProvider[]> {
+    this.providers ??= this.call<{ external?: Record<string, boolean> }>('settings')
+      .then((s) => SOCIALS.filter((p) => s.external?.[p] === true))
+      .catch(() => {
+        this.providers = null;
+        return [];
+      });
+    return this.providers;
+  }
+
+  socialUrl(provider: SocialProvider, redirectTo: string, remember: boolean): string {
+    this.local.set(SOCIAL, remember ? '1' : '0');
+    return `${this.url}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectTo)}`;
+  }
+
+  async completeSocial(url: string): Promise<User> {
+    const p = linkParams(url);
+    const problem = redirectProblem(p);
+    if (problem) {
+      this.local.remove(SOCIAL);
+      throw new AuthError(problem);
+    }
+    const pending = this.pendingFrom(p);
+    if (!pending) throw new AuthError('Sign-in did not finish. Try again.');
+    this.store(pending, this.takeRemember());
+    const u = await this.current();
+    if (!u) throw new AuthError('Sign-in did not finish. Try again.');
+    return u;
+  }
+
+  async accessToken(): Promise<string | null> {
+    return (await this.fresh())?.access_token ?? null;
+  }
+
+  /** The saved session, refreshed when it is about to run out (one refresh at a time). */
+  private fresh(): Promise<StoredSession | null> {
+    this.refreshing ??= this.refresh().finally(() => (this.refreshing = null));
+    return this.refreshing;
+  }
+
+  private async refresh(): Promise<StoredSession | null> {
     const got = this.load();
     if (!got) return null;
     let { s } = got;
@@ -152,14 +251,18 @@ export class SupabaseAuth implements AuthProvider {
       }
       if (!s.user.id) s.user = toUser(await this.call<GoTrueUser>('user', { token: s.access_token }));
       this.store(s, got.remember);
-      return s.user;
+      return s;
     } catch (e) {
       // Offline: keep the saved user rather than locking the driver out of navigation.
-      if (e instanceof AuthError && /Cannot reach/.test(e.message) && s.user.id) return s.user;
+      if (e instanceof AuthError && /Cannot reach/.test(e.message) && s.user.id) return s;
       this.local.remove(KEY);
       this.session.remove(KEY);
       return null;
     }
+  }
+
+  async current(): Promise<User | null> {
+    return (await this.fresh())?.user ?? null;
   }
 
   async signIn(email: string, password: string, remember: boolean): Promise<User> {

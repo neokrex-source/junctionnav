@@ -60,6 +60,8 @@ export interface RawPoi {
   id: string;
   lngLat: LngLat;
   tags: Record<string, string>;
+  /** The place as it should be listed, when the source knows it better (registered places). */
+  place?: Partial<Place>;
 }
 
 export interface PoiProvider {
@@ -113,7 +115,7 @@ function toPlace(p: RawPoi, cat: Category, lang: LangCode): CategoryPlace {
   const sub = [tg.brand && tg.brand !== name ? tg.brand : '', tg['addr:street'], tg['addr:city'] || tg['addr:place']]
     .filter(Boolean)
     .join(', ');
-  return { name, sub: sub || t(lang, cat.label), lngLat: p.lngLat, kind: cat.id, ...(tg._place ? { placeId: tg._place } : {}) };
+  return { name, sub: sub || t(lang, cat.label), lngLat: p.lngLat, kind: cat.id, ...(tg._place ? { placeId: tg._place } : {}), ...p.place };
 }
 
 export class CategorySearch {

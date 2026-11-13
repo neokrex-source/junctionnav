@@ -2,7 +2,7 @@
  * Sign-in and registration. The header is an overhead direction sign whose two destinations,
  * "Sign in" and "Create account", are the tabs: picking one is taking that branch.
  */
-import { AuthError, MIN_PASSWORD, passwordStrength, type AuthProvider, type User } from '../auth/types';
+import { AuthError, MIN_PASSWORD, passwordStrength, type AuthProvider, type SocialProvider, type User } from '../auth/types';
 import { DEVELOPER, INSTITUTION } from '../credit';
 import { h } from './dom';
 
@@ -19,7 +19,14 @@ const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10
 export interface AuthScreenOptions {
   /** Offer "Continue without an account". */
   allowGuest: boolean;
+  /**
+   * Starts signing in with Google or Apple (the web page goes to their sign-in page; the app opens
+   * it in the browser and comes back by its link). Resolves with a line to show while waiting.
+   */
+  social?: (provider: SocialProvider, remember: boolean) => Promise<string | null>;
 }
+
+const SOCIAL_LABEL: Record<SocialProvider, string> = { google: 'Continue with Google', apple: 'Continue with Apple' };
 
 function field(id: string, label: string, input: HTMLInputElement, extra?: HTMLElement | null, aside?: HTMLElement | null) {
   input.id = id;
@@ -51,6 +58,8 @@ export class AuthScreen {
   private body = h('div', { class: 'auth-body' });
   private resolve: ((u: User | null) => void) | null = null;
   private email = '';
+  /** A problem to show on the next form (the sign-in page came back with an error). */
+  private problem: string | null = null;
 
   constructor(
     private auth: AuthProvider,
@@ -92,8 +101,24 @@ export class AuthScreen {
   /** Shows the screen and resolves once someone is signed in (or chooses to continue as a guest). */
   open(): Promise<User | null> {
     this.el.hidden = false;
+    this.problem = this.auth.takeRedirectError?.() ?? null;
     this.show(this.auth.pendingRecovery() ? 'reset' : 'signin');
     return new Promise((r) => (this.resolve = r));
+  }
+
+  get isOpen(): boolean {
+    return !this.el.hidden && !!this.resolve;
+  }
+
+  /** Signing in with Google or Apple finished (the app came back by its link). */
+  finishSocial(u: User) {
+    this.done(u);
+  }
+
+  /** Signing in with Google or Apple did not finish: say why on the form. */
+  socialFailed(message: string) {
+    this.problem = message;
+    this.show(this.mode === 'signup' ? 'signup' : 'signin');
   }
 
   close() {
@@ -153,6 +178,12 @@ export class AuthScreen {
         submit.textContent = label;
       }
     };
+
+    if (this.problem) {
+      error.textContent = this.problem;
+      error.hidden = false;
+      this.problem = null;
+    }
 
     const emailInput = h('input', { type: 'email', autocomplete: 'email', inputmode: 'email', spellcheck: 'false', value: this.email, required: true }) as HTMLInputElement;
     emailInput.addEventListener('input', () => (this.email = emailInput.value));
@@ -251,6 +282,8 @@ export class AuthScreen {
       });
     }
 
+    if ((this.mode === 'signin' || this.mode === 'signup') && this.opts.social && this.auth.socialProviders) form.prepend(this.socialRow(remember, error, note));
+
     const foot = h('div', { class: 'auth-foot' });
     if (this.auth.kind === 'local') foot.append(h('p', {}, 'Your account is saved in this browser only. It is not shared with other devices or browsers.'));
     if (this.opts.allowGuest) {
@@ -260,5 +293,37 @@ export class AuthScreen {
     }
     if (foot.childElementCount) form.append(foot);
     return form;
+  }
+
+  /** "Continue with Google" and "Continue with Apple", for those the site has turned on. */
+  private socialRow(remember: HTMLInputElement, error: HTMLElement, note: HTMLElement): HTMLElement {
+    const row = h('div', { class: 'auth-social', hidden: true });
+    const list = h('div', { class: 'auth-social-list' });
+    row.append(list, h('div', { class: 'auth-or', 'aria-hidden': 'true' }, h('span', {}, 'or with email')));
+    void this.auth.socialProviders!().then((providers) => {
+      if (!providers.length) return;
+      for (const p of providers) {
+        const b = h('button', { type: 'button', class: `btn auth-social-btn is-${p}`, 'data-provider': p }, SOCIAL_LABEL[p]) as HTMLButtonElement;
+        b.addEventListener('click', async () => {
+          error.hidden = true;
+          for (const x of list.querySelectorAll('button')) (x as HTMLButtonElement).disabled = true;
+          try {
+            const wait = await this.opts.social!(p, remember.checked);
+            if (wait) {
+              note.textContent = wait;
+              note.hidden = false;
+            }
+          } catch (e) {
+            error.textContent = e instanceof Error ? e.message : String(e);
+            error.hidden = false;
+          } finally {
+            for (const x of list.querySelectorAll('button')) (x as HTMLButtonElement).disabled = false;
+          }
+        });
+        list.append(b);
+      }
+      row.hidden = false;
+    });
+    return row;
   }
 }

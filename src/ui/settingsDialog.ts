@@ -2,7 +2,7 @@ import { SIGN_THEMES } from '../junction/signs';
 import { STYLES } from '../map/styles';
 import { TomTomMap } from '../map/tomtomMap';
 import type { OfflineStore } from '../offline/store';
-import { BUILT_IN_TOMTOM_KEY, DEFAULTS, type Settings } from '../state/settings';
+import { BUILT_IN_GOOGLE_KEY, BUILT_IN_TOMTOM_KEY, DEFAULTS, type Settings } from '../state/settings';
 import { TomTomTraffic } from '../traffic/tomtom';
 import { TomTomRouter } from '../tomtom/routing';
 import { TomTomPlaceSearch } from '../tomtom/search';
@@ -53,6 +53,8 @@ export interface SettingsOptions {
   tab?: 'map' | 'drive' | 'traffic' | 'downloads' | 'app';
   /** Your pins on the map: how many, and removing them all. */
   pins?: { count: number; clear: () => void };
+  /** Places you registered: how many, and where they are kept. */
+  myPlaces?: { count: number; status: string };
   /** The voices this phone or browser can speak with, and a sample in one of them. */
   voices?: { list: () => Promise<VoiceInfo[]>; test: (lang: Settings['lang'], choice: VoiceChoice) => void };
 }
@@ -494,6 +496,41 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         h('div', { class: 'off-actions' }, clearBtn),
       );
     }
+    // Places you registered, and Google Maps places in search (the site's key, or your own).
+    const myPlacesGrp = opts.myPlaces
+      ? h(
+          'div',
+          { class: 'grp' },
+          h('label', {}, 'My places'),
+          h('div', { class: 'off-status' }, opts.myPlaces.count ? `${opts.myPlaces.count} place${opts.myPlaces.count === 1 ? '' : 's'}. ${opts.myPlaces.status}` : `None yet. ${opts.myPlaces.status}`),
+          h(
+            'div',
+            { class: 'hint' },
+            'Open any place, or drop a pin, and tap Add to my places to register it with its name, kind, a note and the direction of travel there. Private places are only yours; public ones can be found by everyone using JunctionNav, and they come first in search and stand in for a place of the same name nearby, so a wrong or missing place can be put right.',
+          ),
+        )
+      : null;
+    const googleKeyInput = h('input', {
+      id: 'googleKey',
+      type: 'text',
+      value: current.googleKey ?? '',
+      placeholder: BUILT_IN_GOOGLE_KEY ? 'Built-in key in use; paste your own to use it instead' : 'Optional: your Google Cloud API key',
+      autocomplete: 'off',
+      spellcheck: 'false',
+    }) as HTMLInputElement;
+    const googleGrp = opts.preview
+      ? null
+      : h(
+          'div',
+          { class: 'grp' },
+          h('label', { for: 'googleKey' }, 'Google Maps places'),
+          googleKeyInput,
+          h(
+            'div',
+            { class: 'hint' },
+            'With a key, search offers “Search Google Maps” under the results: Google’s own list and place card, shown as Google provides them, with Directions planned by JunctionNav. Every place card also has a Google Maps button (no key needed) to compare a place with Google’s. The key needs the Maps JavaScript API and the Places UI Kit turned on in Google Cloud, which asks for a billing account; the first 10,000 searches a month are free. Restrict the key to this site.',
+          ),
+        );
     const about = h(
       'div',
       { class: 'grp about' },
@@ -512,6 +549,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           h('div', { class: 'grp' }, h('label', { for: 'theme-junction' }, 'Theme'), themeCards, h('div', { class: 'hint' }, 'Each theme has a bright day look and a dark night look; Appearance picks between them.')),
           h('div', { class: 'row' }, grp('Appearance', appearance), grp('Signboards', signTheme)),
           pinsGrp,
+          myPlacesGrp,
+          googleGrp,
         ],
       },
       { id: 'drive', label: 'Drive', items: [voiceGrp, laneGrp, speedGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp, tollGrp] },
@@ -617,6 +656,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
             }
           : {}),
         tomtomKey: tomtomKey.value.trim(),
+        googleKey: googleKeyInput.value.trim(),
         services: services.value as Settings['services'],
         trafficMap: trafficMap.checked,
         trafficAlerts: trafficAlerts.checked,

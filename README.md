@@ -67,6 +67,17 @@ Two backends, chosen at build time:
 
 Browser accounts keep people apart on a shared device and personalise the app, but they are not a security boundary: anyone with the device can read that browser's storage. Use Supabase when accounts must be real. Set `VITE_AUTH_REQUIRED=false` to add "Continue without an account". For GitHub Pages, add these as repository variables; the workflow passes them to the build.
 
+**Sign in with Google and Apple.** With Supabase, the sign-in screen also offers **Continue with Google** and **Continue with Apple**, each shown only when it is turned on in the Supabase project (the app asks the project's `/auth/v1/settings`). On the website the page goes to Google's or Apple's sign-in and comes back signed in; *Keep me signed in* applies as for email. In the Android app the sign-in page opens in the phone's browser (Google does not allow it inside an app) and comes back to the app by its own link, `io.github.neokrexsource.junctionnav://auth-callback`. Cancelling, or a provider that is not turned on, comes back to the sign-in screen with a line saying so. (`src/auth/supabaseAuth.ts`, `src/native/social.ts`.)
+
+**Setting up Supabase** (free plan; once):
+
+1. Create a project at [supabase.com](https://supabase.com). In **Project Settings → API** copy the *Project URL* and the *anon public* key, and add them in this repository under **Settings → Secrets and variables → Actions → Variables** as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The Pages and Android workflows pass them to their builds.
+2. **SQL Editor → New query**: paste [`supabase/shared-places.sql`](supabase/shared-places.sql) and run it. It makes the shared places table with its rules (below); running it again is harmless.
+3. **Authentication → URL Configuration**: *Site URL* `https://neokrex-source.github.io/junctionnav/`, and under *Redirect URLs* add `https://neokrex-source.github.io/junctionnav/**` and `io.github.neokrexsource.junctionnav://auth-callback` (the Android app).
+4. **Google**: in [Google Cloud console](https://console.cloud.google.com) → *APIs & Services* → set up the *OAuth consent screen*, then *Credentials → Create credentials → OAuth client ID → Web application*, with the authorised redirect URI `https://<project>.supabase.co/auth/v1/callback`. Paste its client ID and secret in Supabase under **Authentication → Sign In / Providers → Google**, and turn it on.
+5. **Apple** needs the paid Apple Developer Program. In *Certificates, Identifiers & Profiles*: an App ID with *Sign in with Apple*, a *Services ID* (its identifier is the client ID) whose web domain is `<project>.supabase.co` and return URL `https://<project>.supabase.co/auth/v1/callback`, and a *Sign in with Apple* key (.p8). Supabase's Apple page makes the client secret from the key, Key ID, Team ID and Services ID; that secret runs out after six months, so make a new one before then. Turn on **Authentication → Sign In / Providers → Apple**.
+6. Run **Actions → Deploy to GitHub Pages** and **Android app**. Accounts made in a browser before this stay in that browser; people sign up again (or with Google or Apple) to have one account everywhere.
+
 ### GitHub Pages
 
 The build uses relative paths, so it works at `https://<user>.github.io/<repo>/` (or any folder on any static host). GitHub Pages serves HTTPS, so GPS works on phones.
@@ -141,6 +152,24 @@ The map's own points of interest come from OpenStreetMap, which in Malaysia list
 - **A place's card.** Tap an icon: the name with the kind's icon, the kind ("Malaysian restaurant") and the distance, then opening hours, address, phone (tap to call), website and cuisine where known, and where the details come from. While driving it opens over the map with **Add as stop**. Long-pressing right on a place names the dropped pin after it.
 - **Search and categories.** Typing in the search box looks through the places around you at the same time as TomTom or Photon (about 20 ms for 250,000 places): strong matches nearby come first, a place both find is listed once with the local details, and with no connection the local results still come. The category buttons add the places around you to TomTom's or Overpass's results.
 - **Limits.** Overture's businesses come largely from online listings, so a few may have moved or closed; the confidence threshold keeps most of the doubtful ones out. Outside Malaysia, Singapore and Brunei there is no places data yet (the map keeps its own points of interest there).
+
+### My places: register places, private or public
+
+Places that are missing, misplaced or out of date can be put right in the app itself.
+
+- **Adding one.** Open any place (a search result, a category result, a place on the map) or drop a pin, and tap **Add to my places**. The form takes the name, the kind of place, a note (opening hours, which entrance, what to know), phone and website, where it is (with **Move pin**, the same crosshair as pins, which also sets the **direction of travel** there so a route arrives on the right side of a divided road) and **who can see it**: *Private*, only you, or *Public*, everyone using JunctionNav, with your first name on it. Details the card already had are filled in; a pin's address is not taken as the name. A place made from a pin replaces the pin.
+- **Using them.** Your places are on the map with a violet ring, everyone's public places with a teal ring (yours from zoom 8, others' from zoom 11, named from zoom 13). In search they come first, and **a registered place stands in for a place of the same name within 500 m** from TomTom, Photon or the places around you, so the corrected one is the one you find. They also answer the category buttons (petrol, EV, parking, food and cafés, rest areas, convenience stores), name a long-press right on them, and are listed under an empty search box (*Mine*).
+- **Your place's card**: its note, whether it is public, **Edit** (and **Delete**, with a second tap), **Share** and **Google Maps**. **Someone else's**: who added it, its note, **Save to my places** (a private copy to change as you like), **Share**, **Report** (wrong location, closed or gone, wrong details, spam or offensive) and **Google Maps**. A place reported by three people is hidden from everyone but its owner, whose card says so.
+- **Sharing.** A public place is shared as a link to it (`?sp=<id>`), so the link shows it as it is now. A private place is shared with its details in the link (`?place=lat,lng&name=…&kind=…&hd=…&note=…`), so it can go to a friend without being published; their card says *Shared with you* with **Save to my places**.
+- **Where they are kept.** Without Supabase (the site as it is today), your places are private and kept in this browser with your account, like pins. With Supabase and a signed-in account they are also kept in the project, so they are on every device you sign in on, and public ones are shared. Changes are made on the device first and sent when there is a connection, so adding a place with no signal works (Settings → Map → *My places* shows anything not uploaded yet). Public places are fetched for the area on the map, a tile of about 20 km at a time, every ten minutes at most. (`src/community/`, `src/map/communityLayer.ts`, `src/ui/placeForm.ts`.)
+- **The rules are in the database** (`supabase/shared-places.sql`, row level security): anyone may read public places that are not hidden; only the signed-in owner can read their private places and add, change or delete their own; the owner, the report count and *hidden* cannot be set by the app; you can report a public place of someone else once; and a trigger hides a place at three reports. Names are 1 to 80 characters, notes up to 500. `tests/sharedPlaces.sql.test.ts` runs the file in PGlite (Postgres in WebAssembly) and checks each rule as a signed-in owner, another person and a visitor.
+- **Google Maps on every card.** The **Google Maps** button opens the spot in Google Maps (a plain Maps link, free and without a key), to compare a place with what Google has there.
+
+### Google Maps places in search
+
+With a Google Cloud key (the site's `VITE_GOOGLE_MAPS_KEY`, or your own in **Settings → Map → Google Maps places**), search adds **Search Google Maps for "…"** under the results. It opens Google's own search list for what was typed, near you, and Google's place card for the one you pick (rating, opening hours, photos, as Google draws them, with Google's attribution), with **Directions**, **Open in Google Maps** and **Back to the list**. Directions plans the route to that spot with JunctionNav's own routing, named by JunctionNav's own address search.
+
+This is the one way Google's terms allow its places beside another company's map: the **Places UI Kit**, which the Maps Platform service terms let an app show with any map, a non-Google one included, or with none. The Places API itself (place search and details as data) must not be shown on a non-Google map, so the app does not use it, and nothing from Google is copied into the app, saved, or added to My places: only the spot's position (which the terms let an app keep for up to 30 days) is used for the route. Turn on the *Maps JavaScript API* and the *Places UI Kit* for the key, restrict it to the site (`https://neokrex-source.github.io/*`, plus `https://localhost/*` for the Android app) and to those two APIs. Google requires a billing account; the first 10,000 searches a month are free, and a budget alert keeps it there. (`src/google/placesKit.ts`.)
 
 ### Trip links
 
@@ -357,7 +386,7 @@ Map data © OpenStreetMap contributors, traffic © TomTom. Attribution is shown 
 
 ### Why not Google Maps?
 
-Google's Maps Platform service terms say content from the Directions and Routes APIs must not be used with a non-Google map, and the web routing APIs return maneuver types but not per-lane guidance or signboard text, which this view depends on. Google's turn-by-turn product (Navigation SDK) is for native Android and iOS apps. Showing a Google base map under an OSRM route would be possible, but the OSM stack gives you everything the junction view needs.
+Google's Maps Platform service terms say content from the Directions, Routes and Places APIs must not be used with a non-Google map (the Places UI Kit is the exception, see *Google Maps places in search*), and the web routing APIs return maneuver types but not per-lane guidance or signboard text, which this view depends on. Google's turn-by-turn product (Navigation SDK) is for native Android and iOS apps. Showing a Google base map under an OSRM route would be possible, but the OSM stack gives you everything the junction view needs.
 
 If you later want commercial data, Mapbox, HERE and TomTom routing APIs include lane guidance and signpost text, and some providers sell pre-drawn junction-view images for certain countries. Check what is available for your region. Routing is behind a small `Router` interface (`src/routing/types.ts`), so another provider can be added as an adapter.
 
@@ -390,6 +419,9 @@ Copy `.env.example` to `.env`. Every value is optional.
 | `VITE_TOMTOM_KEY` | empty (each user pastes their own key in Settings) |
 | `VITE_TRAFFIC_NEWS_URL` | set by the Pages and Android builds to the `traffic-news` branch's `news.json` |
 | `VITE_PLACES_URL` | the site's `places/` folder (from `VITE_WEB_APP_URL`); set it to use places data published elsewhere |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | empty (accounts and your places in each browser); with them, accounts on every device, Google and Apple sign-in, shared places |
+| `VITE_AUTH_REQUIRED` | `true`; `false` adds "Continue without an account" |
+| `VITE_GOOGLE_MAPS_KEY` | empty (each user can paste their own key in Settings); turns on *Search Google Maps* |
 
 Users can also change map style, sign style, language (English, Bahasa Melayu, Japanese), units, voice, junction-view mode and server URLs in **Settings**, which is in five tabs: *Map* (map style, theme, appearance, signboards), *Drive* (voice, lane alerts, speed limits, close-up at splits, junction view, surroundings, tunnels, tolls), *Traffic* (TomTom key, routing and place search, live traffic, traffic voice and news), *Downloads* (places around you, offline maps) and *App* (account, language, units, app version, servers). Save and Cancel stay at the bottom whichever tab is open, the arrow keys move between tabs, and Settings opens on the tab used last.
 
@@ -408,6 +440,10 @@ src/
                           update schedule, search and category merging
   traffic/                live traffic (TomTom incidents, travel times, congestion tiles), traffic news feed,
                           matching incidents and news to the route, Malaysian road names, texts (en/ms/ja)
+  community/              My places: registered places (types and words), the shared places service (Supabase REST),
+                          the local-first store with sync, public places by area, search and category merging, links
+  google/placesKit.ts     Google Maps places in search (Places UI Kit) and Google Maps links
+  auth/                   accounts: in this browser, or Supabase (email, Google, Apple)
   state/                  settings and saved places
   nav/engine.ts           snapping, current maneuver, off-route, voice prompt timing
   nav/lanes.ts            lane advisor: target lanes, advice distance, GPS lane estimate
@@ -441,7 +477,9 @@ scripts/traffic/          traffic news collector (run every 20 minutes by the Tr
 scripts/places/           places data builder: Overture Maps + OpenStreetMap into cells (run weekly by the Places workflow)
 scripts/android/          emulator check for the Android app (run by the Android workflow)
 scripts/brand/            the logo: mark.mjs draws it, icons.cjs makes every icon and launch screen from it
-scripts/dev/              browser checks (TomTom, traffic, places, pins, voice, route alignment, speed and themes)
+scripts/dev/              browser checks (TomTom, traffic, places, pins, voice, route alignment, speed and themes,
+                          My places with Google and Apple sign-in against a fake Supabase and Google)
+supabase/shared-places.sql  the shared places table and its rules (run once in the Supabase project)
 android/                  the Android app's native project (Capacitor; web assets are synced in at build)
 src/platform.ts           browser or Android app, and the addresses that differ between them
 scripts/sw-plugin.ts      writes the service worker that keeps the app shell for offline use
@@ -458,7 +496,8 @@ tests/                    vitest suites
 ```bash
 npm test          # geometry, OSRM parsing, route options, stops, instructions, nav engine, lane alerts, tunnels, toll plazas, speed limits and
                   # cameras, the three themes, places, scene builder, offline pack (builds a pack from the demo network with the real
-                  # scripts, then routes, searches, reads junctions, speed limits and cameras)
+                  # scripts, then routes, searches, reads junctions, speed limits and cameras), My places (store and sync, search merging,
+                  # links, Google and Apple sign-in) and the shared places SQL rules (in PGlite)
 npm run typecheck
 ```
 

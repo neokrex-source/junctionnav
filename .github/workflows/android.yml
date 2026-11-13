@@ -104,6 +104,11 @@ jobs:
         env:
           VITE_APP_VERSION: ${{ steps.ver.outputs.name }}
           VITE_TOMTOM_KEY: ${{ vars.VITE_TOMTOM_KEY }}
+          # The same accounts and shared places as the website, when it has a Supabase project.
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_AUTH_REQUIRED: ${{ vars.VITE_AUTH_REQUIRED }}
+          VITE_GOOGLE_MAPS_KEY: ${{ vars.VITE_GOOGLE_MAPS_KEY }}
         run: npm run build:android
       - name: Build the APKs
         working-directory: android

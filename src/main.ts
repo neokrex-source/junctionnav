@@ -36,11 +36,11 @@ import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech
 import { AligningRouter, RouteAligner, routeData } from './routing/aligner';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
-import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace } from './search/categories';
+import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace, type PoiProvider } from './search/categories';
 import { attachSearch, parseCoordinates, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
 import { parsePlusCode } from './search/pluscode';
 import { PlaceStore } from './state/places';
-import { ARTIFACT, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
+import { ARTIFACT, googleKey, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
 import { setThemeId, themeFor, THEMES } from './theme/palette';
 import { Banner } from './ui/banner';
 import { escapeHtml, h, toast } from './ui/dom';
@@ -49,7 +49,7 @@ import { JvPreview } from './ui/jvPreview';
 import { openSettings } from './ui/settingsDialog';
 import { stepsList } from './ui/stepsList';
 import { TunnelCard } from './ui/tunnelCard';
-import { AUTH_REQUIRED, createAuthProvider, type AuthProvider, type User } from './auth';
+import { AUTH_REQUIRED, createAuthProvider, SUPABASE, type AuthProvider, type SocialProvider, type User } from './auth';
 import { AuthScreen } from './ui/authScreen';
 import { hideSplash, SPLASH_MIN_MS } from './ui/splash';
 import { openDrives } from './ui/drivesDialog';
@@ -57,7 +57,15 @@ import { driveQuery, KL_DRIVES, type TestDrive } from './sim/drives';
 import { TestRun, type CheckId } from './sim/testRun';
 import { showTestResult, TestCard, type CheckFix } from './ui/testCard';
 import { buildRoadQuery, parseTripLink, resolveTrip, runOverpass, type ResolvedPoint, type TripLinkSpec } from './trip/tripLink';
-import { BUILT_IN, NATIVE, PLACES_URL, TRAFFIC_NEWS_URL } from './platform';
+import { BUILT_IN, NATIVE, PLACES_URL, TRAFFIC_NEWS_URL, WEB_APP_URL } from './platform';
+import { SupabasePlaces, type SharedPlacesApi } from './community/remote';
+import { MyPlacesStore, PublicPlaces } from './community/store';
+import { CommunityPois, CommunitySearch, sharedToPlace } from './community/search';
+import { parsePlaceLink, placeLink, PLACE_LINK_PARAMS } from './community/links';
+import { placeWords, type SharedPlace } from './community/types';
+import { CommunityLayer } from './map/communityLayer';
+import { placeForm, type PlaceDraft } from './ui/placeForm';
+import { googleMapsUrl, googleWords, openGooglePanel } from './google/placesKit';
 import { PlacesService } from './places/service';
 import { SmartSearch, searchTexts } from './search/smartSearch';
 import { PinStore, pinPlace, type Pin } from './pins/pins';
@@ -121,9 +129,9 @@ function clearsAfter(i: RouteIncident): boolean {
   return i.kind !== 'closure' && (i.delay >= 60 || i.magnitude === 'major' || i.magnitude === 'moderate') && i.endS - i.s >= 150;
 }
 const MAX_STOPS = 3;
-type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic' | 'pin';
+type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic' | 'pin' | 'myplace';
 /** What the crosshair is placing: a new pin, one of your pins, or a point for the directions. */
-type PinTarget = { kind: 'new' } | { kind: 'pin'; id: string } | { kind: 'field'; field: 'origin' | 'destination' | number };
+type PinTarget = { kind: 'new' } | { kind: 'pin'; id: string } | { kind: 'field'; field: 'origin' | 'destination' | number } | { kind: 'myplace' };
 type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
 
 const svg = (body: string) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
@@ -158,6 +166,11 @@ const ICON = {
   phone: svg(`<path ${S} d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>`),
   globe: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/>`),
   food: svg(`<path ${S} d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.5 1-3.5 4-3.5 7.5 0 2 1.5 3 3.5 3"/>`),
+  share: svg(`<circle ${S} cx="18" cy="5.5" r="2.5"/><circle ${S} cx="6" cy="12" r="2.5"/><circle ${S} cx="18" cy="18.5" r="2.5"/><path ${S} d="m8.2 10.8 7.6-4.1M8.2 13.2l7.6 4.1"/>`),
+  edit: svg(`<path ${S} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path ${S} d="m13.5 6.5 4 4"/>`),
+  flag: svg(`<path ${S} d="M5 21V4M5 4h11l-2 4 2 4H5"/>`),
+  map: svg(`<path ${S} d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>`),
+  addPlace: svg(`<path ${S} d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><path ${S} d="M12 6.6v5.8M9.1 9.5h5.8"/>`),
 };
 
 interface Trip {
@@ -263,6 +276,16 @@ class App {
   private signedIn = false;
   private afterSignIn: (() => void)[] = [];
   private authScreen: AuthScreen | null = null;
+  /** The site's shared places service (Supabase), when it has one. */
+  placesApi: SharedPlacesApi | null = SUPABASE && !ARTIFACT ? new SupabasePlaces(SUPABASE.url, SUPABASE.anonKey, () => this.auth.accessToken?.() ?? Promise.resolve(null)) : null;
+  /** Places you registered, and everyone's public ones around the map. */
+  myPlaces = new MyPlacesStore();
+  publicPlaces = new PublicPlaces(() => this.placesApi);
+  private communityLayer: CommunityLayer | null = null;
+  /** The place being registered or changed in the form. */
+  private placeDraft: PlaceDraft | null = null;
+  /** A place opened from a link with its details in it (not saved anywhere yet). */
+  private linkPlace: SharedPlace | null = null;
   tunnelCard = new TunnelCard();
   tunnels = new TunnelLoader(new OverpassTunnelProvider(() => overpassList(this.settings)), (spans) => this.onTunnels(spans));
   /** Toll booths and speed data share one Overpass query per stretch of route. */
@@ -428,15 +451,20 @@ class App {
     this.tolls.provider = new HybridTolls(() => ahead.tolls, sw);
     this.speedData.provider = new HybridSpeed(() => ahead.speed, sw);
     const places = () => (this.placesSvc.available ? this.placesSvc.client : null);
-    this.cats = new CategorySearch(new MergedPois(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw), places));
+    this.cats = new CategorySearch(this.withRegistered(new MergedPois(new HybridPois(new FallbackPois(new TomTomPoiProvider(ttKey, () => this.L), new OverpassPoiProvider(overpass), this.ttGate), sw), places)));
     const photon = new PhotonSearch(() => this.settings.photonUrl);
     const search = new FallbackSearch(new TomTomPlaceSearch(ttKey), () => photon, this.ttGate);
-    this.search = new MergedSearch(new HybridSearch(() => search, sw), places, () => this.L);
+    this.search = new CommunitySearch(new MergedSearch(new HybridSearch(() => search, sw), places, () => this.L), this.myPlaces, this.publicPlaces, () => this.L);
     this.terrain = this.realTerrain();
     this.terrainReady.clear();
     this.surroundReady.clear();
     this.osmReady.clear();
     this.sceneCache.clear();
+  }
+
+  /** The category buttons with the places people registered added (yours and the public ones). */
+  private withRegistered(p: PoiProvider): PoiProvider {
+    return new CommunityPois(p, this.myPlaces, this.publicPlaces, () => this.L);
   }
 
   /** Online terrain tiles, or the pack's heights without a connection. */
@@ -656,6 +684,33 @@ class App {
     });
     this.pins.onChange = () => this.renderPins();
     this.renderPins();
+    // Registered places: yours and everyone's public ones (tap for the card).
+    this.communityLayer = new CommunityLayer(this.map.map, {
+      list: (bbox) => {
+        const own = new Set<string>();
+        const marks = this.myPlaces.list().map((p) => (own.add(p.id), { id: p.id, lngLat: p.lngLat, name: p.name, group: p.category, own: true }));
+        for (const p of this.publicPlaces.inBox(bbox))
+          if (!own.has(p.id) && !p.hidden && p.visibility === 'public' && !(this.myPlaces.owner && p.owner === this.myPlaces.owner)) marks.push({ id: p.id, lngLat: p.lngLat, name: p.name, group: p.category, own: false });
+        return marks;
+      },
+      moved: (bbox) => void this.publicPlaces.load(bbox),
+      onPick: (id, own) => this.pickRegistered(id, own),
+      enabled: () => !this.demo && !ARTIFACT,
+    });
+    this.communityLayer.setNight(this.nightNow);
+    this.myPlaces.onChange = () => {
+      this.communityLayer?.refresh(0);
+      // A card of one of your places follows its changes (another device, the service's answer).
+      const ref = this.place?.shared;
+      if (this.view === 'place' && ref?.own) {
+        const sp = this.myPlaces.get(ref.id);
+        if (!sp) return this.closePlace();
+        this.place = sharedToPlace(sp, this.L, true);
+        this.renderSheet();
+      }
+    };
+    this.publicPlaces.onChange = () => this.communityLayer?.refresh(0);
+    window.addEventListener('online', () => void this.myPlaces.sync());
     // Placing a pin: the map moves under the crosshair; a tap brings that spot under it.
     this.map.map.on('move', () => this.view === 'pin' && this.pinMoving());
     this.map.map.on('moveend', () => this.view === 'pin' && this.pinSettled());
@@ -706,10 +761,12 @@ class App {
     this.syncTrafficFlow();
     if (this.settings.trafficNews) void this.traffic.refreshNews(true);
     const tripLink = parseTripLink(location.search);
-    // Demo drives and trip links start once someone is signed in.
+    const placeLinkSpec = tripLink ? null : parsePlaceLink(location.search);
+    // Demo drives, trip links and place links open once someone is signed in.
     this.whenSignedIn(() => {
       if (new URLSearchParams(location.search).has('demo')) this.startDemo(true);
       else if (tripLink) void this.openTripLink(tripLink);
+      else if (placeLinkSpec) void this.openPlaceLink(placeLinkSpec);
     });
     (window as unknown as { __app: App }).__app = this;
     // The Android app: which copy is running (for the emulator check), and website mode's update.
@@ -739,6 +796,7 @@ class App {
       lang: () => this.L,
       extra: () => this.savedSuggestions(),
       decorate: (p) => this.withDistance(p),
+      footer: (q) => this.googleRow(q),
       onInput: (v) => (e.qClear.hidden = !v),
       onPick: (p) => {
         if (!Number.isFinite(p.lngLat[0])) return;
@@ -846,6 +904,8 @@ class App {
     if (d.work) out.push({ ...d.work, tag: this.tr('work') });
     for (const f of d.favourites.slice(0, 5)) out.push({ ...f, tag: '★' });
     for (const pin of this.pins.list().slice(0, 5)) out.push({ ...pinPlace(pin), tag: this.tr('pin') });
+    const mine = placeWords(this.L).mine;
+    for (const mp of this.myPlaces.list().slice(0, 5)) out.push({ ...sharedToPlace(mp, this.L, true), tag: mine });
     for (const r of d.recents.slice(0, 6)) out.push({ ...r, tag: this.tr('recent') });
     return out.map((p) => this.withDistance(p));
   }
@@ -860,7 +920,7 @@ class App {
     e.topbar.hidden = nav || pinning;
     e.pinCross.hidden = !pinning;
     e.searchCard.hidden = v === 'directions';
-    e.chips.hidden = v === 'directions' || v === 'place' || v === 'traffic';
+    e.chips.hidden = v === 'directions' || v === 'place' || v === 'traffic' || v === 'myplace';
     e.dir.hidden = v !== 'directions';
     e.fabs.hidden = nav || pinning;
     e.guide.hidden = !nav;
@@ -874,6 +934,7 @@ class App {
       this.navOverlay = null;
     }
     if (v !== 'results' && !(nav && this.navOverlay === 'search')) this.map.setResultMarkers([], () => {});
+    if (v !== 'myplace' && v !== 'pin') this.placeDraft = null;
     this.renderSheet();
     this.renderPins();
   }
@@ -889,6 +950,7 @@ class App {
     else if (this.view === 'nav' && this.navOverlay) this.renderNavOverlay(s);
     else if (this.view === 'traffic') this.renderTraffic(s, false);
     else if (this.view === 'pin' && this.pinEdit) this.renderPinBar(s);
+    else if (this.view === 'myplace' && this.placeDraft) this.renderPlaceForm(s);
     else show = false;
     s.hidden = !show;
     s.scrollTop = 0;
@@ -1001,7 +1063,7 @@ class App {
   }
 
   /** What the places around you know about a place: kind, opening hours, address, phone, website. */
-  private placeDetails(info: PlaceInfo | undefined): HTMLElement | null {
+  private placeDetails(info: PlaceInfo | undefined, registered = false): HTMLElement | null {
     if (!info) return null;
     const row = (icon: string, content: Node | string, cls = '') => h('div', { class: `pd-row ${cls}` }, h('span', { class: 'pd-ico', html: icon }), h('span', { class: 'pd-text' }, content));
     const rows: HTMLElement[] = [];
@@ -1019,6 +1081,8 @@ class App {
       rows.push(row(ICON.globe, h('a', { href: info.website, target: '_blank', rel: 'noopener' }, label)));
     }
     if (info.cuisine) rows.push(row(ICON.food, info.cuisine.split(';').map((c) => c.trim().replace(/_/g, ' ')).filter(Boolean).join(', ')));
+    // A registered place says who added it in the line under its name.
+    if (registered) return rows.length ? h('div', { class: 'place-details' }, ...rows) : null;
     const src = info.source === 'om' ? 'Overture Maps and OpenStreetMap' : info.source === 'm' ? 'OpenStreetMap' : 'Overture Maps';
     return h('div', { class: 'place-details' }, ...rows, h('div', { class: 'pd-src' }, `From ${src}`));
   }
@@ -1040,8 +1104,9 @@ class App {
     // The address has its own line in the details.
     const sub = p.info?.address ? p.sub.replace(` · ${p.info.address}`, '') : p.sub;
     s.append(head, h('p', { class: 'place-sub' }, [sub, dist].filter(Boolean).join(' · ')));
-    const details = this.placeDetails(p.info);
+    const details = this.placeDetails(p.info, !!p.shared);
     if (details) s.append(details);
+    if (p.shared && !ARTIFACT && !this.demo) this.registeredInfo(s, p);
     const dirBtn = h('button', { class: 'btn btn-primary', type: 'button', html: `${ICON.directions}<span>${this.tr('directions')}</span>` });
     dirBtn.addEventListener('click', () => this.openDirections(p));
     const go = h('button', { class: 'btn btn-ghost', type: 'button' }, this.tr('start'));
@@ -1052,6 +1117,7 @@ class App {
       b.addEventListener('click', fn);
       return b;
     };
+    if (!ARTIFACT && !this.demo) this.registeredBits(s, p, small);
     const pin = p.pinId ? this.pins.get(p.pinId) : undefined;
     if (pin) {
       // Your pin: its direction of travel, and moving or removing it.
@@ -1108,7 +1174,7 @@ class App {
   }
 
   private async pickOnMap(p: LngLat) {
-    if (this.view === 'nav') return;
+    if (this.view === 'nav' || this.view === 'myplace') return;
     if (this.view === 'pin') {
       // Placing a pin: bring the spot under the crosshair.
       const at = this.map.map.project(p);
@@ -1337,7 +1403,8 @@ class App {
   private renderPinBar(s: HTMLElement) {
     const st = this.pinEdit!;
     const tgt = st.target;
-    const title = tgt.kind === 'new' ? this.tr('pinNew') : tgt.kind === 'pin' ? this.tr('movePin') : this.tr('chooseOnMap');
+    const pw = placeWords(this.L);
+    const title = tgt.kind === 'new' ? this.tr('pinNew') : tgt.kind === 'pin' ? this.tr('movePin') : tgt.kind === 'myplace' ? pw.movePin : this.tr('chooseOnMap');
     s.append(this.sheetHead(title, () => this.closePinMode(false)));
     const addr = h('p', { class: 'pin-addr', 'aria-live': 'polite' });
     const chips = h('div', { class: 'pills pin-headings', role: 'group', 'aria-label': this.tr('heading') });
@@ -1347,7 +1414,9 @@ class App {
         ? this.tr('placePin')
         : tgt.kind === 'pin'
           ? this.tr('savePin')
-          : tgt.field === 'origin'
+          : tgt.kind === 'myplace'
+            ? pw.useSpot
+            : tgt.field === 'origin'
             ? this.tr('setStart')
             : tgt.field === 'destination'
               ? this.tr('setDest')
@@ -1428,6 +1497,15 @@ class App {
       const pin = this.pins.get(tgt.id);
       if (pin) this.openPlace(pinPlace(pin));
       else this.setView('browse');
+    } else if (tgt.kind === 'myplace') {
+      // The place being registered: its new spot and direction, back in the form.
+      const d = this.placeDraft;
+      if (!d) return this.setView('browse');
+      d.lngLat = at;
+      d.heading = st.heading;
+      d.where = known ? `${known.name} · ${coords}` : coords;
+      this.setView('myplace');
+      this.map.setDestination(at);
     } else {
       const place: Place = { name: known?.name ?? coords, sub: known?.sub ?? this.tr('droppedPin'), lngLat: at, ...(st.heading != null ? { bearing: st.heading } : {}) };
       const set = (p: Place) => {
@@ -1451,6 +1529,296 @@ class App {
           })
           .catch(() => {});
     }
+  }
+
+  /* ================================================================ my places */
+
+  /** Why Public cannot be picked now (null: it can). */
+  private publicBlocked(): string | null {
+    const w = placeWords(this.L);
+    if (!this.placesApi) return w.publicNeedsService;
+    if (!this.myPlaces.canShare) return w.publicNeedsAccount;
+    return null;
+  }
+
+  /** The registered place a card shows, as the stores have it now. */
+  private sharedOf(p: Place): SharedPlace | undefined {
+    const ref = p.shared;
+    if (!ref) return undefined;
+    if (ref.link) return this.linkPlace?.id === ref.id ? this.linkPlace : undefined;
+    return ref.own ? this.myPlaces.get(ref.id) : this.publicPlaces.get(ref.id);
+  }
+
+  private openShared(sp: SharedPlace, own: boolean, link = false) {
+    const p = sharedToPlace(sp, this.L, own, link);
+    if (this.view === 'nav') {
+      const d = this.myPos ? haversine(this.myPos, p.lngLat) : 0;
+      this.navPlace = { ...p, note: d ? formatDistance(d, this.settings.units) : undefined };
+      this.navOverlay = 'place';
+      this.renderSheet();
+      return;
+    }
+    if (this.view === 'directions' || this.view === 'pin' || this.view === 'myplace') return;
+    this.results = [];
+    this.el.q.value = p.name;
+    this.el.qClear.hidden = false;
+    this.openPlace(p);
+  }
+
+  /** A registered place was tapped on the map. */
+  private pickRegistered(id: string, own: boolean) {
+    const sp = own ? this.myPlaces.get(id) : this.publicPlaces.get(id);
+    if (sp) this.openShared(sp, own);
+  }
+
+  /** The form for a new place, from a place's card (its details as a start) or a spot. */
+  private registerPlace(from: Place, copy?: SharedPlace) {
+    const pin = from.pinId ? this.pins.get(from.pinId) : undefined;
+    const info = from.info;
+    const coords = `${from.lngLat[1].toFixed(5)}, ${from.lngLat[0].toFixed(5)}`;
+    // A pin is named after the address there, not the place: the name is for you to give.
+    const draft: PlaceDraft = {
+      id: null,
+      ...(pin ? { fromPin: pin.id } : {}),
+      name: copy?.name ?? (pin || parseCoordinates(from.name) ? '' : from.name),
+      category: copy?.category ?? (info?.group && info.group !== 'locality' ? info.group : 'other'),
+      note: copy?.note ?? '',
+      phone: copy?.phone ?? info?.phone ?? '',
+      website: copy?.website ?? info?.website ?? '',
+      lngLat: from.lngLat,
+      heading: copy ? copy.heading : (from.bearing ?? pin?.heading ?? null),
+      visibility: 'private',
+      where: pin && pin.name !== this.tr('droppedPin') ? `${pin.name} · ${coords}` : coords,
+    };
+    this.openPlaceForm(draft);
+    if (!copy)
+      void this.search
+        .reverse(from.lngLat)
+        .then((named) => {
+          if (!named || this.placeDraft !== draft || draft.where !== coords || named.shared) return;
+          draft.where = `${named.name} · ${coords}`;
+          if (this.view === 'myplace') this.renderSheet();
+        })
+        .catch(() => {});
+  }
+
+  private editMyPlace(id: string) {
+    const p = this.myPlaces.get(id);
+    if (!p) return;
+    this.openPlaceForm({
+      id,
+      name: p.name,
+      category: p.category,
+      note: p.note,
+      phone: p.phone,
+      website: p.website,
+      lngLat: p.lngLat,
+      heading: p.heading,
+      visibility: p.visibility,
+      where: `${p.lngLat[1].toFixed(5)}, ${p.lngLat[0].toFixed(5)}`,
+    });
+  }
+
+  private openPlaceForm(d: PlaceDraft) {
+    if (this.view === 'nav') return;
+    this.placeDraft = d;
+    this.setView('myplace');
+    this.map.setDestination(d.lngLat);
+    this.map.flyTo(d.lngLat, Math.max(16, this.map.map.getZoom()));
+  }
+
+  private renderPlaceForm(s: HTMLElement) {
+    const d = this.placeDraft!;
+    const w = placeWords(this.L);
+    const was = d.id ? this.myPlaces.get(d.id) : undefined;
+    s.append(this.sheetHead(d.id ? w.editPlace : w.addPlace, () => this.closePlaceForm()));
+    s.append(
+      placeForm({
+        lang: this.L,
+        draft: d,
+        publicBlocked: was?.visibility === 'public' ? null : this.publicBlocked(),
+        onMove: () => this.openPinMode({ kind: 'myplace' }, d.lngLat, d.heading),
+        onSave: () => this.savePlaceDraft(),
+        onCancel: () => this.closePlaceForm(),
+        onDelete: d.id ? () => this.deleteMyPlace(d.id!) : undefined,
+      }),
+    );
+  }
+
+  /** Back to the card the form was opened from (or the map). */
+  private closePlaceForm() {
+    this.placeDraft = null;
+    if (this.place) {
+      const sp = this.sharedOf(this.place);
+      if (this.place.shared && !sp && !this.place.shared.link) return this.closePlace();
+      if (sp && this.place.shared) this.place = sharedToPlace(sp, this.L, this.place.shared.own, this.place.shared.link);
+      this.map.setDestination(this.place.pinId ? null : this.place.lngLat);
+      this.setView('place');
+    } else this.closePlace();
+  }
+
+  private savePlaceDraft() {
+    const d = this.placeDraft;
+    if (!d) return;
+    const w = placeWords(this.L);
+    const fields = { name: d.name, category: d.category, note: d.note, phone: d.phone, website: d.website, lngLat: d.lngLat, heading: d.heading, visibility: d.visibility };
+    const saved = d.id ? this.myPlaces.update(d.id, fields) : this.myPlaces.add(fields);
+    if (!saved) return;
+    if (d.fromPin) this.pins.remove(d.fromPin);
+    if (this.linkPlace && this.place?.shared?.link) this.linkPlace = null;
+    this.placeDraft = null;
+    toast(this.myPlaces.canShare ? w.saved : `${w.saved}. ${w.savedHere}`, 3000);
+    const p = sharedToPlace(saved, this.L, true);
+    this.results = [];
+    this.el.q.value = p.name;
+    this.el.qClear.hidden = false;
+    this.openPlace(p);
+  }
+
+  private deleteMyPlace(id: string) {
+    this.myPlaces.remove(id);
+    this.placeDraft = null;
+    toast(placeWords(this.L).deleted);
+    this.closePlace();
+  }
+
+  /** A link to the place: by its id when it is public on the service, else with its details. */
+  private async sharePlace(sp: SharedPlace, byId: boolean) {
+    const w = placeWords(this.L);
+    const base = NATIVE ? WEB_APP_URL : location.origin + location.pathname;
+    if (!base) return toast(w.placeGone);
+    const url = placeLink(base, sp, byId);
+    const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
+    if (nav.share && !NATIVE) {
+      try {
+        await nav.share({ title: sp.name, text: w.shareText(sp.name), url });
+        return;
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+      }
+    }
+    navigator.clipboard?.writeText(url).then(
+      () => toast(w.linkCopied),
+      () => toast(url, 8000),
+    );
+  }
+
+  private async reportPlace(id: string, reason: string) {
+    const w = placeWords(this.L);
+    if (!this.placesApi || !this.myPlaces.canShare) return toast(w.needAccountToReport, 4000);
+    try {
+      await this.placesApi.report(id, reason);
+      toast(w.reported, 5000);
+    } catch (e) {
+      toast((e as Error).message, 5000);
+    }
+  }
+
+  /** A place link (?sp= or ?place=) the app was opened with: its card. */
+  private async openPlaceLink(l: NonNullable<ReturnType<typeof parsePlaceLink>>) {
+    try {
+      const q = new URLSearchParams(location.search);
+      for (const k of PLACE_LINK_PARAMS) q.delete(k);
+      const rest = q.toString();
+      history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+    } catch {
+      /* address bar unchanged */
+    }
+    const w = placeWords(this.L);
+    if (l.kind === 'inline') {
+      this.linkPlace = l.place;
+      this.openShared(l.place, false, true);
+      return;
+    }
+    const mine = this.myPlaces.get(l.id);
+    if (mine) return this.openShared(mine, true);
+    const got = this.placesApi ? await this.placesApi.get(l.id).catch(() => null) : null;
+    if (!got) return toast(w.placeGone, 5000);
+    this.publicPlaces.put(got);
+    this.openShared(got, !!this.myPlaces.owner && got.owner === this.myPlaces.owner);
+  }
+
+  /** A registered place's note, and where it stands (from a link, not uploaded, hidden after reports). */
+  private registeredInfo(s: HTMLElement, p: Place) {
+    const w = placeWords(this.L);
+    const ref = p.shared!;
+    if (ref.note) s.append(h('p', { class: 'place-note' }, ref.note));
+    if (ref.link) s.append(h('p', { class: 'place-by' }, w.fromLink));
+    if (!ref.own) return;
+    const local = this.myPlaces.get(ref.id);
+    if (ref.hidden) s.append(h('p', { class: 'place-warn' }, w.hiddenByReports));
+    else if (local && !local.synced && this.myPlaces.canShare) s.append(h('p', { class: 'place-by' }, w.notSynced));
+  }
+
+  /** What you can do with a place as a registered place: add it, change yours, share, report, compare with Google Maps. */
+  private registeredBits(s: HTMLElement, p: Place, small: (icon: string, label: string, fn: () => void) => HTMLElement) {
+    const w = placeWords(this.L);
+    const ref = p.shared;
+    const sp = this.sharedOf(p);
+    const pills = h('div', { class: 'pills' });
+    const google = h('a', { class: 'pill', href: googleMapsUrl(p.lngLat), target: '_blank', rel: 'noopener', html: `${ICON.map}<span>${escapeHtml(w.openGoogle)}</span>` });
+    if (!ref) {
+      pills.append(small(ICON.addPlace, w.addThisPlace, () => this.registerPlace(p)), google);
+      s.append(pills);
+      return;
+    }
+    if (ref.own && sp) {
+      const local = this.myPlaces.get(sp.id);
+      pills.append(
+        small(ICON.edit, w.edit, () => this.editMyPlace(sp.id)),
+        small(ICON.share, w.share, () => void this.sharePlace(sp, !!local?.remote)),
+        google,
+      );
+    } else if (sp) {
+      pills.append(small(ICON.addPlace, w.saveToMine, () => this.registerPlace(p, sp)));
+      if (!ref.link) {
+        pills.append(small(ICON.share, w.share, () => void this.sharePlace(sp, true)));
+        const report = small(ICON.flag, w.report, () => {
+          const box = h('div', { class: 'report-box', role: 'group', 'aria-label': w.reportReason }, h('p', {}, w.reportReason));
+          const row = h('div', { class: 'pills' });
+          for (const r of w.reasons)
+            row.append(
+              small('', r, () => {
+                box.remove();
+                void this.reportPlace(sp.id, r);
+              }),
+            );
+          box.append(row);
+          report.replaceWith(box);
+        });
+        pills.append(report);
+      }
+      pills.append(google);
+    } else pills.append(google);
+    s.append(pills);
+  }
+
+  /** Searching Google Maps for what was typed, under the results (when the site or you have a key). */
+  private googleRow(q: string): HTMLElement | null {
+    const key = googleKey(this.settings);
+    if (!key || this.demo || ARTIFACT || !navigator.onLine) return null;
+    const gw = googleWords(this.L);
+    const b = h('button', { type: 'button', class: 's-google', html: `${ICON.search}<span>${escapeHtml(gw.searchFor(q))}</span>` });
+    b.addEventListener('click', () => {
+      this.el.suggest.hidden = true;
+      openGooglePanel({ key, lang: this.L, query: q, near: this.near(), onDirections: (at) => this.directionsToSpot(at) });
+    });
+    return b;
+  }
+
+  /** Directions to a spot, named by the app's own search once it knows what is there. */
+  private directionsToSpot(at: LngLat) {
+    const place: Place = { name: `${at[1].toFixed(5)}, ${at[0].toFixed(5)}`, sub: this.tr('droppedPin'), lngLat: at };
+    if (this.view === 'nav') return;
+    this.openDirections(place);
+    void this.search
+      .reverse(at)
+      .then((named) => {
+        if (!named || this.trip.destination !== place) return;
+        this.trip.destination = { ...named, lngLat: at };
+        if (this.view === 'directions') this.renderDirEditor();
+      })
+      .catch(() => {});
   }
 
   /* ================================================================ directions */
@@ -1488,16 +1856,54 @@ class App {
       hideSplash();
       return this.setUser(user, false);
     }
-    const screen = (this.authScreen ??= new AuthScreen(this.auth, { allowGuest: !AUTH_REQUIRED }));
+    const screen = this.authUi();
     const pending = screen.open();
     hideSplash();
     this.setUser(await pending, true);
+  }
+
+  /** The sign-in screen, with Google and Apple when the site's accounts have them. */
+  private authUi(): AuthScreen {
+    return (this.authScreen ??= new AuthScreen(this.auth, {
+      allowGuest: !AUTH_REQUIRED,
+      social: this.auth.socialUrl ? (p, remember) => this.startSocial(p, remember) : undefined,
+    }));
+  }
+
+  /** Off to Google's or Apple's sign-in page (on a phone, in the browser, coming back by the app's link). */
+  private async startSocial(p: SocialProvider, remember: boolean): Promise<string | null> {
+    if (NATIVE) {
+      const m = await import('./native/social');
+      if (!m.canSignInWithBrowser()) throw new Error('Install the latest app to sign in with Google or Apple.');
+      await m.openSignIn(this.auth.socialUrl!(p, m.AUTH_CALLBACK, remember));
+      return 'Finish signing in in the browser. You come back here by yourself.';
+    }
+    location.assign(this.auth.socialUrl!(p, location.origin + location.pathname, remember));
+    return null;
+  }
+
+  /** The Android app was opened by a link: the end of signing in with Google or Apple. */
+  async onAppUrl(url: string) {
+    const m = await import('./native/social');
+    if (!m.isAuthCallback(url) || !this.auth.completeSocial) return;
+    void m.closeSignIn();
+    // Opened cold by the link: wait for start-up to show the sign-in screen (or a saved session).
+    for (let i = 0; i < 100 && !this.signedIn && !this.authScreen?.isOpen; i++) await new Promise((r) => setTimeout(r, 100));
+    try {
+      const u = await this.auth.completeSocial(url);
+      if (this.authScreen?.isOpen) this.authScreen.finishSocial(u);
+      else this.setUser(u, true);
+    } catch (e) {
+      if (this.authScreen?.isOpen) this.authScreen.socialFailed((e as Error).message);
+      else toast((e as Error).message, 5000);
+    }
   }
 
   private setUser(user: User | null, fresh: boolean) {
     this.user = user;
     this.places.useScope(user?.id ?? null);
     this.pins.useScope(user?.id ?? null);
+    this.myPlaces.useScope(user?.id ?? null, user && this.auth.kind === 'supabase' && this.placesApi ? { owner: user.id, name: user.name } : null, this.placesApi);
     this.signedIn = true;
     if (fresh && user) toast(`Welcome, ${user.name.split(/\s+/)[0]}`, 2500);
     const todo = this.afterSignIn.splice(0);
@@ -1518,7 +1924,8 @@ class App {
     this.signedIn = false;
     this.places.useScope(null);
     this.pins.useScope(null);
-    const screen = (this.authScreen ??= new AuthScreen(this.auth, { allowGuest: !AUTH_REQUIRED }));
+    this.myPlaces.useScope(null, null, this.placesApi);
+    const screen = this.authUi();
     this.setUser(await screen.open(), true);
   }
 
@@ -2043,8 +2450,8 @@ class App {
     this.terrain = new TerrainCache(demoTerrain());
     this.terrainReady.clear();
     this.surroundReady.clear();
-    this.cats = new CategorySearch(new DemoPoiProvider());
-    this.search = new DemoPlaceSearch();
+    this.cats = new CategorySearch(this.withRegistered(new DemoPoiProvider()));
+    this.search = new CommunitySearch(new DemoPlaceSearch(), this.myPlaces, this.publicPlaces, () => this.L);
     this.osmReady.clear();
     this.sceneCache.clear();
     const style = demoStyle(demo.geojson, isNight(this.settings));
@@ -2542,6 +2949,7 @@ class App {
     }
     this.map.setTheme(themeFor(night));
     this.placesLayer?.setNight(night);
+    this.communityLayer?.setNight(night);
     this.syncTrafficFlow();
     this.sceneCache.clear();
     const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
@@ -3940,6 +4348,18 @@ class App {
       pack: ARTIFACT ? undefined : this.offline,
       places: ARTIFACT ? undefined : this.placesSvc,
       pins: { count: this.pins.pins.length, clear: () => this.pins.clear() },
+      myPlaces: ARTIFACT
+        ? undefined
+        : {
+            count: this.myPlaces.list().length,
+            status: this.myPlaces.canShare
+              ? this.myPlaces.pending
+                ? `${this.myPlaces.pending} change${this.myPlaces.pending === 1 ? '' : 's'} still to upload${this.myPlaces.lastError ? ` (${this.myPlaces.lastError})` : ''}.`
+                : 'Kept with your account on every device.'
+              : this.placesApi
+                ? 'Kept in this browser. Sign in to keep them on every device and share public places.'
+                : 'Kept in this browser with your account.',
+          },
       account: u
         ? {
             name: u.name,
@@ -4016,13 +4436,20 @@ void app.boot();
 
 // The Android app: the back button closes things inside the app before leaving it.
 if (NATIVE)
-  void import('@capacitor/app').then(({ App }) =>
-    App.addListener('backButton', () => {
+  void import('@capacitor/app').then(({ App }) => {
+    void App.addListener('backButton', () => {
       const r = app.handleBack();
       if (r === 'minimize') void App.minimizeApp();
       else if (r === 'exit') void App.exitApp();
-    }),
-  );
+    });
+    // Signing in with Google or Apple comes back by the app's link.
+    void App.addListener('appUrlOpen', (e) => void app.onAppUrl(e.url));
+    void App.getLaunchUrl()
+      .then((r) => {
+        if (r?.url) void app.onAppUrl(r.url);
+      })
+      .catch(() => {});
+  });
 
 // Keep the app itself on the device so it opens without internet (the map pack is stored separately).
 if (import.meta.env.PROD && !ARTIFACT && !NATIVE && 'serviceWorker' in navigator) {

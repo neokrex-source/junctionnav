@@ -62,6 +62,8 @@ jobs:
           VITE_TRAFFIC_NEWS_URL: https://raw.githubusercontent.com/${{ env.SITE_REPO }}/traffic-news/news.json
           # Optional: a TomTom key for everyone (each user can also paste their own in Settings).
           VITE_TOMTOM_KEY: ${{ vars.VITE_TOMTOM_KEY }}
+          # Optional: a Google Cloud key for "Search Google Maps" (Places UI Kit; each user can also paste their own).
+          VITE_GOOGLE_MAPS_KEY: ${{ vars.VITE_GOOGLE_MAPS_KEY }}
 
       # ---- offline maps: the newest pack in the cache
       - uses: actions/cache/restore@v4

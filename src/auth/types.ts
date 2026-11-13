@@ -28,7 +28,22 @@ export interface AuthProvider {
   completePasswordReset(password: string): Promise<User>;
   /** Local accounts only. */
   deleteAccount?(email: string, password: string): Promise<void>;
+  /** The other accounts people can sign in with (Google, Apple), as the backend has them turned on. */
+  socialProviders?(): Promise<SocialProvider[]>;
+  /**
+   * The page that signs in with one of them; it sends the browser back to `redirectTo` with the
+   * session (the web page itself, or the app's own link on a phone).
+   */
+  socialUrl?(provider: SocialProvider, redirectTo: string, remember: boolean): string;
+  /** Takes the session from the link the sign-in came back to (the app on a phone). */
+  completeSocial?(url: string): Promise<User>;
+  /** What went wrong when the sign-in page came back with an error (shown once). */
+  takeRedirectError?(): string | null;
+  /** The signed-in person's token for the backend's other services (null: no one signed in). */
+  accessToken?(): Promise<string | null>;
 }
+
+export type SocialProvider = 'google' | 'apple';
 
 /** A problem the user can act on; `field` points at the input to fix. */
 export class AuthError extends Error {

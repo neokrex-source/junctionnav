@@ -8,6 +8,9 @@ const env = import.meta.env as Record<string, string | undefined>;
 /** Whether people must sign in before using the app (VITE_AUTH_REQUIRED=false offers a guest option). */
 export const AUTH_REQUIRED = (env.VITE_AUTH_REQUIRED ?? 'true') !== 'false';
 
+/** The site's Supabase project (accounts on every device, shared places), when it has one. */
+export const SUPABASE: { url: string; anonKey: string } | null = env.VITE_SUPABASE_URL && env.VITE_SUPABASE_ANON_KEY ? { url: env.VITE_SUPABASE_URL, anonKey: env.VITE_SUPABASE_ANON_KEY } : null;
+
 export function createAuthProvider(): AuthProvider {
   const local = safeStorage('local');
   const session = safeStorage('session');
@@ -15,4 +18,4 @@ export function createAuthProvider(): AuthProvider {
   return new LocalAuth(local, session);
 }
 
-export type { AuthProvider, User } from './types';
+export type { AuthProvider, SocialProvider, User } from './types';
