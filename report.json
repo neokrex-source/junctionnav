@@ -1,0 +1,336 @@
+{
+  "version": "1.0.54",
+  "checks": {
+    "runs as the Android app": {
+      "ok": true,
+      "detail": "android"
+    },
+    "plugin TextToSpeech": {
+      "ok": true
+    },
+    "plugin KeepAwake": {
+      "ok": true
+    },
+    "plugin App": {
+      "ok": true
+    },
+    "plugin SystemBars": {
+      "ok": true
+    },
+    "WebGL 2 (map and 3D views)": {
+      "ok": true
+    },
+    "offline map storage (write and read a file)": {
+      "ok": true
+    },
+    "decompression for the offline pack": {
+      "ok": true
+    },
+    "online map tiles load (no fallback)": {
+      "ok": true,
+      "detail": {
+        "style": "openmaptiles",
+        "tilesOk": 6,
+        "tileErrors": 0,
+        "lastError": null,
+        "fellBack": false,
+        "canvas": [
+          1081,
+          2210
+        ],
+        "planet": "200 application/json",
+        "fonts/Noto%20Sans%20Regular": "200 application/x-protobuf"
+      }
+    },
+    "back button closes Settings": {
+      "ok": true
+    },
+    "offline maps can be downloaded from the site": {
+      "ok": true,
+      "detail": {
+        "name": "Peninsular Malaysia",
+        "files": [
+          "tiles.pmtiles",
+          "graph.bin",
+          "places.bin",
+          "assets.bin",
+          "assets.json",
+          "terrain.bin"
+        ]
+      }
+    },
+    "keeps the screen on": {
+      "ok": true
+    },
+    "Android's voice answers": {
+      "ok": true,
+      "detail": "68 languages"
+    },
+    "GPS position reaches the app": {
+      "ok": true,
+      "detail": [
+        101.6868983,
+        3.1478
+      ]
+    },
+    "traffic news feed answers": {
+      "ok": true,
+      "detail": {
+        "url": "https://raw.githubusercontent.com/neokrex-source/junctionnav/traffic-news/news.json",
+        "items": 2,
+        "updated": "2026-11-14T16:25:29.277Z"
+      }
+    },
+    "places around you download from the site": {
+      "ok": true,
+      "detail": {
+        "count": 248508,
+        "cells": 45,
+        "mb": 37.8,
+        "area": "Kuala Lumpur",
+        "status": {
+          "kind": "idle"
+        },
+        "search": [
+          "McDonald's",
+          "McDonald's",
+          "McDonald's"
+        ],
+        "seconds": 1
+      }
+    },
+    "a Google Maps share link opens in search": {
+      "ok": true,
+      "detail": [
+        {
+          "l": "https://maps.app.goo.gl/jp5v5NVdPH9gjGpD9",
+          "name": "The link could not be opened",
+          "sub": "The link was not found. It may have expired.",
+          "at": [
+            null,
+            null
+          ],
+          "kind": "note"
+        },
+        {
+          "l": "https://maps.app.goo.gl/9JuMioce8MazLrfE6",
+          "name": "Chinatown Kuala Lumpur",
+          "sub": "From the Google Maps link · Kuala Lumpur City Centre, Kuala Lumpur, Federal Territory of Kuala Lumpur, Malaysia",
+          "at": [
+            101.6968667,
+            3.1428443
+          ],
+          "kind": "coords"
+        },
+        {
+          "l": "https://maps.app.goo.gl/rt3kgFSsZXm5NvnD9",
+          "name": "The link could not be opened",
+          "sub": "The link was not found. It may have expired.",
+          "at": [
+            null,
+            null
+          ],
+          "kind": "note"
+        }
+      ]
+    },
+    "a rough address finds its street from the places around you": {
+      "ok": true,
+      "detail": [
+        {
+          "by": "street",
+          "lon": 101.713045,
+          "lat": 3.1479,
+          "n": 710
+        },
+        {
+          "by": "postcode",
+          "lon": 101.71544,
+          "lat": 3.14082,
+          "n": 4776
+        }
+      ]
+    },
+    "3D junction view shows on the demo drive": {
+      "ok": true,
+      "detail": "159 px high"
+    },
+    "back while navigating keeps the app running in the background": {
+      "ok": true,
+      "detail": {
+        "top": "topResumedActivity=ActivityRecord{3a22f84 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}",
+        "wentHidden": false,
+        "before": {
+          "view": "nav",
+          "dialogs": [],
+          "sheetOpen": false,
+          "preview": false
+        }
+      }
+    },
+    "still navigating when brought back": {
+      "ok": true,
+      "detail": "nav"
+    },
+    "website mode runs the latest website build in the app": {
+      "ok": true,
+      "detail": {
+        "version": "17155512f17c",
+        "built": "2026-11-14T16:41:42.071Z",
+        "path": "/data/user/0/io.github.neokrexsource.junctionnav/files/web-app/17155512f17c/"
+      }
+    },
+    "website mode keeps the account, the Android features and the offline maps address": {
+      "ok": true,
+      "detail": {
+        "copy": "web",
+        "mode": "web",
+        "downloaded": {
+          "version": "17155512f17c",
+          "built": "2026-11-14T16:41:42.071Z",
+          "path": "/data/user/0/io.github.neokrexsource.junctionnav/files/web-app/17155512f17c/"
+        },
+        "signedIn": true,
+        "plugins": [],
+        "packUrl": "https://neokrex-source.github.io/junctionnav/offline/manifest.json"
+      }
+    },
+    "switches back to the built-in version": {
+      "ok": true,
+      "detail": {
+        "copy": "built-in",
+        "signedIn": true
+      }
+    }
+  },
+  "info": {
+    "device": "sdk_gphone64_x86_64 (emulator-5554)",
+    "webviewPackage": "Current WebView package (name, version): (com.google.android.webview, 124.0.6367.219)",
+    "userAgent": "Mozilla/5.0 (Linux; Android 15; sdk_gphone64_x86_64 Build/AE3A.240806.043; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.6367.219 Mobile Safari/537.36",
+    "map": {
+      "style": "openmaptiles",
+      "tilesOk": 6,
+      "tileErrors": 0,
+      "lastError": null,
+      "fellBack": false,
+      "canvas": [
+        1081,
+        2210
+      ],
+      "planet": "200 application/json",
+      "fonts/Noto%20Sans%20Regular": "200 application/x-protobuf"
+    },
+    "app": {
+      "packUrl": "https://neokrex-source.github.io/junctionnav/offline/manifest.json",
+      "packSupported": true,
+      "pack": {
+        "name": "Peninsular Malaysia",
+        "files": [
+          "tiles.pmtiles",
+          "graph.bin",
+          "places.bin",
+          "assets.bin",
+          "assets.json",
+          "terrain.bin"
+        ]
+      },
+      "ttsLanguages": 68,
+      "ttsSpoke": true,
+      "keptAwake": true,
+      "trafficNews": {
+        "url": "https://raw.githubusercontent.com/neokrex-source/junctionnav/traffic-news/news.json",
+        "items": 2,
+        "updated": "2026-11-14T16:25:29.277Z"
+      },
+      "trafficButton": true,
+      "position": [
+        101.6868983,
+        3.1478
+      ]
+    },
+    "places": {
+      "count": 248508,
+      "cells": 45,
+      "mb": 37.8,
+      "area": "Kuala Lumpur",
+      "status": {
+        "kind": "idle"
+      },
+      "search": [
+        "McDonald's",
+        "McDonald's",
+        "McDonald's"
+      ],
+      "seconds": 1
+    },
+    "search": {
+      "links": [
+        {
+          "l": "https://maps.app.goo.gl/jp5v5NVdPH9gjGpD9",
+          "name": "The link could not be opened",
+          "sub": "The link was not found. It may have expired.",
+          "at": [
+            null,
+            null
+          ],
+          "kind": "note"
+        },
+        {
+          "l": "https://maps.app.goo.gl/9JuMioce8MazLrfE6",
+          "name": "Chinatown Kuala Lumpur",
+          "sub": "From the Google Maps link · Kuala Lumpur City Centre, Kuala Lumpur, Federal Territory of Kuala Lumpur, Malaysia",
+          "at": [
+            101.6968667,
+            3.1428443
+          ],
+          "kind": "coords"
+        },
+        {
+          "l": "https://maps.app.goo.gl/rt3kgFSsZXm5NvnD9",
+          "name": "The link could not be opened",
+          "sub": "The link was not found. It may have expired.",
+          "at": [
+            null,
+            null
+          ],
+          "kind": "note"
+        }
+      ],
+      "area": [
+        {
+          "by": "street",
+          "lon": 101.713045,
+          "lat": 3.1479,
+          "n": 710
+        },
+        {
+          "by": "postcode",
+          "lon": 101.71544,
+          "lat": 3.14082,
+          "n": 4776
+        }
+      ]
+    },
+    "beforeBack": {
+      "view": "nav",
+      "dialogs": [],
+      "sheetOpen": false,
+      "preview": false
+    },
+    "backToBackgroundMs": 1752,
+    "websiteMode": {
+      "copy": "web",
+      "mode": "web",
+      "downloaded": {
+        "version": "17155512f17c",
+        "built": "2026-11-14T16:41:42.071Z",
+        "path": "/data/user/0/io.github.neokrexsource.junctionnav/files/web-app/17155512f17c/"
+      },
+      "signedIn": true,
+      "plugins": [],
+      "packUrl": "https://neokrex-source.github.io/junctionnav/offline/manifest.json"
+    }
+  },
+  "problems": [],
+  "failed": []
+}
