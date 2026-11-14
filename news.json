@@ -1,0 +1,88 @@
+{
+ "updated": "2026-11-14T18:23:01.461Z",
+ "items": [
+  {
+   "title": "Jalan Jakar dan Jalan Abdul Rahman Ditutup 18 Oktober Bagi Penggambaran",
+   "link": "https://news.google.com/rss/articles/CBMilgFBVV95cUxNWE5DOE9hN0pEaFp0Z0czS2xHNjdJZ0xZOW9wTGZWS1hzNXpJVURJSTJKRWNHWTAzMXpVTF9zQWF3am11UFlUQVpreUtEaHN2M1c2OHVicm1YNXZEclFRSUN0b3pTYmhoODV6NDRsNDU0d3N0VWN1aWdNZVJxYnhRQW83VGRVcmNTMWM0VjMtc3hPT0ZEQ1E?oc=5",
+   "source": "TRDI.my",
+   "published": "2026-11-14T15:04:25.000Z",
+   "roads": [],
+   "kind": "closure"
+  },
+  {
+   "title": "Woodlands Checkpoint traffic still slow at 4pm after two alerts",
+   "link": "https://news.google.com/rss/articles/CBMihAFBVV95cUxOVDcxak0ybER0akRzeUJZLUJRMFIyeG9JRUpwWVY5Skl4eTRlUEVMZklNeXFraC04OUlPcldPclpZaE9XR3NxelYxdjlBVEJ6d1l0MjB4RXNYa29YclBaRmhhSmdzMi1wR1Zpb05iUWJSRHBpLTRUclYyVGNoOUZOcmhTcGs?oc=5",
+   "source": "Citizens Journal",
+   "published": "2026-11-14T08:29:39.000Z",
+   "roads": [
+    "CAUSEWAY"
+   ],
+   "kind": "jam"
+  }
+ ],
+ "sources": [
+  {
+   "name": "Google News",
+   "url": "https://news.google.com/rss/search?q=(traffic%20OR%20jam%20OR%20congestion%20OR%20accident%20OR%20crash%20OR%20closure%20OR%20closed%20OR%20flood)%20(highway%20OR%20expressway%20OR%20road%20OR%20toll)%20Malaysia%20when%3A1d&hl=en-MY&gl=MY&ceid=MY:en",
+   "ok": true,
+   "items": 25,
+   "traffic": 1
+  },
+  {
+   "name": "Google News",
+   "url": "https://news.google.com/rss/search?q=(jam%20OR%20congestion%20OR%20crash%20OR%20accident%20OR%20closed%20OR%20closure%20OR%20flood%20OR%20landslide)%20(PLUS%20OR%20NKVE%20OR%20ELITE%20OR%20DUKE%20OR%20LDP%20OR%20MEX%20OR%20SPRINT%20OR%20KESAS%20OR%20NPE%20OR%20SKVE%20OR%20%22Federal%20Highway%22%20OR%20Karak%20OR%20LPT%20OR%20MRR2%20OR%20Causeway%20OR%20%22Second%20Link%22%20OR%20%22Penang%20Bridge%22)%20when%3A1d&hl=en-MY&gl=MY&ceid=MY:en",
+   "ok": true,
+   "items": 60,
+   "traffic": 0
+  },
+  {
+   "name": "Google News",
+   "url": "https://news.google.com/rss/search?q=(kesesakan%20OR%20kemalangan%20OR%20ditutup%20OR%20penutupan%20OR%20banjir%20OR%20lencongan%20OR%20%22tanah%20runtuh%22)%20(lebuhraya%20OR%20jalan%20OR%20tol)%20when%3A1d&hl=ms&gl=MY&ceid=MY:ms",
+   "ok": true,
+   "items": 30,
+   "traffic": 1
+  },
+  {
+   "name": "Malay Mail",
+   "url": "https://www.malaymail.com/feed/rss/malaysia",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "Free Malaysia Today",
+   "url": "https://www.freemalaysiatoday.com/category/nation/feed/",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "New Straits Times",
+   "url": "https://www.nst.com.my/feed",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "Berita Harian",
+   "url": "https://www.bharian.com.my/feed",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "Harian Metro",
+   "url": "https://www.hmetro.com.my/feed",
+   "ok": true,
+   "items": 51,
+   "traffic": 0
+  },
+  {
+   "name": "Bernama",
+   "url": "https://www.bernama.com/en/rssfeed.php",
+   "ok": true,
+   "items": 10,
+   "traffic": 0
+  }
+ ]
+}
