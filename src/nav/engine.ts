@@ -5,7 +5,7 @@ import type { Route, Step } from '../routing/types';
 import { LaneTracker, laneState, signedOffset, upcomingTarget, type LaneState } from './lanes';
 import { tollAhead, type TollPlaza, type TollState } from './tolls';
 import { TUNNEL_MIN_VOICE, tunnelStateAt, type TunnelSpan, type TunnelState } from './tunnels';
-import type { SpeedInfo } from './speed';
+import { highwayAt, type SpeedInfo } from './speed';
 import { SpeedWatch, type SpeedPrompt, type SpeedState } from './speedWatch';
 
 /** "You have reached your destination" is said this far before the end of the route. */
@@ -54,7 +54,7 @@ export interface Progress {
   lane: LaneState | null;
   /** The tunnel we are in, or the next one close ahead. */
   tunnel: TunnelState | null;
-  /** The next toll plaza within about 1.5 km on fast roads (600 m in town). */
+  /** The next toll plaza within about 2 km on fast roads (600 m in town). */
   toll: TollState | null;
   /** The speed limit here, how the speed stands against it, and speed cameras and checks ahead. */
   speedo: SpeedState;
@@ -64,7 +64,7 @@ export interface Progress {
   nearDestination: boolean;
 }
 
-export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollNear' | 'speed';
+export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollMid' | 'tollNear' | 'speed';
 
 export interface Prompt {
   key: string;
@@ -86,8 +86,14 @@ export interface Prompt {
   side?: 'left' | 'right';
 }
 
-/** Where the early toll reminder comes (at the first quiet moment inside it), and the short one before the plaza. */
-export const TOLL_EARLY = { fast: 1000, town: 400 };
+/**
+ * Where the toll reminders come: the early one (at the first quiet moment inside it), on fast
+ * roads one more 600 m out ('full'), and the short one just before the plaza. 'short' is the
+ * early one at 1 km (400 m in town) and the short one.
+ */
+export const TOLL_EARLY = { fast: 2000, town: 500 };
+export const TOLL_EARLY_SHORT = { fast: 1000, town: 400 };
+export const TOLL_MID = 600;
 export const TOLL_NEAR = { fast: 300, town: 120 };
 
 /**
@@ -127,8 +133,8 @@ export class NavEngine {
   tunnelAlerts = true;
   /** Toll plazas on the route, sorted by position. */
   tolls: TollPlaza[] = [];
-  /** Voice reminders before toll plazas (get the Touch 'n Go card ready). */
-  tollAlerts = true;
+  /** Voice reminders before toll plazas (get the Touch 'n Go card ready): full, short or off. */
+  tollVoice: 'full' | 'short' | 'off' = 'full';
   /** When each plaza's early reminder was said (the near one is skipped right after it). */
   private tollSaid = new Map<string, number>();
   /** Speed limits, speed cameras and average speed checks, and the warnings for them. */
@@ -151,9 +157,10 @@ export class NavEngine {
     this.tunnels = [];
     this.tolls = [];
     this.tollSaid.clear();
-    const { mode, margin, cameras } = this.speed;
+    const { mode, margin, cameras, highway, town } = this.speed;
     this.speed.reset();
-    Object.assign(this.speed, { mode, margin, cameras });
+    Object.assign(this.speed, { mode, margin, cameras, highway, town });
+    this.speed.highwayAt = highwayAt(route);
     this.real = null;
     this.estimating = false;
     // The app says the first instruction itself as guidance starts: no short-leg repeat of it.
@@ -168,6 +175,7 @@ export class NavEngine {
   replaceRoute(route: Route, junctions: JunctionCandidate[], s: number) {
     this.route = route;
     this.junctions = junctions;
+    this.speed.highwayAt = highwayAt(route);
     this.lastS = s;
     this.real = null;
     this.estimating = false;
@@ -291,7 +299,7 @@ export class NavEngine {
     const fastRoad = Math.max(speed, roadSpeed) > 16;
     const tunnel = tunnelStateAt(this.tunnels, s, fastRoad ? 1000 : 400);
     const inTunnel = !!this.tunnelNear(s, 0, 0);
-    const toll = tollAhead(this.tolls, s, fastRoad ? 1500 : 600);
+    const toll = tollAhead(this.tolls, s, fastRoad ? TOLL_EARLY.fast + 100 : 600);
     const speedo = this.speed.update(s, speed, fix.time, fastRoad);
 
     // Lane advice: smoothed lateral position against the lanes needed for the next decision.
@@ -423,40 +431,59 @@ export class NavEngine {
   }
 
   /**
-   * The toll reminder: "Toll plaza in 800 metres. Get your Touch n Go card ready." at the first
-   * quiet moment within about 1 km on fast roads (400 m in town), and "Toll plaza ahead. Prepare
-   * your Touch n Go." shortly before the plaza, unless the first was only just said.
+   * The toll reminders. Full: "Plaza Tol Sungai Besi in 2 kilometres. Get your Touch n Go card
+   * ready." at the first quiet moment within about 2 km on fast roads (500 m in town), then "Toll
+   * plaza in 600 metres. Slow down and keep to the Touch n Go lanes." on fast roads, and "Toll
+   * plaza ahead. Prepare your Touch n Go." shortly before the plaza unless one was only just said.
+   * Short: the first at 1 km (400 m in town) and the last.
    */
   private tollPrompts(p: Progress, already: Prompt[]): Prompt[] {
     const t = p.toll;
-    if (!this.tollAlerts || !t) return [];
+    if (this.tollVoice === 'off' || !t) return [];
     const cur = this.route?.steps[p.next.index - 1];
     const roadSpeed = cur && cur.duration > 0 ? cur.distance / cur.duration : 0;
     const fast = Math.max(p.speed, roadSpeed) > 16;
-    const earlyAt = fast ? TOLL_EARLY.fast : TOLL_EARLY.town;
+    const full = this.tollVoice === 'full';
+    const early = full ? TOLL_EARLY : TOLL_EARLY_SHORT;
+    const earlyAt = fast ? early.fast : early.town;
     const nearAt = fast ? TOLL_NEAR.fast : TOLL_NEAR.town;
+    const midAt = full && fast ? TOLL_MID : null;
     const key = `toll:${t.plaza.id}`;
+    const midKey = `${key}:mid`;
     const nearKey = `${key}:near`;
     const out: Prompt[] = [];
+    const busy = () => already.length > 0 || out.length > 0;
+    const mark = (k: string) => {
+      this.announced.add(k);
+      this.tollSaid.set(t.plaza.id, this.now);
+      this.lastSpeech = this.now;
+    };
+    // The next reminder down the line takes over once the car is inside its range.
+    const nextAt = midAt ?? nearAt;
     if (!this.announced.has(key)) {
-      if (t.dist <= nearAt) this.announced.add(key); // too close now: the short reminder covers it
+      if (t.dist <= nextAt) this.announced.add(key);
       else if (t.dist <= earlyAt) {
         const quiet = this.now - this.lastSpeech >= 4000;
-        const lastChance = t.dist < nearAt + (earlyAt - nearAt) * 0.4;
-        if (!already.length && (quiet || lastChance)) {
-          this.announced.add(key);
-          this.tollSaid.set(t.plaza.id, this.now);
-          this.lastSpeech = this.now;
+        const lastChance = t.dist < nextAt + (earlyAt - nextAt) * 0.4;
+        if (!busy() && (quiet || lastChance)) {
+          mark(key);
           out.push({ key, step: p.next, distance: t.dist, kind: 'toll', toll: t });
         }
+      }
+    }
+    if (midAt != null && !this.announced.has(midKey) && t.dist <= midAt) {
+      const said = this.tollSaid.get(t.plaza.id);
+      if (t.dist <= nearAt + 60 || (said != null && this.now - said < 12000)) this.announced.add(midKey);
+      else if (!busy()) {
+        mark(midKey);
+        out.push({ key: midKey, step: p.next, distance: t.dist, kind: 'tollMid', toll: t });
       }
     }
     if (!this.announced.has(nearKey) && t.dist <= nearAt) {
       const said = this.tollSaid.get(t.plaza.id);
       if (t.dist < Math.max(30, p.speed * 2.5) || (said != null && this.now - said < 15000)) this.announced.add(nearKey);
-      else if (!already.length && !out.length) {
-        this.announced.add(nearKey);
-        this.lastSpeech = this.now;
+      else if (!busy()) {
+        mark(nearKey);
         out.push({ key: nearKey, step: p.next, distance: t.dist, kind: 'tollNear', toll: t });
       }
     }

@@ -17,6 +17,7 @@ import type { PlacesService } from '../places/service';
 import type { PlacesUpdate } from '../places/schedule';
 import { placesPanel } from './placesPanel';
 import { THEMES, type ThemeId } from '../theme/palette';
+import { TALK_TOPICS, type TalkTopic } from '../talk/types';
 
 function select(id: string, value: string, options: [string, string][]) {
   const s = h('select', { id, name: id }) as HTMLSelectElement;
@@ -55,6 +56,8 @@ export interface SettingsOptions {
   pins?: { count: number; clear: () => void };
   /** Places you registered: how many, and where they are kept. */
   myPlaces?: { count: number; status: string };
+  /** The stay-alert talk: say one now, to hear what it sounds like. */
+  talk?: { sample: (topics: TalkTopic[], lang: Settings['lang']) => void };
   /** The voices this phone or browser can speak with, and a sample in one of them. */
   voices?: { list: () => Promise<VoiceInfo[]>; test: (lang: Settings['lang'], choice: VoiceChoice) => void };
 }
@@ -194,6 +197,49 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     );
     const speedCams = h('input', { id: 'speedCams', type: 'checkbox' }) as HTMLInputElement;
     speedCams.checked = current.speedCams;
+    const speedHighway = h('input', { id: 'speedHighway', type: 'checkbox' }) as HTMLInputElement;
+    speedHighway.checked = current.speedHighway;
+    const speedTown = h('input', { id: 'speedTown', type: 'checkbox' }) as HTMLInputElement;
+    speedTown.checked = current.speedTown;
+    const tollVoice = select('tollVoice', current.tollVoice, [
+      ['full', 'About 2 km before, and again at 600 m'],
+      ['short', 'About 1 km before, and just before'],
+      ['off', 'Off'],
+    ]);
+    // Staying alert on long drives.
+    const focusLimit = select('focusLimit', String(current.focusLimit), [
+      ['60', 'After 1 hour'],
+      ['90', 'After 1 hour 30 minutes'],
+      ['120', 'After 2 hours (recommended)'],
+      ['150', 'After 2 hours 30 minutes'],
+      ['180', 'After 3 hours'],
+      ['0', 'Off'],
+    ]);
+    const talkMode = select('talkMode', current.talkMode, [
+      ['tired', 'When a break is due or you seem tired'],
+      ['often', 'Also every 20 minutes on long drives'],
+      ['off', 'Off'],
+    ]);
+    const drowsyDetect = h('input', { id: 'drowsyDetect', type: 'checkbox' }) as HTMLInputElement;
+    drowsyDetect.checked = current.drowsyDetect;
+    const TOPIC_LABEL: Record<TalkTopic, string> = {
+      jokes: 'Jokes',
+      riddles: 'Riddles and quizzes',
+      malaysia: 'Malaysia',
+      world: 'Places around the world',
+      cars: 'Cars and driving',
+      animals: 'Animals',
+      lifehacks: 'Lifehacks',
+      science: 'Science and space',
+    };
+    const topicBoxes = TALK_TOPICS.map((t) => {
+      const box = h('input', { type: 'checkbox', id: `talk-${t}`, value: t }) as HTMLInputElement;
+      box.checked = current.talkTopics.includes(t);
+      return box;
+    });
+    const chosenTopics = () => topicBoxes.filter((b) => b.checked).map((b) => b.value as TalkTopic);
+    const talkTest = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Say one now') as HTMLButtonElement;
+    talkTest.addEventListener('click', () => opts.talk?.sample(chosenTopics(), lang.value as Settings['lang']));
     const surround = h('input', { id: 'jvSurround', type: 'checkbox' }) as HTMLInputElement;
     surround.checked = current.jvSurround;
     const mapGround = h('input', { id: 'jvMapGround', type: 'checkbox' }) as HTMLInputElement;
@@ -422,20 +468,45 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     const tollGrp = h(
       'div',
       { class: 'grp' },
-      h('label', { for: 'tollAlerts' }, 'Toll plazas'),
-      h('label', { class: 'toggle' }, tolls, "Remind me to get Touch 'n Go ready"),
-      h('div', { class: 'hint' }, 'Says "Get your Touch n Go card ready" about 1 km before a toll plaza on expressways (400 m in town) and "Prepare your Touch n Go" just before it, with the plaza over the arrival time and on the map. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.'),
+      h('label', { for: 'tollVoice' }, 'Toll plazas'),
+      h('label', { for: 'tollVoice', class: 'sub-label' }, 'Voice reminder'),
+      tollVoice,
+      h('label', { class: 'toggle' }, tolls, 'Show the plaza over the arrival time and on the map'),
+      h(
+        'div',
+        { class: 'hint' },
+        'On expressways: "Plaza Tol Sungai Besi in 2 kilometres. Get your Touch n Go card ready", then "Toll plaza in 600 metres. Slow down and keep to the Touch n Go lanes" (in town 500 m and just before). The short setting says it about 1 km before and just before. In Japan it asks for the ETC card. Plazas come from TomTom and OpenStreetMap, and from the offline maps without internet.',
+      ),
     );
     const speedGrp = h(
       'div',
       { class: 'grp' },
       h('label', { for: 'speedAlerts' }, 'Speed limits'),
       h('div', { class: 'row' }, grp('Warnings', speedAlerts), grp('Warn me', speedMargin)),
+      h('label', { class: 'toggle' }, speedHighway, 'Speed limit guide on highways (expressways)'),
+      h('label', { class: 'toggle' }, speedTown, 'Speed limit guide on other roads'),
       h('label', { class: 'toggle' }, speedCams, 'Speed cameras and average speed checks'),
       h(
         'div',
         { class: 'hint' },
-        'The limit shows beside your speed: from TomTom and OpenStreetMap, and 110 km/h on Malaysian expressways where neither has one. Near the limit your speed turns amber with one tone and "Approaching the speed limit"; over it, red with three beeps and "Slow down", again every 30 seconds while it lasts. Speed cameras are announced 800 m ahead on expressways (300 m in town), and average speed checks when they start and end.',
+        'The limit shows beside your speed: from TomTom and OpenStreetMap, and 110 km/h on Malaysian expressways where neither has one. Near the limit your speed turns amber with one tone and "Approaching the speed limit"; over it, red with three beeps and "Slow down", again every 30 seconds while it lasts. Turn the guide off for highways or for other roads to drop the sign and its warnings there. Speed cameras are announced 800 m ahead on expressways (300 m in town), and average speed checks when they start and end, on any road.',
+      ),
+    );
+    const alertGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'focusLimit' }, 'Stay alert'),
+      h('label', { for: 'focusLimit', class: 'sub-label' }, 'Remind me to take a break'),
+      focusLimit,
+      h('label', { for: 'talkMode', class: 'sub-label' }, 'Talk to keep me awake'),
+      talkMode,
+      h('div', { class: 'talk-topics', role: 'group', 'aria-label': 'Topics' }, ...topicBoxes.map((b, i) => h('label', { class: 'toggle' }, b, TOPIC_LABEL[TALK_TOPICS[i]]))),
+      opts.talk ? h('div', { class: 'off-actions' }, talkTest) : null,
+      h('label', { class: 'toggle' }, drowsyDetect, 'Watch my driving for signs of tiredness'),
+      h(
+        'div',
+        { class: 'hint' },
+        'The driving clock runs while navigating; a stop of 15 minutes or more counts as a break. At your limit (a quarter sooner between midnight and 6 am) the app says it is time for a break and names the next R&R, then reminds you every 15 minutes, more firmly each time. With talk on, it tells jokes, riddles and facts at quiet moments once the break is due or you seem tired: 1,000 in English, 200 each in Malay and Japanese. The tiredness check compares each minute of highway driving with your own first minutes on that drive: drifting in the lane, weaving and an unsteady speed. GPS is not a lane sensor, so treat it as an extra, and stop when you feel tired.',
       ),
     );
     const surroundGrp = h(
@@ -553,7 +624,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           googleGrp,
         ],
       },
-      { id: 'drive', label: 'Drive', items: [voiceGrp, laneGrp, speedGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp, tollGrp] },
+      { id: 'drive', label: 'Drive', items: [voiceGrp, alertGrp, laneGrp, speedGrp, tollGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp] },
       { id: 'traffic', label: 'Traffic', items: [traffic] },
       { id: 'downloads', label: 'Downloads', items: [places?.el, pack?.el] },
       { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers, about] },
@@ -644,6 +715,13 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,
         tollAlerts: tolls.checked,
+        tollVoice: tollVoice.value as Settings['tollVoice'],
+        speedHighway: speedHighway.checked,
+        speedTown: speedTown.checked,
+        focusLimit: Number(focusLimit.value) || 0,
+        talkMode: talkMode.value as Settings['talkMode'],
+        talkTopics: chosenTopics(),
+        drowsyDetect: drowsyDetect.checked,
         speedAlerts: speedAlerts.value as Settings['speedAlerts'],
         speedMargin: Number(speedMargin.value) || 5,
         speedCams: speedCams.checked,

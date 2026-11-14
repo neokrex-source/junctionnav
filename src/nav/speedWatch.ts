@@ -11,6 +11,10 @@
  *    limit 300 m before it, once more.
  *  - An average speed check: when it starts ("Average speed check for 12 kilometres") with the
  *    average so far on the screen, and when it ends.
+ *
+ * The limit guide (the sign and the near and over warnings) can be on for highways only, other
+ * roads only, both or neither. A highway is an expressway: the router's motorway or toll road,
+ * the national expressway limit, or any limit of 100 km/h and more.
  */
 import { cameraAhead, checkAt, limitAt, lowerLimitAhead, type LimitSource, type SpeedCamera, type SpeedCheck, type SpeedInfo } from './speed';
 
@@ -62,6 +66,11 @@ export class SpeedWatch {
   margin = 5;
   /** Speed camera and average speed check warnings. */
   cameras = true;
+  /** The limit guide on highways, and on other roads. */
+  highway = true;
+  town = true;
+  /** Whether the route is on a highway at a position (from the router's road classes). */
+  highwayAt: ((s: number) => boolean) | null = null;
   private status: Speeding = 'ok';
   private overSince = 0;
   private okSince = 0;
@@ -91,7 +100,8 @@ export class SpeedWatch {
   /** The state at position s, at speed (m/s), at time `now` (ms); `fast`: on a fast road. */
   update(s: number, speed: number, now: number, fast: boolean): SpeedState {
     const kmh = speed * 3.6;
-    const span = this.mode === 'off' ? null : limitAt(this.info.limits, s);
+    const found = this.mode === 'off' ? null : limitAt(this.info.limits, s);
+    const span = found && this.guideOn(found, s) ? found : null;
     const limit = span ? { kmh: span.kmh, src: span.src } : null;
     if ((limit?.kmh ?? null) !== this.limitNow) {
       // A new limit: a new stretch for the warnings.
@@ -137,6 +147,15 @@ export class SpeedWatch {
       check = { ...c, average };
     }
     return { kmh, limit, ahead, speeding: status, camera, check };
+  }
+
+  /** The road here is one the guide is on for. */
+  isHighway(span: { kmh: number; src: LimitSource }, s: number): boolean {
+    return span.src === 'national' || span.kmh >= 100 || !!this.highwayAt?.(s);
+  }
+
+  private guideOn(span: { kmh: number; src: LimitSource }, s: number): boolean {
+    return this.isHighway(span, s) ? this.highway : this.town;
   }
 
   /** The warnings due now (each once, the over-speed one repeating while it lasts). */

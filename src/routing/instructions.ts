@@ -852,22 +852,25 @@ export function tollPayLabel(pay: TollPay): string {
  * ready." Near: "Toll plaza ahead. Prepare your Touch n Go." The brand is written the way speech
  * reads it best.
  */
-export function tollSpeech(kind: 'early' | 'near', t: TollState, pay: TollPay, lang: LangCode, units: Units): string {
+export function tollSpeech(kind: 'early' | 'mid' | 'near', t: TollState, pay: TollPay, lang: LangCode, units: Units): string {
   const L = LANGS[lang];
   const d = L.spokenDistance(t.dist, units);
   const title = tollTitle(t.plaza.name, lang);
   if (lang === 'ms') {
     const ready = pay === 'tng' ? 'Sediakan kad Touch n Go anda.' : pay === 'etc' ? 'Pastikan kad ETC anda sedia.' : 'Sediakan bayaran tol anda.';
     if (kind === 'early') return `${title} dalam ${d}. ${ready}`;
+    if (kind === 'mid') return `Plaza tol dalam ${d}. ${pay === 'tng' ? 'Perlahankan kenderaan dan ikut lorong Touch n Go.' : pay === 'etc' ? 'Perlahankan kenderaan dan ikut lorong ETC.' : 'Perlahankan kenderaan.'}`;
     return `Plaza tol di hadapan.${pay === 'tng' ? ' Sediakan Touch n Go.' : ''}`;
   }
   if (lang === 'ja') {
     const ready = pay === 'tng' ? 'Touch n Goカードをご用意ください。' : pay === 'etc' ? 'ETCカードをご確認ください。' : '通行料金のお支払いをご準備ください。';
     if (kind === 'early') return `${d}先、${title}です。${ready}`;
+    if (kind === 'mid') return `${d}先、料金所です。${pay === 'tng' ? '速度を落として、Touch n Goのレーンにお進みください。' : pay === 'etc' ? '速度を落として、ETCレーンにお進みください。' : '速度を落としてください。'}`;
     return `まもなく${title}です。${pay === 'tng' ? 'Touch n Goをご用意ください。' : ''}`;
   }
   const ready = pay === 'tng' ? 'Get your Touch n Go card ready.' : pay === 'etc' ? 'Check your ETC card.' : 'Have your toll payment ready.';
   if (kind === 'early') return `${title} in ${d}. ${ready}`;
+  if (kind === 'mid') return `Toll plaza in ${d}. ${pay === 'tng' ? 'Slow down and keep to the Touch n Go lanes.' : pay === 'etc' ? 'Slow down and keep to the ETC lane.' : 'Slow down for the toll plaza.'}`;
   return `Toll plaza ahead.${pay === 'tng' ? ' Prepare your Touch n Go.' : ''}`;
 }
 

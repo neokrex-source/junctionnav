@@ -98,6 +98,39 @@
 @media (max-width: 480px) {
   .cam-chip { margin-right: 66px; }
 }
+
+/* Time for a break (amber), or signs of tiredness (red, pulsing): a slim line with a button for the R&Rs ahead. */
+.alert-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: max(40px, 5.4vh);
+  padding: 0 4px 0 5px;
+  border-radius: 999px;
+  color: var(--ink);
+  --alert: #d97706;
+  box-shadow: var(--shadow), var(--edge), inset 0 0 0 2px var(--alert);
+}
+.alert-chip[data-state="drowsy"] { --alert: #dc2626; }
+.app[data-view] .alert-chip { background: color-mix(in srgb, var(--alert) 12%, var(--surface-solid)); }
+.app[data-view] .alert-chip[data-state="drowsy"] { animation: spd-over 1.4s ease-in-out infinite; }
+.alert-chip[hidden] { display: none; }
+.alert-ico { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--alert); color: #ffffff; font-size: 19px; }
+.alert-line { min-width: 0; display: flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; font: 700 15px/1 var(--font-cond); }
+.alert-title { overflow: hidden; text-overflow: ellipsis; }
+.alert-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.alert-find { flex: none; border: 0; border-radius: 999px; padding: 0 12px; height: calc(100% - 8px); background: var(--alert); color: #ffffff; font: 700 14px/1 var(--font-cond); cursor: pointer; }
+.app:has(.sheet.is-nav:not([hidden])) .alert-chip { visibility: hidden; }
+@media (max-width: 480px) {
+  .alert-chip { margin-right: 66px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app[data-view] .alert-chip[data-state="drowsy"] { animation: none; }
+}
+.talk-topics { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin: 4px 0; }
+@media (max-width: 380px) { .talk-topics { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) {
   .speed[data-state="over"], .speed[data-state="over"] .spd-sign, .cam-chip[data-state="over"] { animation: none; }
 }
@@ -258,7 +291,9 @@
 :root[data-skin="jet"] .b-primary { font-size: clamp(19px, 4.6vw, 27px); letter-spacing: 0.01em; }
 :root[data-skin="jet"] .eta-main { font-size: 22px; color: var(--hud-ink); }
 :root[data-skin="jet"] .eta-main small, :root[data-skin="jet"] .eta-sub { text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
-:root[data-skin="jet"] .traffic-chip, :root[data-skin="jet"] .toll-chip, :root[data-skin="jet"] .cam-chip, :root[data-skin="jet"] .faster, :root[data-skin="jet"] .traffic-card { border-radius: 4px; }
+:root[data-skin="jet"] .traffic-chip, :root[data-skin="jet"] .toll-chip, :root[data-skin="jet"] .cam-chip, :root[data-skin="jet"] .alert-chip, :root[data-skin="jet"] .faster, :root[data-skin="jet"] .traffic-card { border-radius: 4px; }
+:root[data-skin="jet"] .alert-find, :root[data-skin="jet"] .alert-ico { border-radius: 3px; }
+:root[data-skin="jet"] .alert-line { text-transform: uppercase; letter-spacing: 0.04em; font-size: 13px; }
 :root[data-skin="jet"] .cam-ico-wrap { border-radius: 3px; transform: rotate(45deg) scale(0.86); }
 :root[data-skin="jet"] .cam-ico-wrap .cam-ico { transform: rotate(-45deg); }
 :root[data-skin="jet"] .cam-line, :root[data-skin="jet"] .toll-line { text-transform: uppercase; letter-spacing: 0.04em; font-size: 13px; }
@@ -315,7 +350,7 @@
   :root[data-skin="jet"] .foot .speed { width: 84px; height: 150px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); }
   :root[data-skin="jet"] .app[data-view="nav"] .recenter { bottom: calc(env(safe-area-inset-bottom, 0px) + 246px); }
   :root[data-skin="jet"] .app[data-view="nav"] .scale-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 314px); }
-  :root[data-skin="jet"] :is(.traffic-chip, .traffic-card, .toll-chip, .cam-chip, .faster, .nav-stack > .sim) { margin-right: 96px; }
+  :root[data-skin="jet"] :is(.traffic-chip, .traffic-card, .toll-chip, .cam-chip, .alert-chip, .faster, .nav-stack > .sim) { margin-right: 96px; }
 }
 
 /* ================================================================ Casual */

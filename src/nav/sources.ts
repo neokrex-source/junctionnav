@@ -80,6 +80,18 @@ export function simSpeedAt(route: Route, s: number, cruise?: number): number {
 }
 
 /** Drives along the route at the router's speeds (times a factor), slowing for turns. */
+/**
+ * The tired driver's drift across the lane at time t (s): over 7.5 s it creeps from one side to
+ * the other (1.8 m each side when clearly tired), then is pulled back in 1.5 s. Returns the
+ * offset (m) and how fast it changes (m/s).
+ */
+export function tiredDrift(t: number, tired: number): [number, number] {
+  const A = 1.8 * tired;
+  const ph = ((t % 9) + 9) % 9;
+  if (ph < 7.5) return [-A + (2 * A * ph) / 7.5, (2 * A) / 7.5];
+  return [A - (2 * A * (ph - 7.5)) / 1.5, (-2 * A) / 1.5];
+}
+
 export class Simulator implements LocationSource {
   s = 0;
   factor = 1;
@@ -98,6 +110,12 @@ export class Simulator implements LocationSource {
   speeding = false;
   /** The speed limit at a position (km/h), for the speeding driver. */
   limitAt: ((s: number) => number | null) | null = null;
+  /**
+   * A tired driver, to try the tiredness warning (0: none, 1: clearly tired): drifting slowly
+   * across the lane and correcting sharply, and letting the speed swing.
+   */
+  tired = 0;
+  private tiredT = 0;
   /** The speed now (m/s): the speeding driver speeds up and slows down gradually. */
   private v = -1;
   private laneF = 1;
@@ -113,6 +131,12 @@ export class Simulator implements LocationSource {
   }
 
   private speedAt(s: number, dt = 0): number {
+    const v = this.limitedSpeedAt(s, dt);
+    // The tired driver's speed swings by about 8 % over 40 seconds.
+    return this.tired > 0 ? v * (1 + 0.08 * this.tired * Math.sin((2 * Math.PI * this.tiredT) / 40)) : v;
+  }
+
+  private limitedSpeedAt(s: number, dt = 0): number {
     const limit = this.speeding ? this.limitAt?.(s) ?? null : null;
     if (limit == null) {
       this.v = -1;
@@ -140,6 +164,7 @@ export class Simulator implements LocationSource {
     const dt = Math.min(0.5, (now - this.last) / 1000);
     this.last = now;
     if (this.paused) return;
+    this.tiredT += dt * this.factor;
     const v = this.speedAt(this.s, dt);
     this.s = Math.min(this.route.line.length, this.s + v * dt * this.factor);
     // Glide sideways to the chosen lane (about 2.5 s per lane at normal speed).
@@ -169,11 +194,12 @@ export class Simulator implements LocationSource {
   private emit(v: number) {
     const line = this.route.line;
     const brg = line.bearingAt(this.s, 15);
-    const offset = (this.laneF - (this.laneCount - 1) / 2) * LANE_W;
+    const [drift, rate] = this.tired > 0 ? tiredDrift(this.tiredT, this.tired) : [0, 0];
+    const offset = (this.laneF - (this.laneCount - 1) / 2) * LANE_W + drift;
     this.onFix?.({
       lngLat: Math.abs(offset) > 0.01 ? destination(line.pointAt(this.s), brg + 90, offset) : line.pointAt(this.s),
       accuracy: 3,
-      heading: brg,
+      heading: v > 1 && rate ? (brg + (Math.atan2(rate, v) * 180) / Math.PI + 360) % 360 : brg,
       speed: v,
       time: Date.now(),
     });
@@ -323,20 +349,26 @@ export class Voice {
 
   /**
    * The speed alert sounds: one soft tone near the limit, three quick high beeps over it, and a
-   * falling pair before a speed camera.
+   * falling pair before a speed camera; and to wake a tired driver, a bright rising run, twice.
    */
-  alert(kind: 'near' | 'over' | 'camera') {
+  alert(kind: 'near' | 'over' | 'camera' | 'wake') {
     if (!this.enabled || !this.audio) return;
     const ctx = this.audio;
     const t0 = ctx.currentTime + 0.02;
     const tones: [number, number, number][] =
-      kind === 'near' ? [[740, 0, 0.32]] : kind === 'over' ? [[1320, 0, 0.11], [1320, 0.16, 0.11], [1320, 0.32, 0.11]] : [[1175, 0, 0.16], [880, 0.2, 0.22]];
+      kind === 'near'
+        ? [[740, 0, 0.32]]
+        : kind === 'over'
+          ? [[1320, 0, 0.11], [1320, 0.16, 0.11], [1320, 0.32, 0.11]]
+          : kind === 'wake'
+            ? [[660, 0, 0.12], [880, 0.14, 0.12], [1320, 0.28, 0.2], [660, 0.62, 0.12], [880, 0.76, 0.12], [1320, 0.9, 0.24]]
+            : [[1175, 0, 0.16], [880, 0.2, 0.22]];
     for (const [f, at, len] of tones) {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.frequency.value = f;
-      o.type = kind === 'over' ? 'square' : 'sine';
-      const vol = kind === 'over' ? 0.12 : 0.24;
+      o.type = kind === 'over' || kind === 'wake' ? 'square' : 'sine';
+      const vol = kind === 'over' ? 0.12 : kind === 'wake' ? 0.14 : 0.24;
       g.gain.setValueAtTime(0.0001, t0 + at);
       g.gain.exponentialRampToValueAtTime(vol, t0 + at + 0.015);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);

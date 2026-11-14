@@ -221,12 +221,39 @@ describe('toll plazas on the route', () => {
 /* ------------------------------------------------------------------ the toll voice reminder */
 
 describe('toll plaza reminders', () => {
-  it('says "get your Touch n Go card ready" about 1 km out on an expressway, and "prepare" just before', () => {
+  it('says "get your Touch n Go card ready" about 2 km out on an expressway, and "slow down" 600 m before', () => {
     const r = road(5000, [], 25);
     const eng = new NavEngine();
     eng.setRoute(r, []);
     eng.setTolls([plaza(3000, 'Plaza Tol Sungai Besi')]);
-    const said = drive(eng, r, 25).filter(({ pr }) => pr.kind === 'toll' || pr.kind === 'tollNear');
+    const said = drive(eng, r, 25).filter(({ pr }) => pr.kind.startsWith('toll'));
+    // The short one just before is left out: "slow down" was only 12 s earlier.
+    expect(said.map(({ pr }) => pr.kind)).toEqual(['toll', 'tollMid']);
+    const [early, mid] = said;
+    expect(early.s).toBeGreaterThanOrEqual(1000);
+    expect(early.s).toBeLessThan(1100);
+    expect(mid.s).toBeGreaterThanOrEqual(2400);
+    expect(mid.s).toBeLessThan(2450);
+    expect(tollSpeech('early', early.pr.toll!, 'tng', 'en', 'metric')).toBe('Plaza Tol Sungai Besi in 2 kilometres. Get your Touch n Go card ready.');
+    expect(tollSpeech('mid', mid.pr.toll!, 'tng', 'en', 'metric')).toBe('Toll plaza in 600 metres. Slow down and keep to the Touch n Go lanes.');
+  });
+
+  it('adds the short reminder too when the car slows down for the plaza', () => {
+    const r = road(5000, [], 17);
+    const eng = new NavEngine();
+    eng.setRoute(r, []);
+    eng.setTolls([plaza(3000)]);
+    const said = drive(eng, r, 17).filter(({ pr }) => pr.kind.startsWith('toll'));
+    expect(said.map(({ pr }) => pr.kind)).toEqual(['toll', 'tollMid', 'tollNear']);
+  });
+
+  it('short: about 1 km out and just before, as before', () => {
+    const r = road(5000, [], 25);
+    const eng = new NavEngine();
+    eng.tollVoice = 'short';
+    eng.setRoute(r, []);
+    eng.setTolls([plaza(3000, 'Plaza Tol Sungai Besi')]);
+    const said = drive(eng, r, 25).filter(({ pr }) => pr.kind.startsWith('toll'));
     expect(said.map(({ pr }) => pr.kind)).toEqual(['toll', 'tollNear']);
     const [early, near] = said;
     expect(early.s).toBeGreaterThanOrEqual(2000);
@@ -241,7 +268,8 @@ describe('toll plaza reminders', () => {
     const eng = new NavEngine();
     eng.setRoute(r, [], 2400);
     eng.setTolls([plaza(3000)]);
-    const said = drive(eng, r, 25, 2400).filter(({ pr }) => pr.kind === 'toll' || pr.kind === 'tollNear');
+    eng.tollVoice = 'short';
+    const said = drive(eng, r, 25, 2400).filter(({ pr }) => pr.kind.startsWith('toll'));
     // Started 600 m out: the early reminder at once, and the plaza is under 15 s further on.
     expect(said.map(({ pr }) => pr.kind)).toEqual(['toll']);
   });
@@ -251,10 +279,11 @@ describe('toll plaza reminders', () => {
     const eng = new NavEngine();
     eng.setRoute(r, []);
     eng.setTolls([plaza(2000)]);
-    const said = drive(eng, r, 10).filter(({ pr }) => pr.kind === 'toll' || pr.kind === 'tollNear');
-    // Town speed: early within 400 m, near within 120 m (28 s later at 10 m/s).
+    const said = drive(eng, r, 10).filter(({ pr }) => pr.kind.startsWith('toll'));
+    // Town speed: early within 500 m, near within 120 m (38 s later at 10 m/s); no 600 m one in town.
     expect(said.map(({ pr }) => pr.kind)).toEqual(['toll', 'tollNear']);
-    expect(said[0].s).toBeGreaterThanOrEqual(1600);
+    expect(said[0].s).toBeGreaterThanOrEqual(1500);
+    expect(said[0].s).toBeLessThan(1600);
     expect(said[1].s).toBeGreaterThanOrEqual(1880);
     expect(tollSpeech('near', said[1].pr.toll!, 'tng', 'en', 'metric')).toBe('Toll plaza ahead. Prepare your Touch n Go.');
   });
@@ -264,7 +293,7 @@ describe('toll plaza reminders', () => {
     const eng = new NavEngine();
     eng.setRoute(r, [], 1750);
     eng.setTolls([plaza(2000)]);
-    const said = drive(eng, r, 25, 1750).filter(({ pr }) => pr.kind === 'toll' || pr.kind === 'tollNear');
+    const said = drive(eng, r, 25, 1750).filter(({ pr }) => pr.kind.startsWith('toll'));
     expect(said.map(({ pr }) => pr.kind)).toEqual(['tollNear']);
   });
 
@@ -284,7 +313,7 @@ describe('toll plaza reminders', () => {
     const r = road(5000, [], 25);
     const off = new NavEngine();
     off.setRoute(r, []);
-    off.tollAlerts = false;
+    off.tollVoice = 'off';
     off.setTolls([plaza(3000)]);
     expect(drive(off, r, 25).some(({ pr }) => pr.kind.startsWith('toll'))).toBe(false);
     // No maneuver before the destination: the last stretch still gets the reminder.
@@ -304,6 +333,10 @@ describe('toll plaza reminders', () => {
     expect(tollSpeech('near', jp, 'etc', 'ja', 'metric')).toBe('まもなく東京料金所です。');
     expect(tollSpeech('early', { plaza: plaza(0), dist: 800 }, 'generic', 'en', 'metric')).toBe('Toll plaza in 800 metres. Have your toll payment ready.');
     expect(tollSpeech('near', { plaza: plaza(0), dist: 200 }, 'generic', 'en', 'metric')).toBe('Toll plaza ahead.');
+    const mid = { plaza: plaza(0), dist: 600 };
+    expect(tollSpeech('mid', mid, 'tng', 'ms', 'metric')).toBe('Plaza tol dalam 600 meter. Perlahankan kenderaan dan ikut lorong Touch n Go.');
+    expect(tollSpeech('mid', mid, 'etc', 'ja', 'metric')).toBe('600メートル先、料金所です。速度を落として、ETCレーンにお進みください。');
+    expect(tollSpeech('mid', mid, 'generic', 'en', 'metric')).toBe('Toll plaza in 600 metres. Slow down for the toll plaza.');
     expect(tollTitle('Toll Plaza Batu Tiga', 'en')).toBe('Toll Plaza Batu Tiga');
     expect(tollTitle(null, 'ms')).toBe('Plaza tol');
   });

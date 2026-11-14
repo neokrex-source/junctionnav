@@ -253,6 +253,34 @@ export function routerLimits(route: Route): LimitSpan[] {
   return (route.speedLimits ?? []).filter((x) => x.s1 > x.s0 && x.kmh > 0).map((x) => ({ s0: x.s0, s1: x.s1, kmh: x.kmh, src: 'router' as const }));
 }
 
+/**
+ * Whether the route is on a highway (an expressway: the router's motorway or toll road class) at
+ * each position, for the speed guide's highway and other-road switches.
+ */
+export function highwayAt(route: Route): (s: number) => boolean {
+  const marks: { s: number; hw: boolean }[] = [];
+  route.steps.forEach((st, i) => {
+    const end = route.steps[i + 1]?.s ?? route.line.length;
+    st.intersections.forEach((x, k) => {
+      const c = x.classes ?? [];
+      const at = k === 0 ? st.s : route.line.project(x.location, st.s, end + 1).s;
+      marks.push({ s: at, hw: c.includes('motorway') || c.includes('toll') });
+    });
+  });
+  marks.sort((a, b) => a.s - b.s);
+  return (s: number) => {
+    if (!marks.length || s < marks[0].s) return marks[0]?.hw ?? false;
+    let lo = 0;
+    let hi = marks.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (marks[mid].s <= s) lo = mid;
+      else hi = mid - 1;
+    }
+    return marks[lo].hw;
+  };
+}
+
 /** The national limit on expressways (km/h), where the country has one this app knows. */
 export function nationalLimit(p: LngLat): number | null {
   const r = regionAt(p);

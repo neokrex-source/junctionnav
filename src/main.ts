@@ -5,7 +5,7 @@ import './styles/app.css';
 import './styles/themes.css';
 import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSpeedProvider, DemoSurroundProvider, demoTerrain, DemoTollProvider, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
-import { angleDiff, hashString, haversine, type LngLat } from './geo/geo';
+import { angleDiff, bearing, hashString, haversine, type LngLat } from './geo/geo';
 import { detectJunctions, JUNCTION_CORE, type JunctionCandidate } from './junction/detect';
 import { JunctionDataCache, OverpassProvider, type OsmData } from './junction/osmdata';
 import { GroundMapper, type GroundMap, type GroundSource } from './junction/groundMap';
@@ -66,6 +66,10 @@ import { placeWords, type SharedPlace } from './community/types';
 import { CommunityLayer } from './map/communityLayer';
 import { placeForm, type PlaceDraft } from './ui/placeForm';
 import { googleMapsUrl, googleWords, openGooglePanel } from './google/placesKit';
+import { AlertWatch, type AlertEvent, type AlertSnapshot } from './nav/alert';
+import { TalkDeck } from './talk/deck';
+import type { TalkTopic } from './talk/types';
+import { answerLead, chipWords, drivenWords, drowsySpeech, limitSpeech, remindSpeech, restedText, talkIntro, talkLead, type RestAhead } from './talk/speech';
 import { PlacesService } from './places/service';
 import { SmartSearch, searchTexts } from './search/smartSearch';
 import { PinStore, pinPlace, type Pin } from './pins/pins';
@@ -166,12 +170,34 @@ const ICON = {
   phone: svg(`<path ${S} d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>`),
   globe: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/>`),
   food: svg(`<path ${S} d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.5 1-3.5 4-3.5 7.5 0 2 1.5 3 3.5 3"/>`),
+  coffee: svg(`<path ${S} d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3c0 1.5 1 1.5 1 3M12 3c0 1.5 1 1.5 1 3M3 21h14"/>`),
   share: svg(`<circle ${S} cx="18" cy="5.5" r="2.5"/><circle ${S} cx="6" cy="12" r="2.5"/><circle ${S} cx="18" cy="18.5" r="2.5"/><path ${S} d="m8.2 10.8 7.6-4.1M8.2 13.2l7.6 4.1"/>`),
   edit: svg(`<path ${S} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path ${S} d="m13.5 6.5 4 4"/>`),
   flag: svg(`<path ${S} d="M5 21V4M5 4h11l-2 4 2 4H5"/>`),
   map: svg(`<path ${S} d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>`),
   addPlace: svg(`<path ${S} d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><path ${S} d="M12 6.6v5.8M9.1 9.5h5.8"/>`),
 };
+
+const DRIVE_KEY = 'junctionnav.drive.v1';
+
+/** The driving clock of the last real drive (for a break reminder that counts across stops under 15 minutes). */
+function loadDriveClock(): AlertSnapshot | null {
+  try {
+    const raw = localStorage.getItem(DRIVE_KEY);
+    const s = raw ? (JSON.parse(raw) as AlertSnapshot) : null;
+    return s && Number.isFinite(s.driven) && Number.isFinite(s.at) ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDriveClock(s: AlertSnapshot) {
+  try {
+    localStorage.setItem(DRIVE_KEY, JSON.stringify(s));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 interface Trip {
   /** null = my location */
@@ -340,6 +366,18 @@ class App {
   arrivedAnnounced = false;
   private endingNav = false;
   private stillSince = 0;
+  /** Staying alert on long drives: the driving clock, break reminders, tiredness and the talk. */
+  alertWatch = new AlertWatch();
+  private alertClock = 0;
+  private alertLastFix = 0;
+  /** Until when the talk is (probably) still speaking, so guidance can cut in. */
+  private talkUntil = 0;
+  private talkedThisDrive = false;
+  private navSimulated = false;
+  private lastSayAt = 0;
+  private deckLoad: Promise<TalkDeck> | null = null;
+  /** The next rest area found for a reminder (kept a few minutes). */
+  private restCache: { at: number; s: number; rest: RestAhead | null } | null = null;
   stopsPassed = 0;
   /** The KL test drive running now, with its checklist. */
   private testRun: TestRun | null = null;
@@ -416,6 +454,7 @@ class App {
     trafficCard: h('div', { class: 'traffic-card card', hidden: true, role: 'status', 'aria-live': 'polite' }),
     tollChip: h('div', { class: 'toll-chip card', hidden: true, role: 'status' }),
     camChip: h('div', { class: 'cam-chip card', hidden: true, role: 'status' }),
+    alertChip: h('div', { class: 'alert-chip card', hidden: true, role: 'status' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -2557,7 +2596,7 @@ class App {
     e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
-      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.alertChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
       e.speed,
     );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
@@ -2858,8 +2897,9 @@ class App {
       case 'tunnel':
         return tunnelSpeech(pr.tunnel!, this.L, units);
       case 'toll':
+      case 'tollMid':
       case 'tollNear':
-        return tollSpeech(pr.kind === 'toll' ? 'early' : 'near', pr.toll!, this.tollPay(pr.toll!.plaza), this.L, units);
+        return tollSpeech(pr.kind === 'toll' ? 'early' : pr.kind === 'tollMid' ? 'mid' : 'near', pr.toll!, this.tollPay(pr.toll!.plaza), this.L, units);
       case 'speed':
         return speedSpeech(pr.speed!, this.L, units);
       default: {
@@ -3021,8 +3061,17 @@ class App {
     this.engine.setRoute(route, detectJunctions(route));
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
-    this.engine.tollAlerts = this.settings.tollAlerts;
+    this.engine.tollVoice = this.settings.tollVoice;
     this.syncSpeedSettings();
+    this.syncAlertSettings();
+    // The driving clock carries on from a drive that ended less than a break ago (real drives only).
+    this.navSimulated = simulate;
+    this.alertWatch.resume(simulate ? null : loadDriveClock(), Date.now());
+    this.alertClock = 0;
+    this.alertLastFix = 0;
+    this.talkedThisDrive = false;
+    this.restCache = null;
+    this.el.alertChip.hidden = true;
     this.tunnelCard.hide();
     this.tunnels.setRoute(route);
     this.tolls.setRoute(route);
@@ -3109,6 +3158,9 @@ class App {
     this.speedData.stop();
     this.map.setCameras([]);
     this.el.camChip.hidden = true;
+    this.el.alertChip.hidden = true;
+    if (!this.navSimulated && !this.demo) saveDriveClock(this.alertWatch.snapshot(Date.now()));
+    this.talkUntil = 0;
     this.wake.off();
     this.voice.stop();
     this.engine.route = null;
@@ -3135,7 +3187,190 @@ class App {
   }
 
   private say(text: string, urgent = true) {
+    // Guidance does not wait for a joke to finish: it cuts in.
+    if (!urgent && Date.now() < this.talkUntil) urgent = true;
+    this.talkUntil = 0;
+    this.lastSayAt = Date.now();
     this.voice.speak(text, LANGS[this.L].speechLang, urgent);
+  }
+
+  /* ================================================================ staying alert */
+
+  private syncAlertSettings() {
+    this.alertWatch.config = { focusMin: this.settings.focusLimit, talk: this.settings.talkMode, detect: this.settings.drowsyDetect };
+  }
+
+  /** The jokes, facts and riddles, loaded the first time they are needed. */
+  private deck(): Promise<TalkDeck> {
+    this.deckLoad ??= Promise.all([import('./talk/en'), import('./talk/ms'), import('./talk/ja')]).then(([en, ms, ja]) => new TalkDeck({ en: en.EN_TALK, ms: ms.MS_TALK, ja: ja.JA_TALK }));
+    return this.deckLoad;
+  }
+
+  /**
+   * Each fix: the driving clock, the driving read for signs of tiredness, and the reminders and
+   * talk that are due, at quiet moments between the guidance.
+   */
+  private alertTick(p: Progress, fix: Fix, prompted: boolean) {
+    const route = this.engine.route;
+    if (!route || this.view !== 'nav') return;
+    // The simulator's clock runs as fast as its drive.
+    const rate = this.sim?.factor ?? 1;
+    if (this.alertLastFix && fix.time > this.alertLastFix) this.alertClock += (fix.time - this.alertLastFix) * rate;
+    this.alertLastFix = fix.time;
+    const now = Date.now();
+    const d = new Date();
+    const brg = route.line.bearingAt(p.s, 20);
+    const side = p.offset > 0.05 ? Math.sign(angleDiff(brg, bearing(p.snapped, fix.lngLat))) : 0;
+    const traffic = this.traffic.onRoute.some((i) => i.s - p.s < 1200 && i.endS > p.s - 200);
+    const steady =
+      p.onRoute && !fix.dr && fix.accuracy <= 20 && p.speed >= 16.7 && p.distToNext >= 400 && !p.junction && !p.tunnel && !(p.toll && p.toll.dist < 700) && !traffic && !this.arrivedAnnounced;
+    const quiet =
+      !prompted &&
+      p.onRoute &&
+      p.distToNext > 1200 &&
+      p.timeToNext > 45 &&
+      !this.panel.visible &&
+      !(p.toll && p.toll.dist < 2200) &&
+      !p.speedo.camera &&
+      now - this.lastSayAt > 8000 &&
+      now - this.tv.lastAt > 8000 &&
+      p.remaining > 3000 &&
+      !this.arrivedAnnounced;
+    const events = this.alertWatch.update({
+      now: this.alertClock,
+      hour: d.getHours() + d.getMinutes() / 60,
+      speed: p.speed,
+      steady,
+      lateral: steady ? p.offset * side : null,
+      headingDev: steady && fix.heading != null ? angleDiff(brg, fix.heading) : null,
+      quiet,
+    });
+    for (const ev of events) {
+      if (ev.kind === 'rested') toast(restedText(this.L), 4000);
+      else if (ev.kind === 'talk') void this.sayTalk(ev.reason);
+      else void this.sayAlertEvent(ev, p.s);
+    }
+    this.paintAlertChip();
+  }
+
+  /** The next rest area along the route (R&R, services), from the category search, kept for a few minutes. */
+  private async restAhead(s: number): Promise<RestAhead | null> {
+    const route = this.engine.route;
+    if (!route || this.demo) return null;
+    const c = this.restCache;
+    if (c && Date.now() - c.at < 5 * 60_000 && s - c.s < 1500) return c.rest && c.rest.dist - (s - c.s) > 300 ? { ...c.rest, dist: c.rest.dist - (s - c.s) } : null;
+    const cat = CATEGORIES.find((x) => x.id === 'rest');
+    if (!cat) return null;
+    const found = await Promise.race([
+      this.cats.alongRoute(cat, route, s, this.L, this.settings.units).catch(() => [] as CategoryPlace[]),
+      new Promise<CategoryPlace[]>((r) => window.setTimeout(() => r([]), 5000)),
+    ]);
+    const next = found.filter((x) => x.alongS != null && x.alongS > s + 300).sort((a, b) => a.alongS! - b.alongS!)[0];
+    const rest = next ? { name: next.name, dist: next.alongS! - s } : null;
+    this.restCache = { at: Date.now(), s, rest };
+    return rest;
+  }
+
+  /** A break reminder or a tiredness warning: its sound, then the words. */
+  private async sayAlertEvent(ev: Exclude<AlertEvent, { kind: 'talk' } | { kind: 'rested' }>, s: number) {
+    const rest = await this.restAhead(s);
+    if (this.view !== 'nav') return;
+    const units = this.settings.units;
+    const L = this.L;
+    const text =
+      ev.kind === 'limit' ? limitSpeech(ev.driven, rest, L, units) : ev.kind === 'remind' ? remindSpeech(ev.driven, ev.level, rest, L, units) : drowsySpeech(ev.signs, L, rest, units);
+    const drowsy = ev.kind === 'drowsy';
+    this.voice.alert(drowsy || (ev.kind === 'remind' && ev.level === 3) ? 'wake' : 'camera');
+    window.setTimeout(() => {
+      if (this.view !== 'nav') return;
+      this.say(text, drowsy);
+      this.alertWatch.said(this.alertClock);
+    }, drowsy ? 1200 : 520);
+    // On the screen, the first two sentences (the chip says the rest).
+    toast(text.split(/(?<=[.。])\s*/).slice(0, 2).join(' '), 6000);
+  }
+
+  /** A joke, a fact or a riddle (its answer a few seconds later). */
+  private async sayTalk(reason: 'tired' | 'drowsy' | 'often') {
+    const deck = await this.deck();
+    const topics = (this.settings.talkTopics ?? []) as TalkTopic[];
+    const pick = deck.next(this.L, topics);
+    if (!pick || this.view !== 'nav' || !this.voice.enabled) return;
+    const L = this.L;
+    const q = typeof pick.item === 'string' ? pick.item : pick.item[0];
+    const intro = this.talkedThisDrive ? '' : `${talkIntro(reason, L)} `;
+    this.talkedThisDrive = true;
+    const text = `${intro}${talkLead(pick.topic, L, pick.n)} ${q}`;
+    this.say(text, false);
+    const perChar = L === 'ja' ? 140 : 70;
+    this.talkUntil = Date.now() + text.length * perChar + 600;
+    if (typeof pick.item !== 'string') {
+      // The answer a few seconds after the question, at a moment the guidance is not speaking.
+      const answer = `${answerLead(L)} ${pick.item[1]}`;
+      const sayAnswer = (tries: number) => {
+        if (this.view !== 'nav') return;
+        if (Date.now() - this.lastSayAt < 2500) {
+          if (tries > 0) window.setTimeout(() => sayAnswer(tries - 1), 3000);
+          return;
+        }
+        this.say(answer, false);
+        this.talkUntil = Date.now() + answer.length * perChar + 400;
+      };
+      window.setTimeout(() => sayAnswer(10), text.length * perChar + 7000);
+    }
+  }
+
+  /** One joke, fact or riddle, from Settings, to hear what the talk sounds like. */
+  private async sampleTalk(topics: TalkTopic[], lang: LangCode) {
+    this.voice.unlock();
+    const pick = (await this.deck()).next(lang, topics);
+    if (!pick) return toast('Choose at least one topic.', 3000);
+    const speech = LANGS[lang].speechLang;
+    const q = typeof pick.item === 'string' ? pick.item : pick.item[0];
+    const text = `${talkLead(pick.topic, lang, pick.n)} ${q}`;
+    const was = this.voice.enabled;
+    this.voice.enabled = true;
+    this.voice.speak(text, speech, true);
+    if (typeof pick.item !== 'string') this.voice.speak(`${answerLead(lang)} ${pick.item[1]}`, speech, false);
+    this.voice.enabled = was;
+    toast(typeof pick.item === 'string' ? q : `${q} ${pick.item[1]}`, 6000);
+  }
+
+  /** "Time for a break · 2 h 05" (or the signs of tiredness), with a button for the rest areas ahead. */
+  private paintAlertChip() {
+    const chip = this.el.alertChip;
+    const d = new Date();
+    const st = this.alertWatch.state(this.alertClock, d.getHours() + d.getMinutes() / 60);
+    if (!st.due && !st.drowsy) {
+      if (!chip.hidden) chip.hidden = true;
+      return;
+    }
+    const w = chipWords(this.L);
+    const time = drivenWords(st.driven, this.L);
+    const state = st.drowsy ? 'drowsy' : 'due';
+    const key = `${state}|${time}|${this.L}`;
+    if (chip.dataset.key !== key) {
+      chip.dataset.key = key;
+      chip.dataset.state = state;
+      const find = h('button', { type: 'button', class: 'alert-find' }, w.find);
+      find.addEventListener('click', () => this.findRestAreas());
+      chip.replaceChildren(
+        h('span', { class: 'alert-ico', html: ICON.coffee }),
+        h('span', { class: 'alert-line' }, h('span', { class: 'alert-title' }, st.drowsy ? w.drowsy : w.due), h('span', { class: 'alert-time' }, `${w.driving} ${time}`)),
+        find,
+      );
+      chip.setAttribute('aria-label', `${st.drowsy ? w.drowsy : w.due}, ${w.driving} ${time}`);
+    }
+    if (chip.hidden) chip.hidden = false;
+  }
+
+  /** The rest areas along the route ahead, from the break chip. */
+  private findRestAreas() {
+    const cat = CATEGORIES.find((x) => x.id === 'rest');
+    if (!cat || this.view !== 'nav') return;
+    this.navOverlay = 'search';
+    this.results = [];
+    void this.runAlongRoute(cat);
   }
 
   /** Toll plazas found on the active route: the voice reminder and the icons on the map. */
@@ -3150,6 +3385,8 @@ class App {
     w.mode = this.settings.speedAlerts;
     w.margin = this.settings.speedMargin;
     w.cameras = this.settings.speedCams;
+    w.highway = this.settings.speedHighway;
+    w.town = this.settings.speedTown;
   }
 
   /** New speed data for the active route: the engine's warnings and the cameras on the map. */
@@ -3386,6 +3623,7 @@ class App {
     this.paintTrafficChip(p);
     this.paintTollChip(p);
     this.paintCamChip(p);
+    this.alertTick(p, fix, prompts.length > 0);
     if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
@@ -3522,7 +3760,7 @@ class App {
     this.engine.setRoute(r, detectJunctions(r), startS);
     this.engine.laneMode = this.settings.laneAlerts;
     this.engine.tunnelAlerts = this.settings.tunnelAlerts;
-    this.engine.tollAlerts = this.settings.tollAlerts;
+    this.engine.tollVoice = this.settings.tollVoice;
     this.syncSpeedSettings();
     this.tunnels.setRoute(r);
     this.tolls.setRoute(r);
@@ -4348,6 +4586,7 @@ class App {
       pack: ARTIFACT ? undefined : this.offline,
       places: ARTIFACT ? undefined : this.placesSvc,
       pins: { count: this.pins.pins.length, clear: () => this.pins.clear() },
+      talk: { sample: (topics, lang) => void this.sampleTalk(topics, lang) },
       myPlaces: ARTIFACT
         ? undefined
         : {
@@ -4376,12 +4615,13 @@ class App {
     if (!next) return;
     this.engine.laneMode = next.laneAlerts;
     this.engine.tunnelAlerts = next.tunnelAlerts;
-    this.engine.tollAlerts = next.tollAlerts;
+    this.engine.tollVoice = next.tollVoice;
     if (this.view === 'nav') this.map.setTolls(next.tollAlerts ? this.tolls.plazas.map((p) => p.at) : []);
     const prev = this.settings;
     this.settings = next;
     saveSettings(next);
     this.syncSpeedSettings();
+    this.syncAlertSettings();
     if (this.view === 'nav') {
       this.onSpeedInfo(this.speedData.info);
       // The speed instrument in the new look and units at once, not at the next GPS fix.

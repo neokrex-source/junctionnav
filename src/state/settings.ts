@@ -6,6 +6,7 @@ import type { PlacesUpdate } from '../places/schedule';
 import { isDaylight } from './daylight';
 import type { ThemeId } from '../theme/palette';
 import type { SpeedAlertMode } from '../nav/speedWatch';
+import type { TalkMode, TalkTopic } from '../talk/types';
 
 export interface Settings {
   mapStyle: string;
@@ -36,14 +37,29 @@ export interface Settings {
   laneAlerts: 'gps' | 'advice' | 'off';
   /** Tunnel sign card and voice warning before tunnels. */
   tunnelAlerts: boolean;
-  /** Voice reminder and a chip before toll plazas (get the Touch 'n Go card ready). */
+  /** The toll plaza chip over the arrival time and the plazas on the map. */
   tollAlerts: boolean;
+  /**
+   * Spoken toll reminders: 'full' about 2 km before an expressway plaza and again 600 m before it
+   * (500 m and just before in town), 'short' 1 km and just before, or none.
+   */
+  tollVoice: 'full' | 'short' | 'off';
   /** The speed limit beside the speed, and warnings near and over it: tone and voice, tone only, the sign only, or off. */
   speedAlerts: SpeedAlertMode;
   /** Warn this many km/h before the limit. */
   speedMargin: number;
   /** Warnings before speed cameras and average speed checks. */
   speedCams: boolean;
+  /** The speed limit guide (sign and warnings) on highways (expressways), and on all other roads. */
+  speedHighway: boolean;
+  speedTown: boolean;
+  /** Remind me to rest after this many minutes of driving without a break (0: no reminders). */
+  focusLimit: number;
+  /** Jokes, facts and riddles to keep the driver awake: off, when tired, or every 20 minutes on long drives. */
+  talkMode: TalkMode;
+  talkTopics: TalkTopic[];
+  /** Watch the driving (lane and speed wander) for signs of tiredness. */
+  drowsyDetect: boolean;
   /** With offline maps downloaded: use them only without internet ('auto') or all the time. */
   offlineUse: 'auto' | 'always';
   /** Version of the app's look the settings were saved with (moves old default map styles on). */
@@ -113,9 +129,16 @@ export const DEFAULTS: Settings = {
   laneAlerts: 'gps',
   tunnelAlerts: true,
   tollAlerts: true,
+  tollVoice: 'full',
   speedAlerts: 'voice',
   speedMargin: 5,
   speedCams: true,
+  speedHighway: true,
+  speedTown: true,
+  focusLimit: 120,
+  talkMode: 'tired',
+  talkTopics: ['jokes', 'riddles', 'malaysia', 'world', 'cars', 'animals', 'lifehacks', 'science'],
+  drowsyDetect: true,
   offlineUse: 'auto',
   look: 2,
   mapScale: 'auto',
@@ -161,6 +184,10 @@ export function loadSettings(): Settings {
       const merged = { ...DEFAULTS, ...saved, avoid: { ...DEFAULTS.avoid, ...(saved.avoid ?? {}) } };
       if (saved.avoidTolls) merged.avoid.tolls = true; // older versions
       if (!['junction', 'jet', 'casual'].includes(merged.theme)) merged.theme = DEFAULTS.theme;
+      if (!Array.isArray(merged.talkTopics)) merged.talkTopics = [...DEFAULTS.talkTopics];
+      if (!['full', 'short', 'off'].includes(merged.tollVoice)) merged.tollVoice = DEFAULTS.tollVoice;
+      // Before the toll voice had its own setting, turning off the toll alerts turned off both.
+      if (saved.tollAlerts === false && saved.tollVoice === undefined) merged.tollVoice = 'off';
       // The old default map follows the app to its new look; a style picked on purpose stays.
       if ((saved.look ?? 1) < LOOK && (!saved.mapStyle || saved.mapStyle === 'ofm-liberty')) merged.mapStyle = DEFAULTS.mapStyle;
       merged.look = LOOK;
@@ -169,7 +196,7 @@ export function loadSettings(): Settings {
   } catch {
     /* storage unavailable */
   }
-  return { ...DEFAULTS, avoid: { ...DEFAULTS.avoid } };
+  return { ...DEFAULTS, avoid: { ...DEFAULTS.avoid }, talkTopics: [...DEFAULTS.talkTopics] };
 }
 
 export function saveSettings(s: Settings) {
