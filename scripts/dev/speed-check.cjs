@@ -40,7 +40,7 @@ async function open(browser, settings) {
     window.__spoken = [];
     window.speechSynthesis.speak = (u) => window.__spoken.push(u.text);
     localStorage.setItem('junctionnav.settings.v1', JSON.stringify(s));
-  }, { services: 'open', trafficNews: false, look: 2, appearance: 'day', ...settings });
+  }, { services: 'open', trafficNews: false, look: 2, appearance: 'day', voiceStyle: 'plain', ...settings });
   await page.goto(BASE + '?demo');
   const guest = page.getByText('Continue without an account');
   if (await guest.waitFor({ state: 'visible', timeout: 6000 }).then(() => true, () => false)) await guest.click();

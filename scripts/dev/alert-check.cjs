@@ -134,16 +134,16 @@ const waitSaid = (page, re, ms = 20_000) =>
       w.driven = 119.5 * 60_000;
     });
     // (Between midnight and 6 am the limit comes a quarter sooner, so it may already be past.)
-    const limitSaid = await waitSaid(page, /^You have been driving for (2 hours|1 hour 55 minutes)\. Time for a break of at least 15 minutes\./);
+    const limitSaid = await waitSaid(page, /^You have been driving for (2 hours|1 hour 55 minutes)(, sir)?\. Time for a break of at least 15 minutes\./);
     const after = await page.evaluate(() => ({ tones: window.__tones.slice(), chip: window.__app.el.alertChip.hidden ? null : window.__app.el.alertChip.innerText.replace(/\s+/g, ' '), state: window.__app.el.alertChip.dataset.state }));
     check('at the focus limit: a tone and "You have been driving for 2 hours. Time for a break"', limitSaid && after.tones.includes('camera'), { tones: after.tones, spoken: await spoken(page) });
     check('the break chip shows the driving time and Find R&R', /Time for a break/.test(after.chip ?? '') && /Driving (2 hours|1 hour 55 minutes)/.test(after.chip ?? '') && /Find R&R/.test(after.chip ?? '') && after.state === 'due', after.chip);
     await page.screenshot({ path: join(OUT, '02-break-chip.png') });
     // The talk starts a few minutes (of the sped-up drive) later.
     await page.evaluate(() => (window.__app.alertWatch.nextTalk = 1));
-    const talked = await waitSaid(page, /^I will chat a little to help you stay awake\./, 30_000);
+    const talked = await waitSaid(page, /^I will chat a little to help you stay awake(, sir)?\./, 30_000);
     const talk = (await spoken(page)).find((t) => t.startsWith('I will chat'));
-    check('the first chat says why, then a joke or riddle', talked && /stay awake\. (Here is a joke\.|Joke time\.|A quick one for you\.|This one might make you smile\.|Riddle time\. Have a think\.|Here is a riddle\.|Quick quiz\.|Try this one\.) .{10,}/.test(talk ?? ''), talk);
+    check('the first chat says why, then a joke or riddle', talked && /stay awake(, sir)?\. (Here is a joke\.|Joke time\.|A quick one for you\.|This one might make you smile\.|Riddle time\. Have a think\.|Here is a riddle\.|Quick quiz\.|Try this one\.) .{10,}/.test(talk ?? ''), talk);
     if (/\?$/.test(talk ?? '')) {
       const answered = await waitSaid(page, /^The answer: /, 40_000);
       check('a riddle’s answer follows a few seconds later', answered, await spoken(page));
@@ -174,7 +174,7 @@ const waitSaid = (page, re, ms = 20_000) =>
 
     // The tiredness warning.
     await page.evaluate(() => window.__app.sayAlertEvent({ kind: 'drowsy', driven: 125 * 60_000, signs: ['wander', 'speed'] }, window.__app.engine.progress.s));
-    await waitSaid(page, /^Stay alert\. Your car seems to be wandering in the lane\./, 8000);
+    await waitSaid(page, /^Stay alert(, sir)?\. Your car seems to be wandering in the lane\./, 8000);
     await page.evaluate(() => (window.__app.alertWatch.drowsyAt = window.__app.alertClock));
     await sleep(800);
     const drowsy = await page.evaluate(() => ({ tones: window.__tones.slice(), state: window.__app.el.alertChip.dataset.state, chip: window.__app.el.alertChip.innerText.replace(/\s+/g, ' ') }));

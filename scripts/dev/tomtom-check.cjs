@@ -190,7 +190,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (window.speechSynthesis) window.speechSynthesis.speak = (u) => (window.__said.push(u.text), orig?.(u));
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
-    localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ tomtomKey: 'TEST-KEY', services: 'tomtom', trafficNews: false, look: 2 }));
+    localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ tomtomKey: 'TEST-KEY', services: 'tomtom', trafficNews: false, look: 2, voiceStyle: 'plain' }));
   });
   const shot = (n) => page.screenshot({ path: join(OUT, `${n}.png`) });
   await page.goto(BASE);

@@ -129,6 +129,30 @@
 @media (prefers-reduced-motion: reduce) {
   .app[data-view] .alert-chip[data-state="drowsy"] { animation: none; }
 }
+/* "Before you go": the toll card (on toll routes), fuel and the car, before a drive of more than 30 minutes. */
+.pretrip {
+  align-self: flex-start;
+  width: min(320px, 100%);
+  padding: 10px 10px 10px 14px;
+  border-radius: 16px;
+  color: var(--ink);
+  --pre: var(--sign-fg);
+  box-shadow: var(--shadow), var(--edge), inset 4px 0 0 var(--pre);
+}
+.app[data-view] .pretrip { background: var(--surface-solid); }
+.pretrip[hidden] { display: none; }
+.pretrip-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 700 16px/1.1 var(--font-cond); }
+.pretrip-head .mini { width: 30px; height: 30px; flex: none; }
+.pretrip-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.pretrip-list li { display: flex; align-items: center; gap: 9px; font: 600 14px/1.2 var(--font-ui, inherit); }
+.pretrip-ico { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--pre) 14%, transparent); color: var(--pre); }
+.pretrip-ico svg { width: 18px; height: 18px; }
+.app:has(.sheet.is-nav:not([hidden])) .pretrip { visibility: hidden; }
+@media (max-width: 480px) {
+  .pretrip { margin-right: 66px; width: auto; }
+}
+:root[data-skin="jet"] .pretrip { border-radius: 4px; }
+.voice-rows[hidden] { display: none; }
 .talk-topics { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin: 4px 0; }
 @media (max-width: 380px) { .talk-topics { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) {

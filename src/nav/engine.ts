@@ -8,8 +8,13 @@ import { TUNNEL_MIN_VOICE, tunnelStateAt, type TunnelSpan, type TunnelState } fr
 import { highwayAt, type SpeedInfo } from './speed';
 import { SpeedWatch, type SpeedPrompt, type SpeedState } from './speedWatch';
 
-/** "You have reached your destination" is said this far before the end of the route. */
+/**
+ * The arrival zone: "Your destination is 300 metres ahead" is said as the car comes into it (and
+ * leaving the route in it, into a car park say, is no reason to reroute). The arrival itself is
+ * said at the destination, within ARRIVED_AT of the end.
+ */
 export const ARRIVAL_RADIUS = 300;
+export const ARRIVED_AT = 30;
 
 /** Short routes (under twice the radius) only announce arrival at the end itself. */
 export function arrivalRadius(route: Route): number {
@@ -60,11 +65,11 @@ export interface Progress {
   speedo: SpeedState;
   /** Position estimated without GPS. */
   dr: boolean;
-  /** Within the arrival radius of the final destination: arrival is announced, voice guidance ends. */
+  /** Within the arrival radius of the final destination (no rerouting there). */
   nearDestination: boolean;
 }
 
-export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollMid' | 'tollNear' | 'speed';
+export type PromptKind = 'maneuver' | 'laneEarly' | 'laneWrong' | 'laneLate' | 'tunnel' | 'toll' | 'tollMid' | 'tollNear' | 'speed' | 'arriveNear' | 'arrived';
 
 export interface Prompt {
   key: string;
@@ -81,7 +86,7 @@ export interface Prompt {
   speed?: SpeedPrompt;
   /**
    * On the first heads-up for a turn the router gave no lanes for: the side of the road to move
-   * to ("Move into the left lane").
+   * to ("Move into the left lane"). For the arrival prompts: the side the destination is on.
    */
   side?: 'left' | 'right';
 }
@@ -353,17 +358,46 @@ export class NavEngine {
   prompts(p: Progress): Prompt[] {
     const out: Prompt[] = [];
     const step = p.next;
-    // In the arrival zone the app says "You have reached your destination" and voice guidance
-    // stops; the final arrival step gets no "in 500 metres" prompts of its own either (tunnels
-    // and toll plazas on the way there still do).
-    if (p.nearDestination) return out;
+    // The last stretch has the arrival prompts instead of "in 500 metres" ones; turns before it,
+    // even inside the last 300 m, are announced as usual.
     const finalLeg = step.type === 'arrive' && !step.waypoint;
+    if (finalLeg) out.push(...this.arrivalPrompts(p));
+    if (out.some((x) => x.kind === 'arrived')) return out;
     if (!finalLeg) out.push(...this.maneuverPrompts(p));
     if (out.length) this.lastSpeech = this.now;
     if (!finalLeg) out.push(...this.lanePrompts(p, out));
     out.push(...this.tunnelPrompts(p, out));
     out.push(...this.tollPrompts(p, out));
     out.push(...this.speedPrompts(p));
+    return out;
+  }
+
+  /**
+   * "Your destination is 300 metres ahead, on the left" as the car comes within the arrival zone
+   * on the last stretch (not when that stretch is too short to be worth it), and "You have
+   * arrived" at the destination itself.
+   */
+  private arrivalPrompts(p: Progress): Prompt[] {
+    const route = this.route;
+    if (!route) return [];
+    const step = p.next;
+    const m = step.modifier ?? '';
+    const side = m.includes('left') ? 'left' : m.includes('right') ? 'right' : undefined;
+    const out: Prompt[] = [];
+    const nearKey = 'arrive:near';
+    const atKey = 'arrive:at';
+    const radius = arrivalRadius(route);
+    if (!this.announced.has(atKey) && (p.arrived || p.remaining <= ARRIVED_AT)) {
+      this.announced.add(atKey);
+      this.announced.add(nearKey);
+      out.push({ key: atKey, step, distance: null, kind: 'arrived', ...(side ? { side } : {}) });
+      return out;
+    }
+    if (!this.announced.has(nearKey) && p.remaining <= radius) {
+      this.announced.add(nearKey);
+      // Within the last few seconds of driving the arrival itself covers it.
+      if (p.remaining > ARRIVED_AT + Math.max(40, p.speed * 5)) out.push({ key: nearKey, step, distance: p.remaining, kind: 'arriveNear', ...(side ? { side } : {}) });
+    }
     return out;
   }
 

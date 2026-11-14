@@ -957,6 +957,22 @@ export function arrivalSpeech(lang: LangCode, side?: 'left' | 'right'): string {
   return `You have reached your destination.${side ? ` It is on your ${side}.` : ''}`;
 }
 
+/** As the car comes into the last 300 m: "Your destination is 300 metres ahead, on the left." */
+export function arrivalNearSpeech(dist: number, lang: LangCode, units: Units, side?: 'left' | 'right'): string {
+  const d = LANGS[lang].spokenDistance(dist, units);
+  if (lang === 'ms') return `Destinasi anda ${d} di hadapan${side ? `, di sebelah ${side === 'left' ? 'kiri' : 'kanan'}` : ''}.`;
+  if (lang === 'ja') return `目的地は${d}先${side ? `、${side === 'left' ? '左' : '右'}側` : ''}です。`;
+  return `Your destination is ${d} ahead${side ? `, on the ${side}` : ''}.`;
+}
+
+/** Parked inside the arrival zone short of the destination: how far it still is. */
+export function stoppedNearSpeech(dist: number, lang: LangCode, units: Units): string {
+  const d = LANGS[lang].spokenDistance(dist, units);
+  if (lang === 'ms') return `Destinasi anda kira-kira ${d} dari sini. Panduan ditamatkan.`;
+  if (lang === 'ja') return `目的地はここから約${d}です。案内を終了します。`;
+  return `Your destination is about ${d} from here. Guidance ends.`;
+}
+
 /* ------------------------------------------------------------------ tunnels */
 
 /** Spoken warning before a tunnel: distance, name, length, headlights. */

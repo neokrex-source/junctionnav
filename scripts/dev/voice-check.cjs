@@ -49,7 +49,7 @@ const check = (name, ok, detail) => {
     synth.speak = (u) => window.__spoken.push({ text: u.text, voice: u.voice?.name ?? null, pitch: u.pitch, lang: u.lang });
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
-    localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ services: 'open', trafficNews: false, look: 2 }));
+    localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ services: 'open', trafficNews: false, look: 2, voiceStyle: 'plain' }));
   });
   await page.goto(BASE);
   const guest = page.getByText('Continue without an account');
@@ -88,7 +88,7 @@ const check = (name, ok, detail) => {
   await page.click('#set-tab-app');
   await page.selectOption('#lang', 'ja');
   await page.click('#set-tab-drive');
-  const note = await page.$eval('.voice-pick .hint', (e) => e.textContent);
+  const note = await page.$eval('.voice-pick .hint[role="status"]', (e) => e.textContent);
   await page.click('text=Test voice');
   spoken = await page.evaluate(() => window.__spoken.at(-1));
   check('no male Japanese voice: Settings says so and the usual voice speaks lower', /No male voice/.test(note) && spoken?.pitch < 1, { note, spoken });

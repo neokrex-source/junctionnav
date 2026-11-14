@@ -181,7 +181,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
     // Routes from the (mocked) OSRM here; tomtom-check.cjs covers TomTom routing and search.
-    localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ tomtomKey: 'TEST-KEY', services: 'open', voice: true, look: 2 }));
+    localStorage.setItem('junctionnav.settings.v1', JSON.stringify({ tomtomKey: 'TEST-KEY', services: 'open', voice: true, look: 2, voiceStyle: 'plain' }));
     // Capture what the app says.
     window.__said = [];
     const orig = window.speechSynthesis?.speak?.bind(window.speechSynthesis);

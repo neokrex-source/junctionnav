@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickVoice, voiceGender, voicesFor, type VoiceInfo } from '../src/nav/sources';
+import { MALE_FALLBACK_PITCH, pickVoice, voiceGender, voicesFor, voiceQuality, type VoiceInfo } from '../src/nav/sources';
 
 describe('telling voices apart', () => {
   it('reads Android voice codes, gender tags and people’s names', () => {
@@ -53,12 +53,40 @@ describe('picking the voice', () => {
   });
 
   it('no man’s voice known for the language: the usual voice, a little lower', () => {
-    expect(pickVoice(voices, 'ms-MY', { gender: 'male', id: '' })).toEqual({ voice: null, pitch: 0.8 });
+    expect(pickVoice(voices, 'ms-MY', { gender: 'male', id: '' })).toEqual({ voice: null, pitch: MALE_FALLBACK_PITCH });
   });
 
   it('a voice picked by name wins when it speaks the language', () => {
     expect(pickVoice(voices, 'ms-MY', { gender: 'male', id: 'ms-my-x-msm-network' })).toEqual({ voice: voices[5], pitch: 1 });
     // Picked for another language: ignored for this one.
     expect(pickVoice(voices, 'ms-MY', { gender: 'female', id: 'en-gb-x-gbd-local' }).voice?.id).toBe('ms-my-x-mfm-local');
+  });
+});
+
+describe('the most human voice first', () => {
+  const v = (id: string, label: string, lang: string, local = true, index = 0): VoiceInfo => ({ id, label, lang, gender: voiceGender(label), index, local });
+
+  it('rates natural voices above robotic ones', () => {
+    expect(voiceQuality({ id: 'x', label: 'Microsoft Libby Online (Natural) - English (United Kingdom)' })).toBeGreaterThan(0);
+    expect(voiceQuality({ id: 'x', label: 'Daniel (Enhanced)' })).toBeGreaterThan(0);
+    expect(voiceQuality({ id: 'x', label: 'Zarvox' })).toBeLessThan(0);
+    expect(voiceQuality({ id: 'en-gb-x-gbd-local', label: 'en-gb-x-gbd-local' })).toBe(0);
+  });
+
+  it('in a browser online, a natural voice that needs internet beats a plain offline one', () => {
+    const list = [v('hazel', 'Microsoft Hazel - English (United Kingdom)', 'en-GB'), v('libby', 'Microsoft Libby Online (Natural) - English (United Kingdom)', 'en-GB', false)];
+    expect(voicesFor(list, 'en-GB', { online: true, native: false }).map((x) => x.id)).toEqual(['libby', 'hazel']);
+    // Without internet it cannot speak: offline first.
+    expect(voicesFor(list, 'en-GB', { online: false, native: false }).map((x) => x.id)).toEqual(['hazel', 'libby']);
+  });
+
+  it('on the phone, offline voices stay first (they start at once on a weak signal)', () => {
+    const list = [v('en-gb-x-gbd-network', 'en-gb-x-gbd-network', 'en-GB', false), v('en-gb-x-gbd-local', 'en-gb-x-gbd-local', 'en-GB')];
+    expect(voicesFor(list, 'en-GB', { online: true, native: true })[0].id).toBe('en-gb-x-gbd-local');
+  });
+
+  it('picks the natural man’s voice when asked for a man', () => {
+    const list = [v('david', 'Microsoft David - English (United States)', 'en-GB', true, 0), v('ryan', 'Microsoft Ryan Online (Natural) - English (United Kingdom)', 'en-GB', false, 1), v('sonia', 'Microsoft Sonia Online (Natural) - English (United Kingdom)', 'en-GB', false, 2)];
+    expect(pickVoice(list, 'en-GB', { gender: 'male', id: '' }).voice?.id).toBe('ryan');
   });
 });

@@ -32,7 +32,7 @@ import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from '
 import { TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
 import { limitAt, OverpassRoadsAhead, SpeedLoader, type SpeedInfo } from './nav/speed';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
-import { arrivalSpeech, describeStep, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, speedIn, speedSpeech, speedWords, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
+import { arrivalNearSpeech, arrivalSpeech, describeStep, stoppedNearSpeech, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, speedIn, speedSpeech, speedWords, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
 import { AligningRouter, RouteAligner, routeData } from './routing/aligner';
 import { OsrmRouter } from './routing/osrm';
 import type { Avoid, ManeuverType, Route, Router } from './routing/types';
@@ -70,6 +70,8 @@ import { AlertWatch, type AlertEvent, type AlertSnapshot } from './nav/alert';
 import { TalkDeck } from './talk/deck';
 import type { TalkTopic } from './talk/types';
 import { answerLead, chipWords, drivenWords, drowsySpeech, limitSpeech, remindSpeech, restedText, talkIntro, talkLead, type RestAhead } from './talk/speech';
+import { Persona, PRETRIP_MIN, pretripWords, speechText, type TripInfo } from './voice/persona';
+import { CloudTts, cloudTier, cloudVoicesFor, type CloudProblem } from './voice/cloud';
 import { PlacesService } from './places/service';
 import { SmartSearch, searchTexts } from './search/smartSearch';
 import { PinStore, pinPlace, type Pin } from './pins/pins';
@@ -106,6 +108,28 @@ const VOICE_SAMPLE: Record<LangCode, string> = {
   ms: 'Dalam 300 meter, ikut kiri untuk keluar ke Kuala Lumpur.',
   ja: '300メートル先、左方向です。クアラルンプール方面の出口です。',
 };
+/** Why Google's voice is not speaking, for the driver. */
+function cloudProblemText(p: CloudProblem): string {
+  switch (p) {
+    case 'api':
+      return 'Google\u2019s voice needs the Cloud Text-to-Speech API enabled for the Google key\u2019s project.';
+    case 'billing':
+      return 'Google\u2019s voice needs billing turned on in the Google key\u2019s Cloud project.';
+    case 'key':
+      return 'The Google key was not accepted for Google\u2019s voice (check its API restrictions allow Cloud Text-to-Speech).';
+    default:
+      return 'Google\u2019s voice could not be reached.';
+  }
+}
+
+/** "en-GB-Chirp3-HD-Charon" as "Charon (Chirp 3 HD, en-GB)". */
+function cloudLabel(name: string): string {
+  const m = /^([a-z]{2,3}-[A-Z]{2})-(.+)-([^-]+)$/.exec(name);
+  if (!m) return name;
+  const kind = m[2].replace('Chirp3-HD', 'Chirp 3 HD').replace('Chirp-HD', 'Chirp HD').replace('Wavenet', 'WaveNet');
+  return `${m[3]} (${kind}, ${m[1]}${cloudTier(name) >= 4 ? ', most natural' : ''})`;
+}
+
 /** The traffic chip opens into a card with the details this close to an incident on the route. */
 const TRAFFIC_CARD_WITHIN = 500;
 /** Traffic answers older than this no longer count for the arrival time. */
@@ -170,6 +194,9 @@ const ICON = {
   phone: svg(`<path ${S} d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>`),
   globe: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/>`),
   food: svg(`<path ${S} d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.5 1-3.5 4-3.5 7.5 0 2 1.5 3 3.5 3"/>`),
+  card: svg(`<rect ${S} x="3" y="6" width="18" height="12" rx="2"/><path ${S} d="M3 10h18M7 15h4"/>`),
+  fuel: svg(`<path ${S} d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M6 9h6"/><path ${S} d="M14 10h2a2 2 0 0 1 2 2v4a1.5 1.5 0 0 0 3 0V8l-3-3"/>`),
+  car: svg(`<path ${S} d="M5 16V11l2-5h10l2 5v5M3 16h18v3H3zM7.5 19v1.5M16.5 19v1.5M5 11h14"/><circle cx="7.5" cy="13.5" r="1" fill="currentColor"/><circle cx="16.5" cy="13.5" r="1" fill="currentColor"/>`),
   coffee: svg(`<path ${S} d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3c0 1.5 1 1.5 1 3M12 3c0 1.5 1 1.5 1 3M3 21h14"/>`),
   share: svg(`<circle ${S} cx="18" cy="5.5" r="2.5"/><circle ${S} cx="6" cy="12" r="2.5"/><circle ${S} cx="18" cy="18.5" r="2.5"/><path ${S} d="m8.2 10.8 7.6-4.1M8.2 13.2l7.6 4.1"/>`),
   edit: svg(`<path ${S} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path ${S} d="m13.5 6.5 4 4"/>`),
@@ -324,6 +351,10 @@ class App {
   private meter = new SpeedMeter();
   private drTimer = 0;
   voice = new Voice();
+  /** Google's natural voices (Settings → Voices from), with the Google key in use. */
+  cloudTts = new CloudTts(() => googleKey(this.settings));
+  /** Steps whose "now" prompt has been fetched in Google's voice already. */
+  private cloudPrefetched = new WeakSet<object>();
   wake = new ScreenWake();
   banner = new Banner();
   panel!: JunctionPanel;
@@ -366,6 +397,8 @@ class App {
   arrivedAnnounced = false;
   private endingNav = false;
   private stillSince = 0;
+  /** How the voice speaks (butler or plain) and how it addresses the driver. */
+  persona = new Persona();
   /** Staying alert on long drives: the driving clock, break reminders, tiredness and the talk. */
   alertWatch = new AlertWatch();
   private alertClock = 0;
@@ -455,6 +488,7 @@ class App {
     tollChip: h('div', { class: 'toll-chip card', hidden: true, role: 'status' }),
     camChip: h('div', { class: 'cam-chip card', hidden: true, role: 'status' }),
     alertChip: h('div', { class: 'alert-chip card', hidden: true, role: 'status' }),
+    pretrip: h('div', { class: 'pretrip card', hidden: true, role: 'status' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -2596,7 +2630,7 @@ class App {
     e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
-      h('div', { class: 'nav-stack' }, e.faster, e.trafficCard, e.trafficChip, e.alertChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      h('div', { class: 'nav-stack' }, e.pretrip, e.faster, e.trafficCard, e.trafficChip, e.alertChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
       e.speed,
     );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
@@ -2889,26 +2923,34 @@ class App {
     const units = this.settings.units;
     switch (pr.kind) {
       case 'laneEarly':
-        return lanePhrase('early', pr.lane!, this.L, units);
+        return this.persona.maneuver(lanePhrase('early', pr.lane!, this.L, units), pr.key, false);
       case 'laneWrong':
-        return lanePhrase('wrong', pr.lane!, this.L, units);
+        return this.persona.attention(lanePhrase('wrong', pr.lane!, this.L, units));
       case 'laneLate':
         return lanePhrase('late', pr.lane!, this.L, units);
       case 'tunnel':
-        return tunnelSpeech(pr.tunnel!, this.L, units);
+        return this.persona.butler ? this.persona.tunnel(pr.tunnel!) : tunnelSpeech(pr.tunnel!, this.L, units);
       case 'toll':
       case 'tollMid':
-      case 'tollNear':
-        return tollSpeech(pr.kind === 'toll' ? 'early' : pr.kind === 'tollMid' ? 'mid' : 'near', pr.toll!, this.tollPay(pr.toll!.plaza), this.L, units);
+      case 'tollNear': {
+        const kind = pr.kind === 'toll' ? 'early' : pr.kind === 'tollMid' ? 'mid' : 'near';
+        const pay = this.tollPay(pr.toll!.plaza);
+        return this.persona.butler ? this.persona.toll(kind, pr.toll!, pay) : tollSpeech(kind, pr.toll!, pay, this.L, units);
+      }
       case 'speed':
-        return speedSpeech(pr.speed!, this.L, units);
+        return this.persona.butler ? this.persona.speed(pr.speed!, pr.key) : speedSpeech(pr.speed!, this.L, units);
+      case 'arriveNear':
+        return this.persona.butler ? this.persona.arrivalNear(pr.distance ?? 300, pr.side) : arrivalNearSpeech(pr.distance ?? 300, this.L, units, pr.side);
+      case 'arrived':
+        return this.persona.butler ? this.persona.arrived(pr.side) : arrivalSpeech(this.L, pr.side);
       default: {
         const base = spokenInstruction(pr.step, pr.distance, this.L, units);
         if (pr.distance == null) return base;
         // The heads-up carries the lane to be in: from the lane data, or the turn's side without it.
-        if (pr.lane && pr.lane.status !== 'ok') return joinSpeech(base, lanePhrase('hint', pr.lane, this.L, units), this.L);
-        if (pr.side) return joinSpeech(base, turnSidePhrase(pr.side, this.L), this.L);
-        return base;
+        let text = base;
+        if (pr.lane && pr.lane.status !== 'ok') text = joinSpeech(base, lanePhrase('hint', pr.lane, this.L, units), this.L);
+        else if (pr.side) text = joinSpeech(base, turnSidePhrase(pr.side, this.L), this.L);
+        return this.persona.maneuver(text, pr.key, false);
       }
     }
   }
@@ -2923,6 +2965,34 @@ class App {
     this.el.mute.setAttribute('aria-label', this.settings.voice ? 'Mute voice' : 'Unmute voice');
     this.voice.enabled = this.settings.voice;
     this.voice.choice = { gender: this.settings.voiceGender, id: this.settings.voiceId };
+    this.voice.engine = this.settings.voiceEngine;
+    this.voice.cloud = this.cloudTts;
+    this.voice.cloudName = this.settings.cloudVoice;
+    this.voice.onCloudProblem ??= (p) => toast(`${cloudProblemText(p)} The phone\u2019s voice speaks instead.`, 7000);
+    this.syncPersona();
+  }
+
+  /**
+   * Google's voice: fetches the "now" prompts of the next two turns and the arrival while there is
+   * time, so they play the moment they are due.
+   */
+  private prefetchVoice(p: Progress) {
+    if (!this.voice.usingCloud) return;
+    const route = this.engine.route;
+    if (!route) return;
+    const i = route.steps.indexOf(p.next);
+    const ahead = i < 0 ? [] : route.steps.slice(i, i + 2);
+    const texts: string[] = [];
+    for (const st of ahead) {
+      if (this.cloudPrefetched.has(st)) continue;
+      this.cloudPrefetched.add(st);
+      if (st.type === 'arrive' && !st.waypoint) {
+        const m = st.modifier ?? '';
+        const side = m.includes('left') ? 'left' : m.includes('right') ? 'right' : undefined;
+        texts.push(this.persona.butler ? this.persona.arrived(side) : arrivalSpeech(this.L, side));
+      } else texts.push(spokenInstruction(st, null, this.L, this.settings.units));
+    }
+    if (texts.length) this.voice.prefetch(texts.map((t) => speechText(t, this.L)), LANGS[this.L].speechLang);
   }
 
   private applyLang() {
@@ -3130,12 +3200,98 @@ class App {
       const f = this.engine.deadReckon(Date.now(), { rate: this.sim?.factor ?? 1 });
       if (f) this.onFix(f);
     }, 300);
+    // Said before the first position comes in, so traffic news and warnings follow the greeting.
+    this.syncPersona();
+    this.sayStart(route, simulate);
     this.source.start(
       (f) => this.onFix(f),
       (err) => toast(err.message),
     );
+  }
+
+  /** The persona as Settings and the account have it. */
+  private syncPersona() {
+    const pz = this.persona;
+    pz.style = this.settings.voiceStyle;
+    pz.addressAs = this.settings.addressAs;
+    pz.name = this.firstName();
+    pz.lang = this.L;
+    pz.units = this.settings.units;
+  }
+
+  /** The signed-in driver's first name ('' without an account name). */
+  private firstName(): string {
+    return (this.user?.name ?? '').trim().split(/\s+/)[0] ?? '';
+  }
+
+  /** The trip as the greeting and the check before a long drive describe it. */
+  private tripInfo(route: Route): TripInfo {
+    // The same time as the arrival on screen: live traffic once it is in, else as planned.
+    const p = this.engine.route === route ? this.engine.progress : null;
+    const live = p ? this.trafficNow(p) : null;
+    const planned = this.planTraffic.get(route);
+    const duration = live ? live.time : p ? p.remainingTime : planned && Date.now() - planned.at < 15 * 60_000 ? planned.travelTime : route.duration;
+    const dest = this.trip.destination;
+    const name = dest && !parseCoordinates(dest.name) && dest.name !== this.tr('droppedPin') ? dest.name : null;
+    const end = route.geometry[route.geometry.length - 1];
+    return {
+      dest: name,
+      duration,
+      arrival: this.clock(new Date(Date.now() + duration * 1000)),
+      tolls: route.hasToll || (this.engine.route === route && this.engine.tolls.length > 0),
+      pay: this.demo ? 'tng' : tollPayment(end),
+    };
+  }
+
+  /**
+   * As guidance starts: the greeting (butler), the check before a drive of more than 30 minutes
+   * (toll card on toll routes, fuel, the car), and the first instruction.
+   */
+  private sayStart(route: Route, simulate: boolean) {
     const first = route.steps[1];
-    if (first) this.say(spokenInstruction(first, first.s > 300 ? first.s : null, this.L, this.settings.units));
+    const instruction = first ? spokenInstruction(first, first.s > 300 ? first.s : null, this.L, this.settings.units) : '';
+    const trip = this.tripInfo(route);
+    const parts: string[] = [];
+    if (this.persona.butler) parts.push(this.persona.greeting(trip, new Date().getHours()));
+    const long = this.settings.pretripCheck && trip.duration > PRETRIP_MIN;
+    if (long) {
+      parts.push(this.persona.pretrip(trip));
+      this.showPretrip(trip);
+    }
+    // Already on the move with the first turn close: the turn first.
+    const soon = first && first.s < 400 && (this.myPos == null || simulate);
+    if (instruction) soon ? parts.unshift(instruction) : parts.push(instruction);
+    // One after another (Google's voice fetches them together; each plays as soon as it can).
+    parts.forEach((t, i) => this.say(t, i === 0));
+  }
+
+  /** "Before you go": the toll card (on toll routes), the fuel and the car, until the car is on its way. */
+  private showPretrip(trip: TripInfo) {
+    const card = this.el.pretrip;
+    const w = pretripWords(this.L);
+    const items: [string, string][] = [];
+    if (trip.tolls && trip.pay !== 'none') items.push([ICON.card, trip.pay === 'etc' ? w.etc : trip.pay === 'tng' ? w.tng : w.toll]);
+    items.push([ICON.fuel, w.fuel], [ICON.car, w.car]);
+    const close = h('button', { type: 'button', class: 'mini', html: ICON.close, 'aria-label': this.tr('close') });
+    close.addEventListener('click', () => (card.hidden = true));
+    card.replaceChildren(
+      h('div', { class: 'pretrip-head' }, h('strong', {}, w.title), close),
+      h('ul', { class: 'pretrip-list' }, ...items.map(([icon, text]) => h('li', {}, h('span', { class: 'pretrip-ico', html: icon }), h('span', {}, text)))),
+    );
+    card.hidden = false;
+    card.dataset.shownAt = String(Date.now());
+  }
+
+  /** The check card goes once the car is on its way (or after a minute). */
+  private syncPretrip(p: Progress) {
+    const card = this.el.pretrip;
+    if (card.hidden) return;
+    const shown = Number(card.dataset.shownAt) || 0;
+    if (p.speed > 8.3) card.dataset.moving = String((Number(card.dataset.moving) || 0) + 1);
+    if (Date.now() - shown > 60_000 || Number(card.dataset.moving) > 8) {
+      card.hidden = true;
+      card.dataset.moving = '0';
+    }
   }
 
   private endNav() {
@@ -3159,6 +3315,7 @@ class App {
     this.map.setCameras([]);
     this.el.camChip.hidden = true;
     this.el.alertChip.hidden = true;
+    this.el.pretrip.hidden = true;
     if (!this.navSimulated && !this.demo) saveDriveClock(this.alertWatch.snapshot(Date.now()));
     this.talkUntil = 0;
     this.wake.off();
@@ -3191,7 +3348,7 @@ class App {
     if (!urgent && Date.now() < this.talkUntil) urgent = true;
     this.talkUntil = 0;
     this.lastSayAt = Date.now();
-    this.voice.speak(text, LANGS[this.L].speechLang, urgent);
+    this.voice.speak(speechText(text, this.L), LANGS[this.L].speechLang, urgent);
   }
 
   /* ================================================================ staying alert */
@@ -3223,7 +3380,7 @@ class App {
     const side = p.offset > 0.05 ? Math.sign(angleDiff(brg, bearing(p.snapped, fix.lngLat))) : 0;
     const traffic = this.traffic.onRoute.some((i) => i.s - p.s < 1200 && i.endS > p.s - 200);
     const steady =
-      p.onRoute && !fix.dr && fix.accuracy <= 20 && p.speed >= 16.7 && p.distToNext >= 400 && !p.junction && !p.tunnel && !(p.toll && p.toll.dist < 700) && !traffic && !this.arrivedAnnounced;
+      p.onRoute && !fix.dr && fix.accuracy <= 20 && p.speed >= 16.7 && p.distToNext >= 400 && !p.junction && !p.tunnel && !(p.toll && p.toll.dist < 700) && !traffic && !p.nearDestination && !this.arrivedAnnounced;
     const quiet =
       !prompted &&
       p.onRoute &&
@@ -3283,7 +3440,7 @@ class App {
     this.voice.alert(drowsy || (ev.kind === 'remind' && ev.level === 3) ? 'wake' : 'camera');
     window.setTimeout(() => {
       if (this.view !== 'nav') return;
-      this.say(text, drowsy);
+      this.say(this.persona.attention(text), drowsy);
       this.alertWatch.said(this.alertClock);
     }, drowsy ? 1200 : 520);
     // On the screen, the first two sentences (the chip says the rest).
@@ -3298,7 +3455,7 @@ class App {
     if (!pick || this.view !== 'nav' || !this.voice.enabled) return;
     const L = this.L;
     const q = typeof pick.item === 'string' ? pick.item : pick.item[0];
-    const intro = this.talkedThisDrive ? '' : `${talkIntro(reason, L)} `;
+    const intro = this.talkedThisDrive ? '' : `${this.persona.attention(talkIntro(reason, L))} `;
     this.talkedThisDrive = true;
     const text = `${intro}${talkLead(pick.topic, L, pick.n)} ${q}`;
     this.say(text, false);
@@ -3309,8 +3466,9 @@ class App {
       const answer = `${answerLead(L)} ${pick.item[1]}`;
       const sayAnswer = (tries: number) => {
         if (this.view !== 'nav') return;
-        if (Date.now() - this.lastSayAt < 2500) {
-          if (tries > 0) window.setTimeout(() => sayAnswer(tries - 1), 3000);
+        // A quiet moment first; on a busy stretch a shorter one, and in the end after what is playing.
+        if (tries > 0 && Date.now() - this.lastSayAt < (tries > 5 ? 2500 : 1200)) {
+          window.setTimeout(() => sayAnswer(tries - 1), 3000);
           return;
         }
         this.say(answer, false);
@@ -3613,7 +3771,7 @@ class App {
         window.setTimeout(() => this.say(text), 420);
       } else {
         // "Now" prompts and lane warnings interrupt; advance notices queue behind what is playing.
-        this.say(text, pr.kind === 'laneLate' || (pr.kind === 'maneuver' && pr.distance == null));
+        this.say(text, pr.kind === 'laneLate' || pr.kind === 'arrived' || (pr.kind === 'maneuver' && pr.distance == null));
       }
     }
     this.testRun?.progress(p, prompts, this.settings.tunnelAlerts);
@@ -3624,6 +3782,8 @@ class App {
     this.paintTollChip(p);
     this.paintCamChip(p);
     this.alertTick(p, fix, prompts.length > 0);
+    this.syncPretrip(p);
+    this.prefetchVoice(p);
     if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
@@ -3635,27 +3795,29 @@ class App {
       console.error('[junction] view failed', err);
     }
 
-    // Arrival: announced within 300 m of the destination; navigation ends at the end of the
-    // route, or once the car has been parked for half a minute inside that zone.
-    if (p.nearDestination && !this.arrivedAnnounced) {
+    // Arrival: "your destination is 300 metres ahead" as the car comes near (a prompt above), and
+    // "we have arrived" at the destination itself; navigation ends a few seconds after, or once
+    // the car has been parked for half a minute in the last 300 m (saying how far it still is).
+    if (prompts.some((x) => x.kind === 'arrived')) {
       this.arrivedAnnounced = true;
-      const arrive = route.steps[route.steps.length - 1];
-      const m = arrive.modifier ?? '';
-      const msg = arrivalSpeech(this.L, m.includes('left') ? 'left' : m.includes('right') ? 'right' : undefined);
-      this.say(msg);
-      toast(msg, 5000);
+      toast(this.promptText(prompts.find((x) => x.kind === 'arrived')!), 5000);
     }
-    if (this.arrivedAnnounced) {
+    if (p.nearDestination || this.arrivedAnnounced) {
       this.stillSince = p.speed < 1.5 ? this.stillSince || Date.now() : 0;
       const parked = this.stillSince > 0 && Date.now() - this.stillSince > 30_000;
-      if ((p.arrived || parked) && !this.endingNav) {
+      if ((this.arrivedAnnounced || parked) && !this.endingNav) {
         this.endingNav = true;
-        window.setTimeout(() => this.view === 'nav' && this.endNav(), p.arrived ? 6000 : 1500);
+        if (!this.arrivedAnnounced) {
+          const msg = this.persona.butler ? this.persona.stoppedNear(p.remaining) : stoppedNearSpeech(p.remaining, this.L, this.settings.units);
+          this.say(msg);
+          toast(msg, 5000);
+        }
+        window.setTimeout(() => this.view === 'nav' && this.endNav(), this.arrivedAnnounced ? 6000 : 4000);
       }
     }
 
     // Inside the arrival zone (car parks, side streets) leaving the route is expected.
-    if (p.offRoute && !this.sim && !this.demo && !this.arrivedAnnounced) {
+    if (p.offRoute && !this.sim && !this.demo && !p.nearDestination && !this.arrivedAnnounced) {
       if (!this.rerouting && !this.switchToAlternative(fix)) this.reroute(fix);
     } else if (!this.rerouting) this.el.reroute.hidden = true;
     if (!this.sim && !this.demo) this.refreshAlternatives(p, fix);
@@ -3781,7 +3943,7 @@ class App {
     this.lastStepIdx = -1;
     this.prefetch(startS);
     const next = r.steps.find((st) => st.s > startS + 5 && st.type !== 'depart');
-    if (next) this.say(spokenInstruction(next, next.s - startS > 200 ? next.s - startS : null, this.L, this.settings.units));
+    if (next) this.say(`${this.persona.newRoute()} ${spokenInstruction(next, next.s - startS > 200 ? next.s - startS : null, this.L, this.settings.units)}`.trim());
   }
 
   /**
@@ -4063,7 +4225,7 @@ class App {
    *  - news naming a road on the route (the faster route offer speaks for itself, see checkFaster).
    */
   private trafficVoice(p: Progress) {
-    if (!this.settings.trafficAlerts || !p.onRoute || p.arrived || this.arrivedAnnounced) return;
+    if (!this.settings.trafficAlerts || !p.onRoute || p.arrived || p.nearDestination || this.arrivedAnnounced) return;
     const tv = this.tv;
     const now = Date.now();
     const L = this.L;
@@ -4078,8 +4240,9 @@ class App {
       if (!tv.inside.size && !more) tv.clearPending = true;
     }
     if (now - tv.lastAt < 6000) return;
-    const say = (text: string, chime = false) => {
+    const say = (raw: string, chime = false) => {
       tv.lastAt = now;
+      const text = this.persona.attention(raw);
       if (!chime) return this.say(text, false);
       this.voice.chime();
       window.setTimeout(() => this.say(text, false), 420);
@@ -4267,7 +4430,7 @@ class App {
     if (isNew && this.settings.trafficAlerts) {
       this.tv.lastAt = Date.now();
       this.voice.chime();
-      window.setTimeout(() => this.say(fasterSpeech(best.save, this.L, total), false), 420);
+      window.setTimeout(() => this.say(this.persona.attention(fasterSpeech(best.save, this.L, total)), false), 420);
     }
   }
 
@@ -4279,7 +4442,7 @@ class App {
     this.hideFaster();
     this.takeAlternative(f.route, pr.s);
     toast(tt(this.L, 'switched'), 3500);
-    if (byItself && this.settings.trafficAlerts) this.say(tt(this.L, 'switched'), false);
+    if (byItself && this.settings.trafficAlerts) this.say(this.persona.attention(tt(this.L, 'switched')), false);
   }
 
   private startFasterCountdown() {
@@ -4575,13 +4738,44 @@ class App {
       preview: ARTIFACT,
       voices: {
         list: () => this.voice.voices(),
-        test: (lang, choice) => {
+        test: async (lang, choice, how) => {
           this.voice.unlock();
           const was = this.voice.enabled;
+          const pz = new Persona();
+          Object.assign(pz, { style: how.style, addressAs: how.addressAs, name: this.firstName(), lang, units: this.settings.units });
+          const text = speechText(pz.sample(VOICE_SAMPLE[lang], new Date().getHours()), lang);
+          const speechLang = LANGS[lang].speechLang;
           this.voice.enabled = true;
-          this.voice.speak(VOICE_SAMPLE[lang], LANGS[lang].speechLang, true, choice);
-          this.voice.enabled = was;
+          try {
+            if (how.engine === 'google') {
+              const keep = this.voice.cloudName;
+              this.voice.cloudName = how.cloudName;
+              const r = await this.voice.testCloud(text, speechLang, choice).finally(() => (this.voice.cloudName = keep));
+              return r.voice ? `Google voice: ${cloudLabel(r.voice)}.` : `${cloudProblemText(r.problem ?? 'network')} The phone\u2019s voice spoke instead.`;
+            }
+            const engine = this.voice.engine;
+            this.voice.engine = 'phone';
+            this.voice.speak(text, speechLang, true, choice);
+            this.voice.engine = engine;
+            return '';
+          } finally {
+            this.voice.enabled = was;
+          }
         },
+        cloud: async (lang) => {
+          const speechLang = LANGS[lang].speechLang;
+          const list = cloudVoicesFor(await this.cloudTts.voices(speechLang), speechLang);
+          return list.map((v, index) => ({
+            id: v.name,
+            label: cloudLabel(v.name),
+            lang: v.languageCodes[0] ?? speechLang,
+            gender: v.ssmlGender === 'MALE' ? 'male' : v.ssmlGender === 'FEMALE' ? 'female' : null,
+            index,
+            local: false,
+          }));
+        },
+        install: () => this.voice.installVoices(),
+        name: this.firstName() || undefined,
       },
       pack: ARTIFACT ? undefined : this.offline,
       places: ARTIFACT ? undefined : this.placesSvc,
@@ -4631,6 +4825,7 @@ class App {
     if (prev.placesRadius !== next.placesRadius || prev.placesUpdate !== next.placesUpdate || prev.placesWifiOnly !== next.placesWifiOnly) this.placesSvc.check();
     this.map.setUnits(next.units);
     this.applyLang();
+    if (prev.voiceEngine !== next.voiceEngine || prev.cloudVoice !== next.cloudVoice || googleKey(prev) !== googleKey(next)) this.voice.resetCloud();
     this.paintMute();
     if (NATIVE && prev.appMode !== next.appMode) void this.setAppMode(next.appMode);
     if (prev.jvSize !== next.jvSize) {

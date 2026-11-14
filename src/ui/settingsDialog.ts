@@ -59,7 +59,25 @@ export interface SettingsOptions {
   /** The stay-alert talk: say one now, to hear what it sounds like. */
   talk?: { sample: (topics: TalkTopic[], lang: Settings['lang']) => void };
   /** The voices this phone or browser can speak with, and a sample in one of them. */
-  voices?: { list: () => Promise<VoiceInfo[]>; test: (lang: Settings['lang'], choice: VoiceChoice) => void };
+  voices?: {
+    list: () => Promise<VoiceInfo[]>;
+    /** Says the sample as chosen in the dialog; resolves to a note on what spoke (or why Google's voice did not). */
+    test: (lang: Settings['lang'], choice: VoiceChoice, how: VoiceHow) => Promise<string>;
+    /** Google's natural voices for a language, with the Google key in use. */
+    cloud?: (lang: Settings['lang']) => Promise<VoiceInfo[]>;
+    /** Android: opens the phone's speech settings to add the more natural voices. */
+    install?: () => Promise<boolean>;
+    /** The first name the butler would use, if the account has one. */
+    name?: string;
+  };
+}
+
+/** How Test voice should speak: the engine, Google voice and speaking style picked in the dialog. */
+export interface VoiceHow {
+  engine: Settings['voiceEngine'];
+  cloudName: string;
+  style: Settings['voiceStyle'];
+  addressAs: Settings['addressAs'];
 }
 
 /** Speech language of each app language (as in src/routing/instructions.ts). */
@@ -135,6 +153,69 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['male', 'Male voice'],
     ]);
     const voiceId = select('voiceId', current.voiceId, [['', 'Best for the language']]);
+    const voiceStyle = select('voiceStyle', current.voiceStyle, [
+      ['butler', 'Polite assistant: speaks to you like a personal butler'],
+      ['plain', 'Short and plain prompts'],
+    ]);
+    const addressAs = select('addressAs', current.addressAs, [
+      ['sir', 'Sir (tuan, 旦那様)'],
+      ['maam', 'Ma\u2019am (puan, 奥様)'],
+      ['name', opts.voices?.name ? `My first name (${opts.voices.name})` : 'My first name (when signed in)'],
+      ['none', 'Nothing, just speak'],
+    ]);
+    const voiceEngine = select('voiceEngine', current.voiceEngine, [
+      ['phone', 'The phone\u2019s own voices (work offline)'],
+      ['google', 'Google natural voices (Google key, internet)'],
+    ]);
+    const cloudVoice = select('cloudVoice', current.cloudVoice, [['', 'Most natural for the language']]);
+    const voiceInstall = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Get more natural voices') as HTMLButtonElement;
+    voiceInstall.addEventListener('click', () => void opts.voices?.install?.());
+    let cloudList: VoiceInfo[] = [];
+    let cloudLang = '';
+    let cloudNote = '';
+    /** Google's voices for the language, once Google voices are chosen. */
+    const fillCloud = () => {
+      const want = lang.value;
+      if (voiceEngine.value !== 'google' || !opts.voices?.cloud) return;
+      const show = () => {
+        const keep = cloudVoice.value || current.cloudVoice;
+        const g = voiceGender.value;
+        const list = cloudList.filter((v) => !v.gender || v.gender === g);
+        cloudVoice.replaceChildren(
+          h('option', { value: '' }, 'Most natural for the language'),
+          ...list.map((v) => h('option', { value: v.id }, v.label)),
+        );
+        cloudVoice.value = list.some((v) => v.id === keep) ? keep : '';
+        voiceNote.textContent = cloudNote;
+      };
+      if (cloudLang === want) return show();
+      cloudLang = want;
+      cloudNote = 'Asking Google for its voices\u2026';
+      show();
+      opts.voices.cloud(want as Settings['lang']).then(
+        (list) => {
+          if (cloudLang !== want) return;
+          cloudList = list;
+          cloudNote = list.length ? '' : 'Google lists no voices for this language.';
+          show();
+        },
+        () => {
+          if (cloudLang !== want) return;
+          cloudList = [];
+          cloudLang = '';
+          cloudNote = 'Google\u2019s voices could not be listed with this key. Test voice tells why; the phone\u2019s voice speaks meanwhile.';
+          show();
+        },
+      );
+    };
+    const syncVoiceRows = () => {
+      const google = voiceEngine.value === 'google';
+      phoneRows.hidden = google;
+      cloudRows.hidden = !google;
+      addressAs.disabled = voiceStyle.value !== 'butler';
+      if (google) fillCloud();
+      else fillVoices();
+    };
     const voiceNote = h('div', { class: 'hint', role: 'status' });
     const voiceTest = h('button', { type: 'button', class: 'btn btn-ghost' }, 'Test voice') as HTMLButtonElement;
     let allVoices: VoiceInfo[] = [];
@@ -165,15 +246,31 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     if (opts.voices)
       void opts.voices.list().then((v) => {
         allVoices = v;
-        fillVoices();
+        if (voiceEngine.value !== 'google') fillVoices();
       });
-    lang.addEventListener('change', fillVoices);
+    lang.addEventListener('change', syncVoiceRows);
     voiceGender.addEventListener('change', () => {
       voiceId.value = '';
-      fillVoices();
+      cloudVoice.value = '';
+      syncVoiceRows();
     });
     voiceId.addEventListener('change', fillVoices);
-    voiceTest.addEventListener('click', () => opts.voices?.test(lang.value as Settings['lang'], { gender: voiceGender.value as VoiceChoice['gender'], id: voiceId.value }));
+    voiceEngine.addEventListener('change', syncVoiceRows);
+    voiceStyle.addEventListener('change', syncVoiceRows);
+    voiceTest.addEventListener('click', () => {
+      if (!opts.voices) return;
+      voiceTest.disabled = true;
+      void opts.voices
+        .test(
+          lang.value as Settings['lang'],
+          { gender: voiceGender.value as VoiceChoice['gender'], id: voiceId.value },
+          { engine: voiceEngine.value as VoiceHow['engine'], cloudName: cloudVoice.value, style: voiceStyle.value as VoiceHow['style'], addressAs: addressAs.value as VoiceHow['addressAs'] },
+        )
+        .then((note) => {
+          if (note) voiceNote.textContent = note;
+        })
+        .finally(() => (voiceTest.disabled = false));
+    });
     const laneAlerts = select('laneAlerts', current.laneAlerts, [
       ['gps', 'Early lane advice + GPS lane check'],
       ['advice', 'Early lane advice only'],
@@ -222,6 +319,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     ]);
     const drowsyDetect = h('input', { id: 'drowsyDetect', type: 'checkbox' }) as HTMLInputElement;
     drowsyDetect.checked = current.drowsyDetect;
+    const pretripCheck = h('input', { id: 'pretripCheck', type: 'checkbox' }) as HTMLInputElement;
+    pretripCheck.checked = current.pretripCheck;
     const TOPIC_LABEL: Record<TalkTopic, string> = {
       jokes: 'Jokes',
       riddles: 'Riddles and quizzes',
@@ -440,23 +539,60 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       h('label', { class: 'toggle' }, closeUp, 'Zoom the map in to 20 m at turns, forks, dividers, ramps, exits, entrances and junctions'),
       h('div', { class: 'hint' }, 'The route line gets thinner so the road shows. Through every junction the route is orange from 300 m before the split (as in the junction view) and dark orange for the 100 m either side of the split itself; the other roads at the split are grey, so only the orange line is your way. Works at every map scale; between turns the automatic scale shows 100 m.'),
     );
+    const phoneRows = h(
+      'div',
+      { class: 'voice-rows' },
+      h('label', { for: 'voiceId', class: 'sub-label' }, 'Which voice'),
+      voiceId,
+      NATIVE && opts.voices?.install ? h('div', { class: 'off-actions' }, voiceInstall) : null,
+      h(
+        'div',
+        { class: 'hint' },
+        NATIVE
+          ? 'The most natural sounding voice is picked first. For more human voices, tap Get more natural voices and install the voice data for your language in Speech Services by Google (Android may call it Install voice data), then pick one above and test it.'
+          : 'The most natural sounding voice is picked first (in Edge, the "Natural" voices sound the most human).',
+      ),
+    );
+    const cloudRows = h(
+      'div',
+      { class: 'voice-rows' },
+      h('label', { for: 'cloudVoice', class: 'sub-label' }, 'Google voice'),
+      cloudVoice,
+      h(
+        'div',
+        { class: 'hint' },
+        'Google\u2019s most human voices (Chirp 3 HD where your language has them). Uses the key under Google Maps places (Map tab); the Cloud Text-to-Speech API has to be enabled for it in Google Cloud, with billing on (a monthly free allowance covers a lot of driving). Each prompt is fetched once and kept on the phone; without internet, or when Google is slow, the phone\u2019s voice speaks instead.',
+      ),
+    );
     const voiceGrp = h(
       'div',
       { class: 'grp' },
       h('label', { for: 'voice' }, 'Voice guidance'),
       h('label', { class: 'toggle' }, voice, 'Spoken prompts'),
+      h('label', { for: 'voiceStyle', class: 'sub-label' }, 'Speaking style'),
+      voiceStyle,
+      h('label', { for: 'addressAs', class: 'sub-label' }, 'Call me'),
+      addressAs,
       opts.voices
         ? h(
             'div',
             { class: 'voice-pick' },
             h('label', { for: 'voiceGender', class: 'sub-label' }, 'Voice'),
             h('div', { class: 'key-row' }, voiceGender, voiceTest),
-            h('label', { for: 'voiceId', class: 'sub-label' }, 'Which voice'),
-            voiceId,
+            h('label', { for: 'voiceEngine', class: 'sub-label' }, 'Voices from'),
+            voiceEngine,
+            phoneRows,
+            cloudRows,
             voiceNote,
           )
         : null,
+      h(
+        'div',
+        { class: 'hint' },
+        'The polite assistant speaks calmly and naturally, like a personal butler: "We\u2019re coming up to the speed limit of 110, sir." "We have arrived, sir. Your destination is on your left." Turn instructions keep the same short wording so they are quick to take in.',
+      ),
     );
+    syncVoiceRows();
     const laneGrp = grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances, junctions and turns ("Move into the right lane" with the first notice of a turn when the map has no lane detail). The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.');
     const tunnelGrp = h(
       'div',
@@ -503,6 +639,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       h('div', { class: 'talk-topics', role: 'group', 'aria-label': 'Topics' }, ...topicBoxes.map((b, i) => h('label', { class: 'toggle' }, b, TOPIC_LABEL[TALK_TOPICS[i]]))),
       opts.talk ? h('div', { class: 'off-actions' }, talkTest) : null,
       h('label', { class: 'toggle' }, drowsyDetect, 'Watch my driving for signs of tiredness'),
+      h('label', { class: 'toggle' }, pretripCheck, 'Before drives over 30 minutes, remind me to check the Touch n Go balance, fuel and the car'),
       h(
         'div',
         { class: 'hint' },
@@ -599,7 +736,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           h(
             'div',
             { class: 'hint' },
-            'With a key, search offers “Search Google Maps” under the results: Google’s own list and place card, shown as Google provides them, with Directions planned by JunctionNav. Every place card also has a Google Maps button (no key needed) to compare a place with Google’s. The key needs the Maps JavaScript API and the Places UI Kit turned on in Google Cloud, which asks for a billing account; the first 10,000 searches a month are free. Restrict the key to this site.',
+            'With a key, search offers “Search Google Maps” under the results: Google’s own list and place card, shown as Google provides them, with Directions planned by JunctionNav. Every place card also has a Google Maps button (no key needed) to compare a place with Google’s. The key needs the Maps JavaScript API and the Places UI Kit turned on in Google Cloud, which asks for a billing account; the first 10,000 searches a month are free. Restrict the key to this site. For Google\u2019s natural voices (Drive tab), also turn on the Cloud Text-to-Speech API for it.',
           ),
         );
     const about = h(
@@ -710,6 +847,11 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         voice: voice.checked,
         voiceGender: voiceGender.value as Settings['voiceGender'],
         voiceId: voiceId.value,
+        voiceStyle: voiceStyle.value as Settings['voiceStyle'],
+        addressAs: addressAs.value as Settings['addressAs'],
+        voiceEngine: voiceEngine.value as Settings['voiceEngine'],
+        cloudVoice: cloudVoice.value,
+        pretripCheck: pretripCheck.checked,
         jvSurround: surround.checked,
         jvMapGround: mapGround.checked,
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],

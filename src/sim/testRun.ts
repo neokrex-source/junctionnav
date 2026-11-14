@@ -43,7 +43,7 @@ export const CHECKS: Record<CheckId, { title: string; how: string }> = {
   toll: { title: 'Through the toll plaza', how: 'The stop at the toll plaza is passed on the right side of the road.' },
   tunnelSign: { title: 'Tunnel sign', how: 'Tunnel name and length before the entrance, then distance to the exit. Needs tunnel alerts on in Settings.' },
   dr: { title: 'Guidance without GPS in the tunnel', how: 'The simulator cuts GPS inside the tunnel: "position estimated" on the tunnel card, and no reroute.' },
-  arrival: { title: 'Arrival announced', how: '"You have reached your destination" within 300 m of the end.' },
+  arrival: { title: 'Arrival announced', how: 'A heads-up 300 m before the destination, then "we have arrived" at the destination itself.' },
 };
 
 /** Junction height kinds that are checks of their own. */
@@ -126,7 +126,7 @@ export class TestRun {
     if (p.dr) this.mark('dr', p.tunnel ? `${Math.round(p.tunnel.toExit)} m to the exit, estimated` : 'Position estimated');
     const toll = this.drive.tollStop;
     if (toll && p.stopsPassed >= toll) this.mark('toll', `Stop ${toll} passed`);
-    if (p.nearDestination) this.mark('arrival', `${Math.round(p.remaining)} m before the end`);
+    if (prompts.some((x) => x.kind === 'arrived')) this.mark('arrival', `${Math.round(p.remaining)} m before the end`);
   }
 
   /** A junction view is on screen (called again when OSM detail or terrain arrives). */

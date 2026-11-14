@@ -7,6 +7,7 @@ import { isDaylight } from './daylight';
 import type { ThemeId } from '../theme/palette';
 import type { SpeedAlertMode } from '../nav/speedWatch';
 import type { TalkMode, TalkTopic } from '../talk/types';
+import type { AddressAs, VoiceStyle } from '../voice/persona';
 
 export interface Settings {
   mapStyle: string;
@@ -20,6 +21,16 @@ export interface Settings {
   voiceGender: 'female' | 'male';
   /** One voice picked by name ('' = the best for the language and gender above). */
   voiceId: string;
+  /** How the voice speaks: a polite personal assistant ('butler') or short neutral prompts. */
+  voiceStyle: VoiceStyle;
+  /** How the butler addresses the driver. */
+  addressAs: AddressAs;
+  /** The phone's own voices, or Google's natural voices (with a Google Cloud key; the phone's offline). */
+  voiceEngine: 'phone' | 'google';
+  /** The Google voice by name ('' for the most natural one for the language and gender). */
+  cloudVoice: string;
+  /** Before a drive of more than 30 minutes: a reminder to check the toll card, the fuel and the car. */
+  pretripCheck: boolean;
   jvMode: JvMode;
   appearance: 'auto' | 'day' | 'night';
   /** The app's look: JunctionNav (purple), Fighter jet (HUD instruments) or Casual, each by day and night. */
@@ -115,6 +126,11 @@ export const DEFAULTS: Settings = {
   voice: true,
   voiceGender: 'female',
   voiceId: '',
+  voiceStyle: 'butler',
+  addressAs: 'sir',
+  voiceEngine: 'phone',
+  cloudVoice: '',
+  pretripCheck: true,
   jvMode: 'illustration',
   appearance: 'auto',
   theme: 'junction',
