@@ -5,7 +5,8 @@
 # the Pages deploy, which publishes it with the site under offline/ (and copies the packs marked
 # `site` there too, so the browser can download them).
 #
-# Each region rebuilds once a month with fresh OpenStreetMap data, when the builder scripts change,
+# Each region rebuilds once a month with fresh OpenStreetMap data, when the builder scripts change
+# (the files that shape a pack; see the key below),
 # or when started by hand (Actions → Offline maps → Run workflow, optionally with a list of ids);
 # otherwise it finishes in seconds. A region that fails to build keeps its previous files.
 # Set the repository variable OFFLINE_MAPS to "off" to skip it.
@@ -64,7 +65,8 @@ jobs:
           ' >> "$GITHUB_OUTPUT"
       - id: key
         # The month and the builder: a region with this key on its release is up to date.
-        run: echo "key=$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/*.mjs', 'scripts/offline/*.sh', 'scripts/offline/*.geojson', 'src/offline/graphLayout.ts', 'src/offline/terrainLayout.ts') }}" >> "$GITHUB_OUTPUT"
+        # Only the files that change what is in a pack (not the publishing or catalog scripts).
+        run: echo "key=$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/build-*.mjs', 'scripts/offline/finish-pack.mjs', 'scripts/offline/png.mjs', 'scripts/offline/build-pack.sh', 'scripts/offline/*.geojson', 'scripts/offline/regions.json', 'src/offline/graphLayout.ts', 'src/offline/terrainLayout.ts') }}" >> "$GITHUB_OUTPUT"
 
   pack:
     needs: plan
@@ -74,7 +76,7 @@ jobs:
     continue-on-error: true
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 4
       matrix:
         region: ${{ fromJSON(needs.plan.outputs.regions) }}
     steps:
@@ -113,6 +115,8 @@ jobs:
           node scripts/offline/region.mjs "${{ matrix.region }}" "$WORK" --shell > "$RUNNER_TEMP/region.sh"
           cat "$RUNNER_TEMP/region.sh"
           . "$RUNNER_TEMP/region.sh"
+          # The extract first, patiently: Geofabrik turns away busy clients for a while.
+          curl -fL --retry 8 --retry-delay 45 --retry-all-errors --retry-connrefused -o "$WORK/region.osm.pbf" "$PBF_URL"
           bash scripts/offline/build-pack.sh "pack-${{ matrix.region }}"
           du -sh "pack-${{ matrix.region }}"
       - name: Publish on the release

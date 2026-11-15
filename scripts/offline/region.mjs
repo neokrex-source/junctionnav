@@ -24,9 +24,19 @@ mkdirSync(work, { recursive: true });
 
 const indexPath = join(work, 'geofabrik-index.json');
 if (!existsSync(indexPath)) {
-  const res = await fetch('https://download.geofabrik.de/index-v1.json');
-  if (!res.ok) throw new Error(`Geofabrik index: ${res.status}`);
-  writeFileSync(indexPath, Buffer.from(await res.arrayBuffer()));
+  // Geofabrik turns busy clients away for a while: try again, waiting longer each time.
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch('https://download.geofabrik.de/index-v1.json');
+      if (!res.ok) throw new Error(`Geofabrik index: ${res.status}`);
+      writeFileSync(indexPath, Buffer.from(await res.arrayBuffer()));
+      break;
+    } catch (e) {
+      if (i >= 7) throw e;
+      console.error(`Geofabrik index not reached (${e.message}); trying again in ${30 * (i + 1)} s`);
+      await new Promise((r) => setTimeout(r, 30_000 * (i + 1)));
+    }
+  }
 }
 const index = JSON.parse(readFileSync(indexPath, 'utf8'));
 const f = index.features.find((x) => x.properties.id === r.geofabrik);
