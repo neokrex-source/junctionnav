@@ -8,9 +8,11 @@ import { GridPatch, tileXY, type TerrainPatch, type TerrainProvider } from '../j
 import { decodeHeights, findTile, readTerrainHeader, readTerrainIndex, TERRAIN_ENTRY, TERRAIN_HEADER, type TerrainIndex } from './terrainLayout';
 
 export interface TerrainFile {
-  /** Changes when the pack changes; null when the installed pack has no heights. */
+  /** Changes when the pack changes; null when the pack has no heights. */
   key(): string | null;
   blob(): Promise<Blob>;
+  /** Where heights are wanted next (the packs are by country: the one there answers). */
+  at?(p: LngLat): void;
 }
 
 async function inflate(b: Blob): Promise<Uint8Array> {
@@ -24,6 +26,11 @@ export class TerrainPackReader {
   private tiles = new Map<string, Promise<Int16Array | null>>();
 
   constructor(private file: TerrainFile) {}
+
+  /** Heights are wanted around this point next. */
+  at(p: LngLat) {
+    this.file.at?.(p);
+  }
 
   /** The pack has heights. */
   get available(): boolean {
@@ -81,6 +88,7 @@ export class OfflineTerrainProvider implements TerrainProvider {
   constructor(private reader: TerrainPackReader) {}
 
   async fetch(center: LngLat, radius: number): Promise<TerrainPatch | null> {
+    this.reader.at(center);
     const g = await this.reader.grid();
     if (!g) return null;
     const { zoom: z, size } = g;

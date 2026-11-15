@@ -153,7 +153,7 @@ jobs:
 
           **Install:** open [JunctionNav.apk](${URL}) on your phone, then tap the downloaded file. Android asks once to allow installs from your browser or file manager; allow it and tap **Install**. Later versions install over this one and keep your account, places and offline maps.
 
-          The whole app is inside the installer, so it opens without internet from the first start. Offline maps for Peninsular Malaysia download from Settings → Downloads → Offline maps. Needs an up to date Android System WebView (Play Store).
+          The whole app is inside the installer, so it opens without internet from the first start. Offline maps by country for Southeast Asia and the rest of Asia download from Settings → Downloads → Offline maps. Needs an up to date Android System WebView (Play Store).
 
           Developed by Dr. Mohd Anuaruddin Ahmadon, Universiti Teknologi PETRONAS.
           EOF

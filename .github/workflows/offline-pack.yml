@@ -1,60 +1,163 @@
-# Builds the offline maps for Peninsular Malaysia (roads for routing, place names, map tiles)
-# and stores them in the Actions cache. The Pages workflow publishes the newest pack with the
-# site under offline/. Building takes 10 to 20 minutes, so it runs on its own: app deploys never
-# wait for it, and a new push never cancels it.
+# Builds the offline maps by country (big countries by region) for Asia, from
+# scripts/offline/regions.json: roads for routing, place names, map tiles and ground heights for
+# each, published as the files of a GitHub release "maps-<id>" in the site repository (releases
+# have no size limit; the site has 1 GB). A last step writes the catalog the app reads and starts
+# the Pages deploy, which publishes it with the site under offline/ (and copies the packs marked
+# `site` there too, so the browser can download them).
 #
-# It rebuilds once a month with fresh OpenStreetMap data, when the builder scripts change, or
-# when started by hand (Actions → Offline maps → Run workflow). Otherwise it finishes in seconds.
+# Each region rebuilds once a month with fresh OpenStreetMap data, when the builder scripts change,
+# or when started by hand (Actions → Offline maps → Run workflow, optionally with a list of ids);
+# otherwise it finishes in seconds. A region that fails to build keeps its previous files.
+# Set the repository variable OFFLINE_MAPS to "off" to skip it.
 name: Offline maps
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'scripts/offline/**'
+      - 'src/offline/graphLayout.ts'
+      - 'src/offline/terrainLayout.ts'
+      - '.github/workflows/offline-pack.yml'
   workflow_dispatch:
+    inputs:
+      regions:
+        description: 'Region ids to build (space separated; empty for all)'
+        required: false
+        default: ''
+      force:
+        description: 'Rebuild even when this month''s files are there'
+        type: boolean
+        default: false
   schedule:
     - cron: '23 19 2 * *' # 2nd of each month
 
 permissions:
-  contents: read
-  actions: write # to start the Pages deploy when a new pack is ready
+  contents: write # the releases with the maps
+  actions: write # to start the Pages deploy when new maps are ready
 
 concurrency:
   group: offline-pack
   cancel-in-progress: false
 
+env:
+  SITE_REPO: ${{ vars.SITE_REPO || github.repository }}
+
 jobs:
-  pack:
+  plan:
     if: vars.OFFLINE_MAPS != 'off'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    outputs:
+      regions: ${{ steps.list.outputs.regions }}
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        env:
+          ONLY: ${{ github.event.inputs.regions }}
+        run: |
+          node -e '
+            const all = require("./scripts/offline/regions.json").regions.map((r) => r.id);
+            const only = (process.env.ONLY || "").split(/[\s,]+/).filter(Boolean);
+            const ids = only.length ? all.filter((id) => only.includes(id)) : all;
+            console.log("regions=" + JSON.stringify(ids));
+          ' >> "$GITHUB_OUTPUT"
+      - id: key
+        # The month and the builder: a region with this key on its release is up to date.
+        run: echo "key=$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/*.mjs', 'scripts/offline/*.sh', 'scripts/offline/*.geojson', 'src/offline/graphLayout.ts', 'src/offline/terrainLayout.ts') }}" >> "$GITHUB_OUTPUT"
+
+  pack:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    # A region that cannot be built (too big for the runner, Geofabrik down) does not stop the rest.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        region: ${{ fromJSON(needs.plan.outputs.regions) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - id: key
-        run: echo "key=offline-pack-v1-$(date -u +%Y-%m)-${{ hashFiles('scripts/offline/**', 'src/offline/graphLayout.ts', 'src/offline/terrainLayout.ts') }}" >> "$GITHUB_OUTPUT"
-      - id: have
-        uses: actions/cache/restore@v4
-        with:
-          path: offline-pack
-          key: ${{ steps.key.outputs.key }}
-          lookup-only: true
-      - name: Build offline maps
-        if: steps.have.outputs.cache-hit != 'true'
+      - name: Token for the site repository
         env:
-          GH_TOKEN: ${{ github.token }}
-          WORK: ${{ runner.temp }}/pack-work
+          SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
         run: |
-          bash scripts/offline/build-pack.sh offline-pack
-          du -sh offline-pack
-      - if: steps.have.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+          if [ "${SITE_REPO,,}" = "${GITHUB_REPOSITORY,,}" ]; then echo "GH_TOKEN=${{ github.token }}" >> "$GITHUB_ENV";
+          elif [ -n "$SITE_TOKEN" ]; then echo "GH_TOKEN=$SITE_TOKEN" >> "$GITHUB_ENV";
+          else echo "::error::SITE_TOKEN is needed to publish the maps to $SITE_REPO"; exit 1; fi
+      - id: fresh
+        name: Up to date?
+        env:
+          KEY: ${{ needs.plan.outputs.key }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          have=$(gh release download "maps-${{ matrix.region }}" -R "$SITE_REPO" -p build-key.txt -O - 2>/dev/null || true)
+          if [ "$FORCE" != "true" ] && [ "$have" = "$KEY" ] && gh release download "maps-${{ matrix.region }}" -R "$SITE_REPO" -p entry.json -D "entry/${{ matrix.region }}" --clobber; then
+            echo "up to date: ${{ matrix.region }}"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Room on the runner
+        if: steps.fresh.outputs.skip != 'true'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+      - name: Build the maps
+        if: steps.fresh.outputs.skip != 'true'
+        env:
+          WORK: ${{ runner.temp }}/pack-work
+          MAX_TILES_MB: '3000'
+          TERRAIN_MAX_MB: '60'
+        run: |
+          node scripts/offline/region.mjs "${{ matrix.region }}" "$WORK" --shell > "$RUNNER_TEMP/region.sh"
+          cat "$RUNNER_TEMP/region.sh"
+          . "$RUNNER_TEMP/region.sh"
+          bash scripts/offline/build-pack.sh "pack-${{ matrix.region }}"
+          du -sh "pack-${{ matrix.region }}"
+      - name: Publish on the release
+        if: steps.fresh.outputs.skip != 'true'
+        run: |
+          bash scripts/offline/publish-release.sh "pack-${{ matrix.region }}" "${{ matrix.region }}" "${{ needs.plan.outputs.key }}"
+          mkdir -p "entry/${{ matrix.region }}"
+          cp "pack-${{ matrix.region }}/entry.json" "entry/${{ matrix.region }}/entry.json"
+      - uses: actions/upload-artifact@v4
         with:
-          path: offline-pack
-          key: ${{ steps.key.outputs.key }}
+          name: entry-${{ matrix.region }}
+          path: entry/${{ matrix.region }}/entry.json
+          retention-days: 3
+          if-no-files-found: warn
+
+  catalog:
+    needs: [plan, pack]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: entry-*
+          path: entries
+      - uses: actions/cache/restore@v4
+        with:
+          path: offline-catalog
+          key: offline-catalog-v1-newest
+          restore-keys: offline-catalog-v1-
+      - name: The catalog
+        run: |
+          mkdir -p offline-catalog
+          prev=offline-catalog/catalog.json
+          [ -f "$prev" ] || prev=-
+          node scripts/offline/make-catalog.mjs entries "$prev" offline-catalog/catalog.next.json
+          mv offline-catalog/catalog.next.json offline-catalog/catalog.json
+      - uses: actions/cache/save@v4
+        with:
+          path: offline-catalog
+          key: offline-catalog-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Publish with the site
-        if: steps.have.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"

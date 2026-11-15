@@ -48,6 +48,8 @@ export interface SettingsOptions {
   onSignIn?: () => void;
   /** Offline maps storage, when this build offers them. */
   pack?: OfflineStore;
+  /** Where the map is, so Offline maps opens the countries there first. */
+  packAt?: [number, number] | null;
   /** The places around you, when this build has them. */
   places?: PlacesService;
   /** The tab to open on (else the one last open). */
@@ -347,7 +349,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       ['auto', 'Use them when there is no internet'],
       ['always', 'Always use them (saves mobile data)'],
     ]);
-    const pack = opts.pack ? offlinePanel(opts.pack, offlineUse) : null;
+    const pack = opts.pack ? offlinePanel(opts.pack, offlineUse, { lang: current.lang, at: opts.packAt }) : null;
     const places = opts.places ? placesPanel(opts.places, current) : null;
     // In the Android app: the built-in copy, or the latest website build downloaded into the app.
     const appMode = select('appMode', current.appMode, [

@@ -23,7 +23,8 @@ import { TomTomMap } from './map/tomtomMap';
 import { TT_SOURCE } from './map/tomtomStyle';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
-import { enableOfflineMap, offlineStyle } from './offline/offlineMap';
+import { disableOfflineMap, enableOfflineMap, offlineStyle } from './offline/offlineMap';
+import { packName } from './offline/store';
 import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridSpeed, HybridTerrain, HybridTolls, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
 import { OfflineTerrainProvider, TerrainPackReader } from './offline/offlineTerrain';
 import { OfflineStore } from './offline/store';
@@ -289,12 +290,18 @@ class App {
   private offlineMapReady = false;
   /** Ground heights in the offline pack, for the 3D junction views without internet. */
   private packTerrain = new TerrainPackReader({
+    at: (p) => (this.terrainPoint = p),
     key: () => {
-      const inst = this.offline.installed;
-      return inst?.manifest.files.some((f) => f.name === 'terrain.bin') ? inst.dir.join('/') : null;
+      const pk = this.terrainPack();
+      return pk?.manifest.files.some((f) => f.name === 'terrain.bin') ? pk.dir.join('/') : null;
     },
-    blob: () => this.offline.file('terrain.bin'),
+    blob: () => this.offline.file(this.terrainPack()!, 'terrain.bin'),
   });
+  /** Where the 3D view last wanted ground heights: the offline pack there has them. */
+  private terrainPoint: LngLat | null = null;
+  private terrainPack() {
+    return (this.terrainPoint ? this.offline.at(this.terrainPoint) : null) ?? this.offline.installed[0] ?? null;
+  }
   private osrm: Router = new OsrmRouter(this.settings.routerUrl);
   /** TomTom's map (with TomTom first): whether it can be drawn now, and from which of its services. */
   private ttMap = new TomTomMap(
@@ -639,21 +646,35 @@ class App {
   private refreshMapSource(force = false) {
     if (ARTIFACT || this.demo || !this.map) return;
     const style = this.baseStyle();
-    const offline = typeof style !== 'string' && !!style.sources?.protomaps && JSON.stringify(style.sources.protomaps).includes('pmtiles://');
+    const offline = typeof style !== 'string' && !!style.sources?.protomaps && JSON.stringify(style.sources.protomaps).includes('offline-tiles://');
     if (!force && offline === this.mapOnOffline) return;
     this.mapOnOffline = offline;
     this.map.setStyle(style);
     this.zoom?.setStyle(style);
   }
 
-  /** Opens an installed pack: worker for routing and search, protocols for the map. */
+  /**
+   * Opens the packs on the device: the worker answers routing and search from the pack where each
+   * request is, and the map draws all of them as one.
+   */
   private async activateOffline() {
-    if (ARTIFACT || !this.offline.installed) return;
+    if (ARTIFACT) return;
+    const packs = this.offline.installed;
+    if (!packs.length) {
+      this.offlineClient.unload();
+      disableOfflineMap();
+      this.offlineMapReady = false;
+      this.refreshMapSource(true);
+      return;
+    }
     try {
-      await this.offlineClient.load(this.offline.installed.dir);
+      this.offlineClient.setPacks(packs);
+      // The pack where you are opens now (a broken one shows here, not on the next drive).
+      const here = this.offline.at(this.myPos ?? lastPosition() ?? KL) ?? packs[0];
+      await this.offlineClient.load(here.dir);
       await enableOfflineMap(this.offline);
       this.offlineMapReady = true;
-      this.refreshMapSource();
+      this.refreshMapSource(true);
     } catch (err) {
       console.warn('[offline] could not open the offline maps', err);
       this.offlineMapReady = false;
@@ -664,34 +685,26 @@ class App {
 
   private async initOffline() {
     if (ARTIFACT || !this.offline.supported) return;
-    let last = this.offline.state.status;
-    let had = !!this.offline.installed;
-    this.offline.onChange((st) => {
-      const has = !!this.offline.installed;
-      const version = this.offline.installed?.dir.join('/');
-      if (has && (!had || version !== this.offlineDir)) {
-        // New or updated pack: switch the worker and the map over to it.
-        const justDownloaded = last === 'downloading';
-        this.offlineClient.unload();
+    const sig = () => this.offline.installed.map((p) => p.dir[1]).sort().join('|');
+    let jobsBefore = new Map(this.offline.jobs);
+    this.offline.onChange(() => {
+      const now = sig();
+      if (now !== this.offlineDir) {
+        // A pack added, updated or deleted: the worker and the map follow.
+        const added = this.offline.installed.filter((p) => !(this.offlineDir ?? '').split('|').includes(p.dir[1]));
+        this.offlineDir = now;
         this.offlineMapReady = false;
         this.resetTerrain();
         void this.activateOffline().then(() => {
-          if (justDownloaded && this.offlineMapReady) toast(`Offline maps for ${this.offline.installed?.manifest.name ?? 'your area'} are ready.`, 4500);
+          for (const p of added) if (jobsBefore.get(p.id)?.status === 'downloading' && this.offlineMapReady) toast(`Offline maps for ${packName(p.manifest, this.L)} are ready.`, 4500);
         });
-      } else if (!has && had) {
-        this.offlineClient.unload();
-        this.offlineMapReady = false;
-        this.resetTerrain();
-        this.refreshMapSource();
       }
-      if (st.status === 'error' && last === 'downloading') toast(st.message, 5000);
-      had = has;
-      this.offlineDir = version;
-      last = st.status;
+      for (const [id, j] of this.offline.jobs) if (j.status === 'error' && jobsBefore.get(id)?.status === 'downloading') toast(j.message, 5000);
+      jobsBefore = new Map(this.offline.jobs);
     });
     await this.offline.init();
-    this.offlineDir = this.offline.installed?.dir.join('/');
-    had = !!this.offline.installed;
+    this.offlineDir = sig();
+    const had = this.offline.ready;
     if (had) {
       await this.activateOffline();
       // Ask again each start: the browser may agree now (added to the home screen, used more).
@@ -3498,9 +3511,9 @@ class App {
   /** "Before you go": the toll card (on toll routes), the fuel and the car, until the car is on its way. */
   private showPretrip(trip: TripInfo) {
     const card = this.el.pretrip;
-    const w = pretripWords(this.L);
+    const w = pretripWords(this.L, trip.pay);
     const items: [string, string][] = [];
-    if (trip.tolls && trip.pay !== 'none') items.push([ICON.card, trip.pay === 'etc' ? w.etc : trip.pay === 'tng' ? w.tng : w.toll]);
+    if (trip.tolls && trip.pay !== 'none') items.push([ICON.card, w.card]);
     items.push([ICON.fuel, w.fuel], [ICON.car, w.car]);
     const close = h('button', { type: 'button', class: 'mini', html: ICON.close, 'aria-label': this.tr('close') });
     close.addEventListener('click', () => (card.hidden = true));
@@ -5008,6 +5021,7 @@ class App {
         name: this.firstName() || undefined,
       },
       pack: ARTIFACT ? undefined : this.offline,
+      packAt: this.myPos ?? (this.map.map.getCenter().toArray() as LngLat),
       places: ARTIFACT ? undefined : this.placesSvc,
       pins: { count: this.pins.pins.length, clear: () => this.pins.clear() },
       talk: { sample: (topics, lang) => void this.sampleTalk(topics, lang) },

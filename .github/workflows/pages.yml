@@ -65,15 +65,29 @@ jobs:
           # Optional: a Google Cloud key for "Search Google Maps" (Places UI Kit; each user can also paste their own).
           VITE_GOOGLE_MAPS_KEY: ${{ vars.VITE_GOOGLE_MAPS_KEY }}
 
-      # ---- offline maps: the newest pack in the cache
+      # ---- offline maps: the catalog of countries (offline-pack.yml), and the packs marked `site`
+      # in scripts/offline/regions.json copied from their release so the browser can download them
       - uses: actions/cache/restore@v4
+        with:
+          path: offline-catalog
+          key: offline-catalog-v1-newest
+          restore-keys: offline-catalog-v1-
+      # Before the first catalog: the single pack the older workflow kept in the cache.
+      - uses: actions/cache/restore@v4
+        if: hashFiles('offline-catalog/catalog.json') == ''
         with:
           path: offline-pack
           key: offline-pack-v1-newest
           restore-keys: offline-pack-v1-
       - name: Add offline maps to the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SITE_REPO: ${{ env.SITE_REPO }}
         run: |
-          if [ -f offline-pack/manifest.json ]; then
+          if [ -f offline-catalog/catalog.json ]; then
+            node scripts/offline/site-packs.mjs offline-catalog/catalog.json dist/offline
+            du -sh dist/offline
+          elif [ -f offline-pack/manifest.json ]; then
             cp -r offline-pack dist/offline
             du -sh dist/offline
             node -e 'const m=require("./offline-pack/manifest.json");const mb=(n)=>(n/1048576).toFixed(1);const dl=m.files.reduce((a,f)=>a+f.parts.reduce((b,p)=>b+p.size,0),0);console.log(`::notice title=Offline maps published::${m.name}, built ${m.built.slice(0,10)}: ${m.files.map((f)=>`${f.name} ${mb(f.size)} MB`).join(", ")}; download ${mb(dl)} MB`)'

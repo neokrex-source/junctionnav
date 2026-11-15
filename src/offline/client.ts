@@ -7,13 +7,21 @@ import OfflineWorker from './offline.worker?worker&inline';
 import type { WorkerRequest } from './offline.worker';
 import type { OfflinePlace } from './places';
 import type { OfflineRouteRequest } from './router';
+import { packFor } from './store';
+import type { PackManifest } from './graphLayout';
+
+/** A pack the worker can open: its folder and its box. */
+export interface PackRef {
+  id: string;
+  dir: string[];
+  manifest: PackManifest;
+}
 
 export class OfflineClient {
   private worker: Worker | null = null;
   private seq = 0;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-  private loading: Promise<unknown> | null = null;
-  private dir: string[] = [];
+  private packs: PackRef[] = [];
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
@@ -41,60 +49,67 @@ export class OfflineClient {
     });
   }
 
-  /** Loads the pack's graph and place index (once per pack). */
-  load(dir: string[]): Promise<unknown> {
-    if (this.loading && dir.join('/') === this.dir.join('/')) return this.loading;
-    this.dir = dir;
-    this.loading = this.call({ type: 'load', dir }).catch((e) => {
-      this.loading = null;
-      throw e;
-    });
-    return this.loading;
+  /** The packs on the device (the app picks one for each request by where it is). */
+  setPacks(packs: PackRef[]) {
+    const keep = new Set(packs.map((p) => p.dir.join('/')));
+    for (const p of this.packs) if (!keep.has(p.dir.join('/'))) void this.call({ type: 'forget', dir: p.dir }).catch(() => {});
+    this.packs = packs;
+  }
+
+  /** Opens a pack's graph and place index now (to check it opens, and to answer the first request at once). */
+  async load(dir: string[]): Promise<unknown> {
+    return this.call({ type: 'load', dir });
   }
 
   unload() {
     this.worker?.terminate();
     this.worker = null;
-    this.loading = null;
-    this.dir = [];
+    this.packs = [];
   }
 
+  /** Any pack to answer from. */
   get loaded(): boolean {
-    return !!this.loading;
+    return this.packs.length > 0;
+  }
+
+  /** The pack for these points: one that has them all, else the one at the first. */
+  private dirFor(points: LngLat[]): string[] {
+    const p = packFor(this.packs, points) ?? this.packs[0];
+    if (!p) throw new Error('No offline maps on this device.');
+    return p.dir;
+  }
+
+  /** Is there a pack with every one of these points in it? */
+  covers(points: LngLat[]): boolean {
+    return this.packs.some((p) => points.every((q) => q[0] >= p.manifest.bbox[0] && q[0] <= p.manifest.bbox[2] && q[1] >= p.manifest.bbox[1] && q[1] <= p.manifest.bbox[3]));
   }
 
   async route(req: OfflineRouteRequest): Promise<OsrmResponse> {
-    await this.loading;
-    return this.call({ type: 'route', req });
+    return this.call({ type: 'route', dir: this.dirFor(req.coords), req });
   }
   async junction(points: LngLat[], radius = 450): Promise<OsmData> {
-    await this.loading;
-    return this.call({ type: 'junction', points, radius });
+    return this.call({ type: 'junction', dir: this.dirFor(points), points, radius });
   }
   async tunnels(path: LngLat[]): Promise<OsmWay[]> {
-    await this.loading;
-    return this.call({ type: 'tunnels', path });
+    return this.call({ type: 'tunnels', dir: this.dirFor(path), path });
   }
   async search(q: string, near: LngLat | null, limit = 10): Promise<OfflinePlace[]> {
-    await this.loading;
-    return this.call({ type: 'search', q, near, limit });
+    return this.call({ type: 'search', dir: this.dirFor(near ? [near] : []), q, near, limit });
   }
   async nearest(p: LngLat): Promise<OfflinePlace | null> {
-    await this.loading;
-    return this.call({ type: 'nearest', p });
+    if (!this.covers([p])) return null;
+    return this.call({ type: 'nearest', dir: this.dirFor([p]), p });
   }
   /** Main roads by ref or name near a point (trip link road points without Overpass). */
   async roads(names: string[], center: LngLat, radius: number): Promise<OsmWay[]> {
-    await this.loading;
-    return this.call({ type: 'roads', names, center, radius });
+    return this.call({ type: 'roads', dir: this.dirFor([center]), names, center, radius });
   }
   /** Roads with speed limits and speed cameras along a path (src/nav/speed.ts). */
   async speed(path: LngLat[]): Promise<SpeedData> {
-    await this.loading;
-    return this.call({ type: 'speed', path });
+    return this.call({ type: 'speed', dir: this.dirFor(path), path });
   }
   async pois(kinds: string[], points: LngLat[], radius: number): Promise<(OfflinePlace & { dist: number })[]> {
-    await this.loading;
-    return this.call({ type: 'pois', kinds, points, radius });
+    if (!points.length || !this.covers([points[0]])) return [];
+    return this.call({ type: 'pois', dir: this.dirFor(points), kinds, points, radius });
   }
 }

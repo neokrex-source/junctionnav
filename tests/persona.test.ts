@@ -56,7 +56,10 @@ describe('the butler’s wording', () => {
     expect(p.toll('mid', { ...toll, dist: 600 }, 'tng')).toBe('Toll plaza in 600 metres. Do slow down, sir, and keep to the Touch n Go lanes.');
     expect(p.toll('near', toll, 'tng')).toBe('Toll plaza just ahead, sir.');
     expect(make({ lang: 'ms' }).toll('near', toll, 'tng')).toBe('Plaza tol di hadapan, tuan.');
-    expect(make({ lang: 'ja' }).toll('early', toll, 'etc')).toContain('ETCカードをご確認ください。');
+    expect(make({ lang: 'ja' }).toll('early', toll, 'etc')).toContain('ETCカードのご用意をお願いします。');
+    expect(make().toll('early', toll, 'fastag')).toMatch(/sir\. Please have your FASTag ready\.$/);
+    expect(make().toll('mid', toll, 'easypass')).toContain('keep to the Easy Pass or M-Pass lanes');
+    expect(make().pretrip({ ...trip, pay: 'hipass' })).toContain('a quick check: your Hi-pass balance, that you have enough fuel');
   });
 
   it('tunnels: lights on, and guidance carries on inside long ones', () => {

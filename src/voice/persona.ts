@@ -11,6 +11,7 @@
 import { LANGS, speedIn, tollTitle, type LangCode, type Units } from '../routing/instructions';
 import type { SpeedPrompt } from '../nav/speedWatch';
 import type { TollPay, TollState } from '../nav/tolls';
+import { payWords } from '../nav/tollPay';
 import { tunnelName, type TunnelState } from '../nav/tunnels';
 
 export type VoiceStyle = 'butler' | 'plain';
@@ -63,11 +64,13 @@ export function speechText(text: string, lang: LangCode): string {
     .trim();
 }
 
-/** The words on the "Before you go" card. */
-export function pretripWords(lang: LangCode): { title: string; tng: string; etc: string; toll: string; fuel: string; car: string } {
-  if (lang === 'ms') return { title: 'Sebelum bertolak', tng: 'Baki kad Touch n Go (laluan ini bertol)', etc: 'Kad ETC', toll: 'Bayaran tol', fuel: 'Minyak yang cukup', car: 'Tayar, lampu dan pengelap cermin' };
-  if (lang === 'ja') return { title: '出発前の確認', tng: 'Touch n Goカードの残高（有料道路あり）', etc: 'ETCカード', toll: '通行料金の準備', fuel: '燃料', car: 'タイヤ、ライト、ワイパー' };
-  return { title: 'Before you go', tng: 'Touch n Go balance (this route has tolls)', etc: 'ETC card', toll: 'Toll payment', fuel: 'Enough fuel', car: 'Tyres, lights and wipers' };
+/** The words on the "Before you go" card; `card` names what to check for the tolls. */
+export function pretripWords(lang: LangCode, pay: TollPay = 'generic'): { title: string; card: string; fuel: string; car: string } {
+  const w = payWords(pay, lang);
+  const up = (s: string) => s[0].toUpperCase() + s.slice(1);
+  if (lang === 'ms') return { title: 'Sebelum bertolak', card: w ? `${up(w.balance)} (laluan ini bertol)` : 'Bayaran tol', fuel: 'Minyak yang cukup', car: 'Tayar, lampu dan pengelap cermin' };
+  if (lang === 'ja') return { title: '出発前の確認', card: w ? `${w.balance}（有料道路あり）` : '通行料金の準備', fuel: '燃料', car: 'タイヤ、ライト、ワイパー' };
+  return { title: 'Before you go', card: w ? `${up(w.balance.replace(/^your /, ''))} (this route has tolls)` : 'Toll payment', fuel: 'Enough fuel', car: 'Tyres, lights and wipers' };
 }
 
 export class Persona {
@@ -204,22 +207,23 @@ export class Persona {
   toll(kind: 'early' | 'mid' | 'near', t: TollState, pay: TollPay): string {
     const d = this.dist(t.dist);
     const title = tollTitle(t.plaza.name, this.lang);
+    const w = payWords(pay, this.lang);
     const L = this.lang;
     if (L === 'ms') {
-      const ready = pay === 'tng' ? 'Sila sediakan kad Touch n Go anda.' : pay === 'etc' ? 'Sila pastikan kad ETC anda sedia.' : 'Sila sediakan bayaran tol.';
+      const ready = w ? `Sila sediakan ${w.card}.` : 'Sila sediakan bayaran tol.';
       if (kind === 'early') return this.fill(`${title} dalam ${d}{,w}. ${ready}`);
-      if (kind === 'mid') return this.fill(`Plaza tol dalam ${d}. Sila perlahankan kenderaan{,w}${pay === 'tng' ? ', dan ikut lorong Touch n Go' : pay === 'etc' ? ', dan ikut lorong ETC' : ''}.`);
+      if (kind === 'mid') return this.fill(`Plaza tol dalam ${d}. Sila perlahankan kenderaan{,w}${w?.lane ? `, dan ikut ${w.lane}` : ''}.`);
       return this.fill(`Plaza tol di hadapan{,w}.`);
     }
     if (L === 'ja') {
-      const ready = pay === 'tng' ? 'Touch n Goカードのご用意をお願いします。' : pay === 'etc' ? 'ETCカードをご確認ください。' : '通行料金のご準備をお願いします。';
+      const ready = w ? `${w.card}のご用意をお願いします。` : '通行料金のご準備をお願いします。';
       if (kind === 'early') return this.fill(`{w、}${d}先、${title}です。${ready}`);
-      if (kind === 'mid') return this.fill(`${d}先、料金所です。{w、}速度を落として${pay === 'tng' ? '、Touch n Goのレーンにお進みください。' : pay === 'etc' ? '、ETCレーンにお進みください。' : 'ください。'}`);
+      if (kind === 'mid') return this.fill(`${d}先、料金所です。{w、}速度を落として${w?.lane ? `、${w.lane}にお進みください。` : 'ください。'}`);
       return this.fill(`{w、}まもなく料金所です。`);
     }
-    const ready = pay === 'tng' ? 'Please have your Touch n Go card ready.' : pay === 'etc' ? 'Please check your ETC card.' : 'Please have the toll payment ready.';
+    const ready = w ? `Please have ${w.card} ready.` : 'Please have the toll payment ready.';
     if (kind === 'early') return this.fill(`${title} in ${d}{,w}. ${ready}`);
-    if (kind === 'mid') return this.fill(`Toll plaza in ${d}. Do slow down{,w}${pay === 'tng' ? ', and keep to the Touch n Go lanes' : pay === 'etc' ? ', and keep to the ETC lane' : ''}.`);
+    if (kind === 'mid') return this.fill(`Toll plaza in ${d}. Do slow down{,w}${w?.lane ? `, and keep to ${w.lane}` : ''}.`);
     return this.fill(`Toll plaza just ahead{,w}.`);
   }
 
@@ -288,16 +292,17 @@ export class Persona {
   pretrip(t: TripInfo): string {
     const L = this.lang;
     const card = t.tolls && t.pay !== 'none';
+    const pw = payWords(t.pay, L);
     if (L === 'ms') {
-      const items = [card ? (t.pay === 'etc' ? 'kad ETC' : t.pay === 'tng' ? 'baki kad Touch n Go' : 'bayaran tol') : '', 'minyak yang cukup', 'keadaan kereta: tayar, lampu dan pengelap cermin'].filter(Boolean);
+      const items = [card ? (pw?.balance ?? 'bayaran tol') : '', 'minyak yang cukup', 'keadaan kereta: tayar, lampu dan pengelap cermin'].filter(Boolean);
       const list = items.length > 1 ? `${items.slice(0, -1).join(', ')}, serta ${items[items.length - 1]}` : items[0];
       return this.butler ? this.fill(`Sebelum kita memulakan perjalanan jauh ini{,w}, sila semak ${list}.`) : `Perjalanan ini agak jauh. Sebelum bertolak, semak ${list}.`;
     }
     if (L === 'ja') {
-      const items = [card ? (t.pay === 'etc' ? 'ETCカード' : t.pay === 'tng' ? 'Touch n Goカードの残高' : '通行料金の準備') : '', '燃料', 'タイヤやライトなど車の状態'].filter(Boolean);
+      const items = [card ? (pw?.balance ?? '通行料金の準備') : '', '燃料', 'タイヤやライトなど車の状態'].filter(Boolean);
       return this.butler ? this.fill(`{w、}長めのドライブの前に、${items.join('、')}をご確認ください。`) : `長めのドライブです。出発前に${items.join('、')}を確認してください。`;
     }
-    const items = [card ? (t.pay === 'etc' ? 'your ETC card' : t.pay === 'tng' ? 'your Touch n Go balance' : 'your toll payment') : '', 'that you have enough fuel', 'the car itself: tyres, lights and wipers'].filter(Boolean);
+    const items = [card ? (pw?.balance ?? 'your toll payment') : '', 'that you have enough fuel', 'the car itself: tyres, lights and wipers'].filter(Boolean);
     const list = items.length > 1 ? `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}` : items[0];
     return this.butler ? this.fill(`Before we set off on a longer drive{,w}, a quick check: ${list}.`) : `This is a longer drive. Before you go, check ${list}.`;
   }

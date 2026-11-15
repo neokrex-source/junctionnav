@@ -1,5 +1,6 @@
 import type { LaneState } from '../nav/lanes';
 import type { TollPay, TollState } from '../nav/tolls';
+import { payWords } from '../nav/tollPay';
 import type { SpeedPrompt } from '../nav/speedWatch';
 import { tunnelName, type TunnelSpan, type TunnelState } from '../nav/tunnels';
 import { parseDestinations, splitRefs, type Modifier, type Step } from './types';
@@ -842,36 +843,37 @@ export function tollTitle(name: string | null, lang: LangCode): string {
   return lang === 'ms' ? `Plaza Tol ${n}` : lang === 'ja' ? `${n}料金所` : `${n} toll plaza`;
 }
 
-/** What to have ready, for the screen ("Touch 'n Go", "ETC"), or nothing. */
+/** What to have ready, for the screen ("Touch 'n Go", "ETC", "FASTag"), or nothing. */
 export function tollPayLabel(pay: TollPay): string {
-  return pay === 'tng' ? "Touch 'n Go" : pay === 'etc' ? 'ETC' : '';
+  return payWords(pay, 'en')?.label ?? '';
 }
 
 /**
  * The toll reminders. Early: "Plaza Tol Sungai Besi in 800 metres. Get your Touch n Go card
- * ready." Near: "Toll plaza ahead. Prepare your Touch n Go." The brand is written the way speech
- * reads it best.
+ * ready." Near: "Toll plaza ahead. Prepare your Touch n Go card." With each country's own card or
+ * tag (src/nav/tollPay.ts); the brand is written the way speech reads it best.
  */
 export function tollSpeech(kind: 'early' | 'mid' | 'near', t: TollState, pay: TollPay, lang: LangCode, units: Units): string {
   const L = LANGS[lang];
   const d = L.spokenDistance(t.dist, units);
   const title = tollTitle(t.plaza.name, lang);
+  const w = payWords(pay, lang);
   if (lang === 'ms') {
-    const ready = pay === 'tng' ? 'Sediakan kad Touch n Go anda.' : pay === 'etc' ? 'Pastikan kad ETC anda sedia.' : 'Sediakan bayaran tol anda.';
+    const ready = w ? `Sediakan ${w.card}.` : 'Sediakan bayaran tol anda.';
     if (kind === 'early') return `${title} dalam ${d}. ${ready}`;
-    if (kind === 'mid') return `Plaza tol dalam ${d}. ${pay === 'tng' ? 'Perlahankan kenderaan dan ikut lorong Touch n Go.' : pay === 'etc' ? 'Perlahankan kenderaan dan ikut lorong ETC.' : 'Perlahankan kenderaan.'}`;
-    return `Plaza tol di hadapan.${pay === 'tng' ? ' Sediakan Touch n Go.' : ''}`;
+    if (kind === 'mid') return `Plaza tol dalam ${d}. ${w?.lane ? `Perlahankan kenderaan dan ikut ${w.lane}.` : 'Perlahankan kenderaan.'}`;
+    return `Plaza tol di hadapan.${w ? ` Sediakan ${w.card.replace(/ anda$/, '')}.` : ''}`;
   }
   if (lang === 'ja') {
-    const ready = pay === 'tng' ? 'Touch n Goカードをご用意ください。' : pay === 'etc' ? 'ETCカードをご確認ください。' : '通行料金のお支払いをご準備ください。';
+    const ready = w ? `${w.card}をご用意ください。` : '通行料金のお支払いをご準備ください。';
     if (kind === 'early') return `${d}先、${title}です。${ready}`;
-    if (kind === 'mid') return `${d}先、料金所です。${pay === 'tng' ? '速度を落として、Touch n Goのレーンにお進みください。' : pay === 'etc' ? '速度を落として、ETCレーンにお進みください。' : '速度を落としてください。'}`;
-    return `まもなく${title}です。${pay === 'tng' ? 'Touch n Goをご用意ください。' : ''}`;
+    if (kind === 'mid') return `${d}先、料金所です。${w?.lane ? `速度を落として、${w.lane}にお進みください。` : '速度を落としてください。'}`;
+    return `まもなく${title}です。${w ? `${w.card}をご用意ください。` : ''}`;
   }
-  const ready = pay === 'tng' ? 'Get your Touch n Go card ready.' : pay === 'etc' ? 'Check your ETC card.' : 'Have your toll payment ready.';
+  const ready = w ? `Get ${w.card} ready.` : 'Have your toll payment ready.';
   if (kind === 'early') return `${title} in ${d}. ${ready}`;
-  if (kind === 'mid') return `Toll plaza in ${d}. ${pay === 'tng' ? 'Slow down and keep to the Touch n Go lanes.' : pay === 'etc' ? 'Slow down and keep to the ETC lane.' : 'Slow down for the toll plaza.'}`;
-  return `Toll plaza ahead.${pay === 'tng' ? ' Prepare your Touch n Go.' : ''}`;
+  if (kind === 'mid') return `Toll plaza in ${d}. ${w?.lane ? `Slow down and keep to ${w.lane}.` : 'Slow down for the toll plaza.'}`;
+  return `Toll plaza ahead.${w ? ` Prepare ${w.card}.` : ''}`;
 }
 
 /* ------------------------------------------------------------------ speed */

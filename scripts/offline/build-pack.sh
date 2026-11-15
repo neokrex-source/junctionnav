@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Builds the offline pack for Peninsular Malaysia (and Singapore, which falls inside the box).
-# Runs on GitHub Actions (ubuntu-latest), which can reach Geofabrik and Protomaps.
+# Builds one offline pack: a country or region (Peninsular Malaysia and Singapore by default).
+# Runs on GitHub Actions (ubuntu-latest), which can reach Geofabrik and Protomaps. The settings for
+# each region come from scripts/offline/region.mjs (PBF_URL, REGION, CLIP, BBOX, SIDE, MAXZOOM,
+# TERRAIN_ZOOM, PACK_ID, PACK_NAME).
 # Usage: scripts/offline/build-pack.sh <out dir>
 set -euo pipefail
 OUT=${1:-offline-pack}
@@ -12,6 +14,12 @@ MAXZOOM=${MAXZOOM:-15}
 HERE=$(cd "$(dirname "$0")" && pwd)
 # Land outside this outline (Sumatra, southern Thailand) is left out to keep the pack small.
 REGION=${REGION:-$HERE/peninsular-my.geojson}
+PBF_URL=${PBF_URL:-https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf}
+# 1: cut the outline out of the extract; 0: the extract is the region already.
+CLIP=${CLIP:-1}
+SIDE=${SIDE:-left}
+# The site (GitHub Pages) has 1 GB: tiles over this size drop their most detailed zoom.
+MAX_TILES_MB=${MAX_TILES_MB:-700}
 mkdir -p "$OUT" "$WORK"
 echo "work dir: $WORK"
 
@@ -19,8 +27,13 @@ command -v osmium >/dev/null || { sudo apt-get update -q && sudo apt-get install
 
 # --- OpenStreetMap extract
 PBF="$WORK/region.osm.pbf"
-[ -f "$PBF" ] || curl -fL --retry 3 -o "$PBF" https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf
-osmium extract -p "$REGION" "$PBF" -o "$WORK/pen.osm.pbf" --overwrite
+[ -f "$PBF" ] || curl -fL --retry 3 -o "$PBF" "$PBF_URL"
+if [ "$CLIP" = "1" ]; then
+  osmium extract -p "$REGION" "$PBF" -o "$WORK/pen.osm.pbf" --overwrite
+  rm -f "$PBF"
+else
+  mv "$PBF" "$WORK/pen.osm.pbf"
+fi
 
 # --- roads -> routing graph
 osmium tags-filter "$WORK/pen.osm.pbf" \
@@ -28,7 +41,7 @@ osmium tags-filter "$WORK/pen.osm.pbf" \
   n/highway=motorway_junction r/type=restriction -o "$WORK/roads.osm.pbf" --overwrite
 osmium add-locations-to-ways "$WORK/roads.osm.pbf" -o "$WORK/roads-loc.osm.pbf" --overwrite
 osmium cat "$WORK/roads-loc.osm.pbf" -f opl,add_metadata=false,locations_on_ways=true -o "$WORK/roads.opl" --overwrite
-node --max-old-space-size=12000 "$HERE/build-graph.mjs" "$WORK/roads.opl" "$WORK/graph.bin" "$WORK/streets.jsonl" --bbox "$BBOX" --side left
+node --max-old-space-size=12000 "$HERE/build-graph.mjs" "$WORK/roads.opl" "$WORK/graph.bin" "$WORK/streets.jsonl" --bbox "$BBOX" --side "$SIDE"
 rm -f "$WORK/roads.opl" "$WORK/roads.osm.pbf" "$WORK/roads-loc.osm.pbf"
 
 # --- named places -> search index
@@ -55,19 +68,21 @@ BUILD=$(curl -fsSL https://build-metadata.protomaps.dev/builds.json | node -e 'l
 echo "protomaps build: $BUILD"
 "$PMTILES" extract "https://build.protomaps.com/$BUILD" "$WORK/tiles.pmtiles" --region="$REGION" --maxzoom="$MAXZOOM"
 # Keep the whole site under GitHub Pages' 1 GB: drop the most detailed zoom if needed.
-if [ "$(stat -c %s "$WORK/tiles.pmtiles")" -gt $((700 * 1024 * 1024)) ]; then
-  echo "tiles over 700 MB at z$MAXZOOM; extracting to z14"
-  "$PMTILES" extract "https://build.protomaps.com/$BUILD" "$WORK/tiles.pmtiles" --region="$REGION" --maxzoom=14
+if [ "$(stat -c %s "$WORK/tiles.pmtiles")" -gt $((MAX_TILES_MB * 1024 * 1024)) ] && [ "$MAXZOOM" -gt 13 ]; then
+  echo "tiles over $MAX_TILES_MB MB at z$MAXZOOM; extracting to z$((MAXZOOM - 1))"
+  "$PMTILES" extract "https://build.protomaps.com/$BUILD" "$WORK/tiles.pmtiles" --region="$REGION" --maxzoom=$((MAXZOOM - 1))
 fi
 
 # --- ground heights for the 3D junction views (hills) without internet
 # Optional: if the elevation tiles cannot be fetched, the pack goes out without them and the
 # app keeps using the online heights.
 rm -f "$WORK/terrain.bin"
-if ! node --max-old-space-size=8000 "$HERE/build-terrain.mjs" "$REGION" "$WORK/terrain.bin" --zoom "${TERRAIN_ZOOM:-12}" --max-mb "${TERRAIN_MAX_MB:-40}"; then
+if [ "${TERRAIN_ZOOM:-12}" = "0" ]; then
+  echo "no ground heights for this region"
+elif ! node --max-old-space-size=8000 "$HERE/build-terrain.mjs" "$REGION" "$WORK/terrain.bin" --zoom "${TERRAIN_ZOOM:-12}" --max-mb "${TERRAIN_MAX_MB:-40}"; then
   echo "::warning::Ground heights could not be built; the offline pack goes out without them."
   rm -f "$WORK/terrain.bin"
 fi
 
-node "$HERE/finish-pack.mjs" "$WORK" "$OUT" --id "$ID" --name "$NAME" --bbox "$BBOX" --side left
+node "$HERE/finish-pack.mjs" "$WORK" "$OUT" --id "$ID" --name "$NAME" --bbox "$BBOX" --side "$SIDE"
 du -sh "$OUT"

@@ -137,13 +137,22 @@ describe('toll plazas on the route', () => {
     expect(tollPayment([116.0735, 5.9804])).toBe('tng'); // Kota Kinabalu
     expect(tollPayment([103.7692, 1.4452])).toBe('none'); // Woodlands, Singapore
     expect(tollPayment([103.85, 1.29])).toBe('none'); // Singapore city
-    expect(tollPayment([101.45, 1.67])).toBe('generic'); // Dumai, Sumatra
-    expect(tollPayment([114.94, 4.89])).toBe('generic'); // Brunei
+    expect(tollPayment([101.45, 1.67])).toBe('etoll'); // Dumai, Sumatra: Indonesia's e-toll card
+    expect(tollPayment([114.94, 4.89])).toBe('none'); // Brunei: no toll roads
     expect(tollPayment([139.767, 35.681])).toBe('etc'); // Tokyo
     expect(tollPayment([130.4, 33.59])).toBe('etc'); // Fukuoka
-    expect(tollPayment([126.978, 37.566])).toBe('generic'); // Seoul
-    expect(tollPayment([129.07, 35.18])).toBe('generic'); // Busan
+    expect(tollPayment([126.978, 37.566])).toBe('hipass'); // Seoul
+    expect(tollPayment([129.07, 35.18])).toBe('hipass'); // Busan
     expect(tollPayment([-0.1276, 51.5072])).toBe('generic'); // London
+    expect(tollPayment([100.5018, 13.7563])).toBe('easypass'); // Bangkok
+    expect(tollPayment([106.8456, -6.2088])).toBe('etoll'); // Jakarta
+    expect(tollPayment([121.0244, 14.5547])).toBe('phrfid'); // Makati, Manila
+    expect(tollPayment([105.8342, 21.0278])).toBe('vietc'); // Hanoi
+    expect(tollPayment([121.5654, 25.033])).toBe('etag'); // Taipei
+    expect(tollPayment([114.1694, 22.3193])).toBe('hketoll'); // Hong Kong
+    expect(tollPayment([116.4074, 39.9042])).toBe('etc'); // Beijing
+    expect(tollPayment([77.209, 28.6139])).toBe('fastag'); // Delhi
+    expect(tollPayment([73.0479, 33.6844])).toBe('mtag'); // Islamabad
   });
 
   it('takes TomTom’s toll gates into the route', () => {
@@ -285,7 +294,7 @@ describe('toll plaza reminders', () => {
     expect(said[0].s).toBeGreaterThanOrEqual(1500);
     expect(said[0].s).toBeLessThan(1600);
     expect(said[1].s).toBeGreaterThanOrEqual(1880);
-    expect(tollSpeech('near', said[1].pr.toll!, 'tng', 'en', 'metric')).toBe('Toll plaza ahead. Prepare your Touch n Go.');
+    expect(tollSpeech('near', said[1].pr.toll!, 'tng', 'en', 'metric')).toBe('Toll plaza ahead. Prepare your Touch n Go card.');
   });
 
   it('only gives the short reminder when guidance starts close to the plaza', () => {
@@ -326,11 +335,11 @@ describe('toll plaza reminders', () => {
   it('speaks Malay and Japanese, and asks for ETC in Japan', () => {
     const t = { plaza: plaza(0, 'Sungai Besi'), dist: 800 };
     expect(tollSpeech('early', t, 'tng', 'ms', 'metric')).toBe('Plaza Tol Sungai Besi dalam 800 meter. Sediakan kad Touch n Go anda.');
-    expect(tollSpeech('near', t, 'tng', 'ms', 'metric')).toBe('Plaza tol di hadapan. Sediakan Touch n Go.');
+    expect(tollSpeech('near', t, 'tng', 'ms', 'metric')).toBe('Plaza tol di hadapan. Sediakan kad Touch n Go.');
     expect(tollSpeech('early', t, 'tng', 'ja', 'metric')).toBe('800メートル先、Sungai Besi料金所です。Touch n Goカードをご用意ください。');
     const jp = { plaza: plaza(0, '東京料金所'), dist: 1000 };
-    expect(tollSpeech('early', jp, 'etc', 'ja', 'metric')).toBe('1キロ先、東京料金所です。ETCカードをご確認ください。');
-    expect(tollSpeech('near', jp, 'etc', 'ja', 'metric')).toBe('まもなく東京料金所です。');
+    expect(tollSpeech('early', jp, 'etc', 'ja', 'metric')).toBe('1キロ先、東京料金所です。ETCカードをご用意ください。');
+    expect(tollSpeech('near', jp, 'etc', 'ja', 'metric')).toBe('まもなく東京料金所です。ETCカードをご用意ください。');
     expect(tollSpeech('early', { plaza: plaza(0), dist: 800 }, 'generic', 'en', 'metric')).toBe('Toll plaza in 800 metres. Have your toll payment ready.');
     expect(tollSpeech('near', { plaza: plaza(0), dist: 200 }, 'generic', 'en', 'metric')).toBe('Toll plaza ahead.');
     const mid = { plaza: plaza(0), dist: 600 };

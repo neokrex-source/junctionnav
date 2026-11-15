@@ -128,7 +128,7 @@ describe('arriving in a direction', () => {
 
   it('gives the offline router the direction for the last point', async () => {
     const route = vi.fn(async (_req: { bearings?: (number | null)[] }) => ({ code: 'NoRoute', message: 'x' }));
-    const off = new OfflineRouter({ route } as never);
+    const off = new OfflineRouter({ route, covers: () => true } as never);
     await off.route({ origin: KL, destination: [101.7, 3.15], via: [[101.695, 3.145]], viaBearings: [null], destinationBearing: 180 }).catch(() => {});
     expect(route.mock.calls[0][0]).toMatchObject({ bearings: [null, null, 180] });
   });

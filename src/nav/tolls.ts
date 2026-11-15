@@ -5,7 +5,9 @@
  * line across the lanes), found along the route one Overpass query per 20 km ahead (or in the
  * offline maps), placed on the route and grouped into one plaza each.
  */
+import { countryAt } from '../geo/countries';
 import { haversine, type LngLat } from '../geo/geo';
+import { payFor, type TollPay } from './tollPay';
 import type { Route } from '../routing/types';
 import { simplifyPath } from './tunnels';
 
@@ -40,8 +42,8 @@ const ON_ROUTE = 35;
 /** Booths this close along the route are one plaza (several lanes, both directions). */
 export const SAME_PLAZA = 300;
 
-/** How the toll is paid where the plaza is, for what the reminder asks to have ready. */
-export type TollPay = 'tng' | 'etc' | 'generic' | 'none';
+/** How the toll is paid where the plaza is, for what the reminder asks to have ready (src/nav/tollPay.ts). */
+export type { TollPay } from './tollPay';
 
 /** The Johor Strait, west to east (longitude, latitude): Singapore lies south of it. */
 const JOHOR_STRAIT: LngLat[] = [
@@ -85,12 +87,16 @@ export function regionAt(p: LngLat): Region {
 }
 
 /**
- * Touch 'n Go across Malaysia, ETC in Japan, nothing to get ready in Singapore (its road pricing
- * is automatic), a plain reminder elsewhere.
+ * What pays the toll where a point is: Touch 'n Go across Malaysia, ETC in Japan, nothing to get
+ * ready in Singapore (its road pricing is automatic), each country's own card or tag elsewhere in
+ * Asia (src/nav/tollPay.ts), a plain reminder where the app does not know it.
  */
 export function tollPayment(p: LngLat): TollPay {
   const r = regionAt(p);
-  return r === 'MY' ? 'tng' : r === 'JP' ? 'etc' : r === 'SG' ? 'none' : 'generic';
+  if (r === 'MY') return 'tng';
+  if (r === 'JP') return 'etc';
+  if (r === 'SG') return 'none';
+  return payFor(countryAt(p));
 }
 
 /**

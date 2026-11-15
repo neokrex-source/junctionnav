@@ -40,7 +40,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The real Peninsular Malaysia pack, from its release (scripts/offline/fetch-pack.sh); before
+      # the first release, the one the older Offline maps workflow kept in the cache.
+      - name: The Peninsular Malaysia pack
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SITE_REPO: ${{ vars.SITE_REPO || github.repository }}
+        run: |
+          if bash scripts/offline/fetch-pack.sh peninsular-my offline-pack; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "::notice::No release pack yet; using the cached one."; fi
       - uses: actions/cache/restore@v4
+        if: steps.rel.outputs.ok != 'true'
         with:
           path: offline-pack
           key: offline-pack-v1-newest
