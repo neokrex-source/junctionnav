@@ -85,7 +85,9 @@ export function addressWords(s: string): string {
 }
 
 /** The app's category buttons, in terms of groups and category keys. */
-export type PlaceCategory = 'fuel' | 'ev' | 'parking' | 'food' | 'rest' | 'store';
+export type PlaceCategory = 'fuel' | 'ev' | 'parking' | 'food' | 'rest' | 'store' | 'attraction' | 'themepark' | 'resort' | 'mall';
+
+const THEME_KEY = /theme_park|amusement_park|water_park/;
 
 export function inCategory(cat: PlaceCategory, group: PlaceGroup, key: string): boolean {
   switch (cat) {
@@ -93,6 +95,12 @@ export function inCategory(cat: PlaceCategory, group: PlaceGroup, key: string): 
       return group === 'food' || group === 'cafe';
     case 'store':
       return group === 'grocery' && /convenience|minimarket|mini_mart/.test(key);
+    case 'attraction':
+      return group === 'attraction' && !THEME_KEY.test(key);
+    case 'themepark':
+      return THEME_KEY.test(key);
+    case 'resort':
+      return group === 'hotel' && /resort/.test(key);
     default:
       return group === cat;
   }

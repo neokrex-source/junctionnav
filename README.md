@@ -165,6 +165,25 @@ Places that are missing, misplaced or out of date can be put right in the app it
 - **The rules are in the database** (`supabase/shared-places.sql`, row level security): anyone may read public places that are not hidden; only the signed-in owner can read their private places and add, change or delete their own; the owner, the report count and *hidden* cannot be set by the app; you can report a public place of someone else once; and a trigger hides a place at three reports. Names are 1 to 80 characters, notes up to 500. `tests/sharedPlaces.sql.test.ts` runs the file in PGlite (Postgres in WebAssembly) and checks each rule as a signed-in owner, another person and a visitor.
 - **Google Maps on every card.** The **Google Maps** button opens the spot in Google Maps (a plain Maps link, free and without a key), to compare a place with what Google has there.
 
+### Places tab: saved places, groups, and Discover
+
+The **Places** chip (first under the search bar) opens a tab with two parts.
+
+- **Discover.** Tap **Attractions**, **Foods**, **Resorts**, **Theme parks** or **Shopping malls** and the app gathers that kind of place around the map centre right then, from free and open sources asked at the same time (`src/discover/`):
+  - **OpenStreetMap** (Overpass): sights and landmarks (museums, viewpoints, zoos, monuments, waterfalls, notable buildings and places of worship with a Wikidata item), eateries that are known beyond their street (a Wikipedia article, a photo, a website, or their own **Facebook, Instagram or TikTok** page in OSM), resorts, theme and water parks, malls and department stores. Rides inside a park and chain fast food are left out; other chains come after local places.
+  - **Wikivoyage**: the *See, Do, Eat, Drink, Sleep, Buy* listings with a position in the (up to three) travel guides closest to the map centre, as **traveller picks** with their own words.
+  - **Wikipedia**: articles with a position within 10 km (in the app's language and English), with their photo and first lines; towns, districts, roads, schools and stations are left out.
+  - **Wikidata**: a photo for any place with an item and no photo yet. The photographer and licence come from **Wikimedia Commons** when the place page opens.
+
+  The same place from several sources becomes one card with all their links (same Wikidata item, or alike names close together), ordered by how well known it seems (more sources, a photo, an article, social pages). Each kind looks within its own distance (foods 5 km, attractions 10 km, malls 12 km, resorts and theme parks 40 km), wider when zoomed out. The places are on the map as round **photo markers** (the kind's icon without a photo). Answers are kept for 15 minutes per area; **Refresh** asks again. A source that cannot be reached is named and the rest are shown; without internet the places on the phone are shown (no photos). All requests to Wikimedia carry an `Api-User-Agent` naming the app.
+
+  **Facebook, TikTok and Instagram** have no free public way for apps to read posts or find viral places (and scraping them is against their terms), so the app does not pull from them. Instead each place links to its own pages there when OpenStreetMap has them, and every place page has **Look it up** buttons that search for it on TikTok, Instagram, Facebook and Google Maps, to see the videos, posts and ratings people share.
+- **The place page** of a discovered place: the photo with its credit, the words about it and where they are from, hours, address, phone, website, cuisine and price, and **Sources**: every link it came from (OpenStreetMap, Wikivoyage, Wikipedia, Wikidata, its website and social pages).
+- **Save to.** The place page's **Save** opens a list of groups to tick: **Favourites**, **Want to go** and any you make (a new group can be made right there). A saved place keeps what Discover found (photo, words, links) and can carry **your note** and **a link** (a TikTok or Instagram post about it, say).
+- **Saved.** Home and Work, your **groups** with how many places each has, your pins, your registered places and recent destinations. Open a group to see its places (with photos and notes), **Show on map**, **Move to** another group, remove a place, **Rename** or **Delete group** (a second tap deletes). Saved places and groups are kept on the phone with your account (`src/state/places.ts`, `src/ui/library.ts`).
+
+`scripts/dev/places-tab-check.cjs` checks the tab with every source answering the check's own data (including Wikipedia down, and the groups kept after a reload).
+
 ### Google Maps places in search
 
 With a Google Cloud key (the site's `VITE_GOOGLE_MAPS_KEY`, or your own in **Settings → Map → Google Maps places**), search adds **Search Google Maps for "…"** under the results. It opens Google's own search list for what was typed, near you, and Google's place card for the one you pick (rating, opening hours, photos, as Google draws them, with Google's attribution), with **Directions**, **Open in Google Maps** and **Back to the list**. Directions plans the route to that spot with JunctionNav's own routing, named by JunctionNav's own address search.

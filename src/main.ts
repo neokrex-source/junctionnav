@@ -3,6 +3,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/fonts.css';
 import './styles/app.css';
 import './styles/themes.css';
+import './styles/places.css';
 import { DemoJunctionProvider, DemoPlaceSearch, DemoPoiProvider, DemoRouter, DemoSpeedProvider, DemoSurroundProvider, demoTerrain, DemoTollProvider, DemoTunnelProvider } from './demo/providers';
 import { buildDemo } from './demo/network';
 import { angleDiff, bearing, hashString, haversine, type LngLat } from './geo/geo';
@@ -40,6 +41,11 @@ import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type Ca
 import { attachSearch, parseCoordinates, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
 import { parsePlusCode } from './search/pluscode';
 import { PlaceStore } from './state/places';
+import { DiscoverService, radiusFor } from './discover/service';
+import { discoverWords, type DiscoverCat, type DiscoverPlace } from './discover/types';
+import { fetchPhotoCredit } from './discover/wiki';
+import { CAT_COLOR, CAT_ICON, discoverSources, discoverToPlace, discoverTop, isSaved, LIB_ICON, lookUpRow, newLibState, renderLibrary, savedNotes, savePanel } from './ui/library';
+import type { PlaceCategory } from './places/placesIndex';
 import { ARTIFACT, googleKey, isNight, lastPosition, loadSettings, overpassList, rememberPosition, saveSettings, setSunPlace, tomtomKey, type Settings } from './state/settings';
 import { setThemeId, themeFor, THEMES } from './theme/palette';
 import { Banner } from './ui/banner';
@@ -157,7 +163,7 @@ function clearsAfter(i: RouteIncident): boolean {
   return i.kind !== 'closure' && (i.delay >= 60 || i.magnitude === 'major' || i.magnitude === 'moderate') && i.endS - i.s >= 150;
 }
 const MAX_STOPS = 3;
-type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic' | 'pin' | 'myplace';
+type View = 'browse' | 'results' | 'place' | 'directions' | 'nav' | 'traffic' | 'pin' | 'myplace' | 'library';
 /** What the crosshair is placing: a new pin, one of your pins, or a point for the directions. */
 type PinTarget = { kind: 'new' } | { kind: 'pin'; id: string } | { kind: 'field'; field: 'origin' | 'destination' | number } | { kind: 'myplace' };
 type NavOverlay = null | 'steps' | 'search' | 'place' | 'traffic';
@@ -236,6 +242,22 @@ interface Trip {
 class App {
   settings: Settings = loadSettings();
   places = new PlaceStore();
+  /** The Places tab: Saved and Discover (src/ui/library.ts). */
+  lib = newLibState();
+  private discoverSvc = new DiscoverService({
+    overpass: () => overpassList(this.settings),
+    online: () => navigator.onLine !== false,
+    local: (cat, center, radius, lang) => this.localDiscover(cat, center, radius, lang),
+  });
+  private discoverCtrl: AbortController | null = null;
+  /** The place page was opened from the Places tab (its back button goes back there). */
+  private placeFrom: 'library' | null = null;
+  /** The place page's Save to panel is open. */
+  private saveOpen = false;
+  /** What the photo markers show now (ids), so a redraw with the same places keeps them. */
+  private photoSig = '';
+  /** The saved group shown on the map. */
+  private groupOnMap: string | null = null;
   pins = new PinStore();
   private pinsLayer: PinsLayer | null = null;
   /** Placing a pin, moving one, or choosing a point for the directions, with the crosshair. */
@@ -771,6 +793,10 @@ class App {
       enabled: () => !this.demo && !ARTIFACT,
     });
     this.communityLayer.setNight(this.nightNow);
+    // Saved places and groups changed: the Places tab or the place page shows it.
+    this.places.onChange = () => {
+      if (this.view === 'library' || this.view === 'place') this.renderSheet();
+    };
     this.myPlaces.onChange = () => {
       this.communityLayer?.refresh(0);
       // A card of one of your places follows its changes (another device, the service's answer).
@@ -947,6 +973,11 @@ class App {
 
   private renderChips(target: HTMLElement, onPick: (c: Category) => void, withDemo: boolean) {
     target.innerHTML = '';
+    if (target === this.el.chips) {
+      const lib = h('button', { class: 'cat-chip is-places', type: 'button', id: 'btn-places', html: `${LIB_ICON.bookmark}<span>${discoverWords(this.L).tab}</span>` });
+      lib.addEventListener('click', () => this.openLibrary());
+      target.append(lib);
+    }
     for (const c of CATEGORIES) {
       const b = h('button', { class: 'cat-chip', type: 'button', html: `${c.icon}<span>${this.tr(c.label)}</span>` });
       b.addEventListener('click', () => onPick(c));
@@ -993,7 +1024,7 @@ class App {
     e.topbar.hidden = nav || pinning;
     e.pinCross.hidden = !pinning;
     e.searchCard.hidden = v === 'directions';
-    e.chips.hidden = v === 'directions' || v === 'place' || v === 'traffic' || v === 'myplace';
+    e.chips.hidden = v === 'directions' || v === 'place' || v === 'traffic' || v === 'myplace' || v === 'library';
     e.dir.hidden = v !== 'directions';
     e.fabs.hidden = nav || pinning;
     e.guide.hidden = !nav;
@@ -1008,12 +1039,23 @@ class App {
     }
     if (v !== 'results' && !(nav && this.navOverlay === 'search')) this.map.setResultMarkers([], () => {});
     if (v !== 'myplace' && v !== 'pin') this.placeDraft = null;
+    // The Places tab's markers stay while it, or a place opened from it, is up.
+    if (!(v === 'library' || (v === 'place' && this.placeFrom === 'library'))) {
+      this.setPhotoMarks([]);
+      this.groupOnMap = null;
+      this.discoverCtrl?.abort();
+    }
     this.renderSheet();
     this.renderPins();
   }
 
   private renderSheet() {
     const s = this.el.sheet;
+    // The Places tab and a place page keep their scroll when redrawn for a change on them (a
+    // tick in Save to, a group renamed); anything else starts at the top.
+    const key = this.view === 'library' ? `library|${this.lib.tab}|${this.lib.group ?? ''}|${this.lib.cat ?? ''}` : this.view === 'place' ? `place|${this.place?.name}|${this.place?.lngLat.join(',')}` : '';
+    const keep = key && key === this.sheetKey ? s.scrollTop : 0;
+    this.sheetKey = key;
     s.innerHTML = '';
     s.classList.toggle('is-nav', this.view === 'nav');
     let show = true;
@@ -1024,10 +1066,12 @@ class App {
     else if (this.view === 'traffic') this.renderTraffic(s, false);
     else if (this.view === 'pin' && this.pinEdit) this.renderPinBar(s);
     else if (this.view === 'myplace' && this.placeDraft) this.renderPlaceForm(s);
+    else if (this.view === 'library') this.renderLibrarySheet(s);
     else show = false;
     s.hidden = !show;
-    s.scrollTop = 0;
+    s.scrollTop = keep;
   }
+  private sheetKey = '';
 
   private sheetHead(title: string, onClose: () => void, back = false) {
     const b = h('button', { class: 'mini', type: 'button', html: back ? ICON.back : ICON.close, 'aria-label': back ? this.tr('back') : this.tr('close') });
@@ -1086,7 +1130,9 @@ class App {
     s.append(ul);
   }
 
-  private openPlace(p: Place) {
+  private openPlace(p: Place, from: 'library' | null = null) {
+    this.placeFrom = from;
+    this.saveOpen = false;
     this.place = p;
     this.map.setDestination(p.pinId ? null : p.lngLat);
     this.map.flyTo(p.lngLat, Math.max(15, this.map.map.getZoom()));
@@ -1161,6 +1207,7 @@ class App {
   }
 
   private closePlace() {
+    this.placeFrom = null;
     this.place = null;
     this.results = [];
     this.el.q.value = '';
@@ -1170,13 +1217,31 @@ class App {
   }
 
   private renderPlace(s: HTMLElement, p: Place) {
-    const fav = this.places.isFavourite(p);
+    const saved = this.places.savedCopy(p);
+    // A saved place keeps what Discover found about it, and your note and link.
+    const disc = p.discover ?? saved?.discover;
+    const fav = isSaved(p, this.places);
     const dist = this.myPos ? formatDistance(haversine(this.myPos, p.lngLat), this.settings.units) : '';
-    const head = this.sheetHead(p.name, () => (this.results.length ? this.setView('results') : this.closePlace()));
+    const back = () => {
+      if (this.placeFrom === 'library') {
+        this.place = null;
+        this.map.setDestination(null);
+        return this.setView('library');
+      }
+      return this.results.length ? this.setView('results') : this.closePlace();
+    };
+    const head = this.sheetHead(p.name, back);
     if (p.info) head.prepend(h('span', { class: 'place-kind', html: placeSvg(p.info.group) }));
+    else if (disc) head.prepend(h('span', { class: 'place-kind is-disc', style: `--dc:${CAT_COLOR[disc.cat]}`, html: CAT_ICON[disc.cat] }));
     // The address has its own line in the details.
     const sub = p.info?.address ? p.sub.replace(` · ${p.info.address}`, '') : p.sub;
     s.append(head, h('p', { class: 'place-sub' }, [sub, dist].filter(Boolean).join(' · ')));
+    if (disc) {
+      s.append(...discoverTop(disc, this.L));
+      this.photoCredit(disc, p);
+    }
+    const notes = saved ? savedNotes(saved, this.L) : null;
+    if (notes) s.append(notes);
     const details = this.placeDetails(p.info, !!p.shared);
     if (details) s.append(details);
     if (p.shared && !ARTIFACT && !this.demo) this.registeredInfo(s, p);
@@ -1218,14 +1283,17 @@ class App {
         ),
       );
     }
+    const saveBtn = small(fav ? ICON.starFill : ICON.star, fav ? this.tr('saved') : this.tr('save'), () => {
+      this.saveOpen = !this.saveOpen;
+      this.renderSheet();
+    }, fav);
+    saveBtn.id = 'place-save';
+    saveBtn.setAttribute('aria-expanded', String(this.saveOpen));
     s.append(
       h(
         'div',
         { class: 'pills' },
-        small(fav ? ICON.starFill : ICON.star, fav ? this.tr('saved') : this.tr('save'), () => {
-          this.places.toggleFavourite(p);
-          this.renderSheet();
-        }, fav),
+        saveBtn,
         small(ICON.home, this.tr('setHome'), () => {
           this.places.setHome(p);
           toast(`${this.tr('home')}: ${p.name}`);
@@ -1242,8 +1310,168 @@ class App {
           );
         }),
       ),
+      ...[
+        this.saveOpen ? savePanel({ ...p, ...(disc && !p.discover ? { discover: disc } : {}) }, this.places, this.L, () => this.renderSheet(), (m) => toast(m, 2200)) : null,
+        // What people post about it: TikTok, Instagram, Facebook, Google Maps.
+        disc || (p.info && p.kind !== 'coords') || p.shared ? lookUpRow(p.name, disc?.area, p.lngLat, this.L) : null,
+        disc ? discoverSources(disc, this.L) : null,
+      ].filter((x): x is HTMLElement => !!x),
       h('p', { class: 'coords' }, `${p.lngLat[1].toFixed(5)}, ${p.lngLat[0].toFixed(5)}`),
     );
+  }
+
+  /** Who took the photo and its licence, looked up once the place page shows it. */
+  private photoCredit(d: DiscoverPlace, p: Place) {
+    const ph = d.photo;
+    if (!ph?.file || ph.credit) return;
+    ph.credit = '…';
+    void fetchPhotoCredit(ph.file, (...a) => fetch(...a))
+      .then((c) => {
+        ph.credit = c?.credit ?? 'Wikimedia Commons';
+        if (c?.page) ph.page = c.page;
+        if (this.view === 'place' && this.place === p) this.renderSheet();
+      })
+      .catch(() => (ph.credit = 'Wikimedia Commons'));
+  }
+
+  /* ================================================================ the Places tab */
+
+  private openLibrary(tab?: 'saved' | 'discover') {
+    if (tab) this.lib.tab = tab;
+    if (ARTIFACT) this.lib.tab = 'saved';
+    this.place = null;
+    this.placeFrom = null;
+    this.map.setDestination(null);
+    this.setView('library');
+  }
+
+  private renderLibrarySheet(s: HTMLElement) {
+    renderLibrary(s, this.lib, {
+      L: this.L,
+      units: this.settings.units,
+      myPos: this.myPos,
+      places: this.places,
+      pins: this.pins.list().map(pinPlace),
+      mine: this.myPlaces.list().map((mp) => sharedToPlace(mp, this.L, true)),
+      noDiscover: ARTIFACT,
+      head: (t, close, back) => this.sheetHead(t, close, back),
+      rerender: () => this.renderSheet(),
+      open: (p) => this.openPlace(p, 'library'),
+      close: () => this.setView('browse'),
+      runDiscover: (cat, force) => void this.runDiscover(cat, force),
+      showGroup: (id) => this.showGroupOnMap(id),
+      toast: (m) => toast(m, 2200),
+    });
+    // The markers for what the tab shows: Discover's places, or the group shown on the map.
+    const lib = this.lib;
+    if (lib.tab === 'discover' && !ARTIFACT) this.setPhotoMarks(lib.result && lib.result.cat === lib.cat ? lib.result.places.map(discoverToPlace) : []);
+    else this.setPhotoMarks(lib.group && this.groupOnMap === lib.group ? this.places.items(lib.group) : []);
+  }
+
+  /** Photo markers for places (Discover's, or a saved group's); a tap opens the place. */
+  private setPhotoMarks(list: Place[]) {
+    const sig = list.map((p) => `${p.name}@${p.lngLat.join(',')}`).join('|');
+    if (sig === this.photoSig) return;
+    this.photoSig = sig;
+    this.map.setPhotoMarkers(
+      list.map((p) => {
+        const d = p.discover;
+        return { lngLat: p.lngLat, photo: d?.photo?.url, icon: d ? CAT_ICON[d.cat] : LIB_ICON.bookmark, color: d ? CAT_COLOR[d.cat] : '#7c3aed', title: p.name };
+      }),
+      (i) => this.openPlace(list[i], 'library'),
+    );
+  }
+
+  /** A saved group's places on the map, all in view. */
+  private showGroupOnMap(id: string) {
+    const items = this.places.items(id);
+    if (!items.length) return;
+    this.groupOnMap = id;
+    this.renderSheet();
+    this.map.fitPoints(
+      items.map((p) => p.lngLat),
+      this.markerPadding(),
+    );
+  }
+
+  /**
+   * Discover: the places of one kind around the map centre, from the free sources, asked when
+   * the button is tapped (an answer from the last 15 minutes for the same area is shown at once;
+   * Refresh asks again).
+   */
+  private async runDiscover(cat: DiscoverCat, force: boolean) {
+    const m = this.map.map;
+    const c = m.getCenter();
+    const center: LngLat = [c.lng, c.lat];
+    const b = m.getBounds();
+    const view = haversine(center, [b.getEast(), b.getNorth()]);
+    const radius = radiusFor(cat, view);
+    const lib = this.lib;
+    lib.cat = cat;
+    lib.error = '';
+    this.discoverCtrl?.abort();
+    const hit = force ? null : this.discoverSvc.cached(cat, center, radius, this.L);
+    if (hit) {
+      lib.result = hit;
+      lib.loading = false;
+      this.renderSheet();
+      return;
+    }
+    const ctrl = new AbortController();
+    this.discoverCtrl = ctrl;
+    lib.loading = true;
+    if (lib.result?.cat !== cat) lib.result = null;
+    this.renderSheet();
+    try {
+      const r = await this.discoverSvc.discover(cat, center, radius, this.L, force, ctrl.signal);
+      if (ctrl.signal.aborted) return;
+      lib.result = r;
+      lib.error = r.places.length || r.used.length ? '' : discoverWords(this.L).partial(r.failed.map((k) => k).join(', '));
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      lib.error = (err as Error).message;
+    } finally {
+      if (this.discoverCtrl === ctrl) {
+        lib.loading = false;
+        this.discoverCtrl = null;
+      }
+    }
+    if (this.view !== 'library' || lib.cat !== cat) return;
+    this.renderSheet();
+    const pts = lib.result?.places.map((p) => p.lngLat) ?? [];
+    if (pts.length) this.map.fitPoints(pts, this.markerPadding());
+  }
+
+  /** Room around photo markers when fitting them in view (they stand 50 px above their spot). */
+  private markerPadding() {
+    const pad = this.overviewPadding();
+    return { ...pad, top: pad.top + 52, left: pad.left + 10, right: pad.right + 10 };
+  }
+
+  /** Without internet: the places of that kind on this phone (no photos). */
+  private async localDiscover(cat: DiscoverCat, center: LngLat, radius: number, lang: string): Promise<DiscoverPlace[]> {
+    const map: Record<DiscoverCat, PlaceCategory> = { attractions: 'attraction', food: 'food', resorts: 'resort', themeparks: 'themepark', malls: 'mall' };
+    const hits = await this.placesSvc.client.near([center], radius, map[cat], 60);
+    return hits.map((hit) => {
+      const info = hitInfo(hit, lang);
+      const at: LngLat = [hit.lon, hit.lat];
+      return {
+        id: `local:${hit.id}`,
+        name: hit.name,
+        lngLat: at,
+        cat,
+        kind: info.label,
+        address: info.address,
+        phone: info.phone,
+        website: info.website,
+        hours: info.hours,
+        cuisine: info.cuisine,
+        social: {},
+        sources: [{ kind: 'osm' as const, url: `https://www.openstreetmap.org/?mlat=${hit.lat.toFixed(6)}&mlon=${hit.lon.toFixed(6)}#map=18/${hit.lat.toFixed(5)}/${hit.lon.toFixed(5)}`, label: 'OpenStreetMap' }],
+        score: hit.rank,
+        ...(info.brand ? { chain: true } : {}),
+      };
+    });
   }
 
   private async pickOnMap(p: LngLat) {
@@ -3261,8 +3489,10 @@ class App {
     // Already on the move with the first turn close: the turn first.
     const soon = first && first.s < 400 && (this.myPos == null || simulate);
     if (instruction) soon ? parts.unshift(instruction) : parts.push(instruction);
-    // One after another (Google's voice fetches them together; each plays as soon as it can).
-    parts.forEach((t, i) => this.say(t, i === 0));
+    // One after another (Google's voice fetches them together; each plays as soon as it can),
+    // after cutting off anything left from before.
+    if (parts.length) this.voice.stop();
+    parts.forEach((t) => this.say(t, false));
   }
 
   /** "Before you go": the toll card (on toll routes), the fuel and the car, until the car is on its way. */

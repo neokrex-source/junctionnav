@@ -228,7 +228,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.keyboard.press('Escape');
 
   // ---- category buttons
-  await page.click('.chips .cat-chip >> nth=0');
+  await page.click('.chips .cat-chip:not(.is-places) >> nth=0');
   await page.waitForFunction(() => window.__app.results?.length > 0, null, { timeout: 10_000 }).catch(() => {});
   const fuel = await page.evaluate(() => window.__app.results.map((r) => r.name));
   check('petrol nearby includes the places around you', fuel.includes('Petronas Jalan Tun Razak'), { fuel, overpass: calls.overpass });

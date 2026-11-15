@@ -214,7 +214,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.keyboard.press('Escape');
 
   // ---- category button nearby from TomTom
-  await page.click('.chips .cat-chip >> nth=0');
+  await page.click('.chips .cat-chip:not(.is-places) >> nth=0');
   await page.waitForFunction(() => window.__app.results?.length > 0, null, { timeout: 10_000 }).catch(() => {});
   const cat = await page.evaluate(() => window.__app.results.map((r) => r.name));
   await shot('2-petrol-nearby');

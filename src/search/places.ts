@@ -1,6 +1,7 @@
 /** Place search with Photon (OSM-based, allows search-as-you-type) plus coordinate input. */
 import type { LngLat } from '../geo/geo';
 import type { PlaceInfo } from '../places/format';
+import type { DiscoverPlace } from '../discover/types';
 import { parseCoordinates } from './coords';
 import { escapeHtml, h } from '../ui/dom';
 
@@ -24,6 +25,12 @@ export interface Place {
   pinId?: string;
   /** A place someone registered in the app (src/community): yours, or a public one. */
   shared?: SharedRef;
+  /** Found with Discover (src/discover): its photo, words, details and source links. */
+  discover?: DiscoverPlace;
+  /** Your own note on a saved place. */
+  memo?: string;
+  /** A link you keep with a saved place (a TikTok or Instagram post about it, say). */
+  link?: string;
 }
 
 /** What the place card needs of a registered place (src/community/types.ts). */

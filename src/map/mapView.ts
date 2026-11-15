@@ -221,6 +221,7 @@ export class MapView {
   private following = false;
   private userPanCb: (() => void) | null = null;
   private routeClickCb: ((idx: number) => void) | null = null;
+  private photoMarkers: maplibregl.Marker[] = [];
   private resultMarkers: maplibregl.Marker[] = [];
   /** Style to switch to when the chosen one cannot load (set by the app for day/night). */
   fallback: () => StyleSpecification = () => fallbackStyle(false);
@@ -1255,6 +1256,44 @@ export class MapView {
       { bearing: fwd, name: best.name },
       { bearing: back, name: best.name },
     ];
+  }
+
+  /**
+   * Places to discover (and saved groups) on the map: a round photo where there is one, else
+   * the kind's icon, in the kind's colour, with a point under it.
+   */
+  setPhotoMarkers(points: { lngLat: LngLat; photo?: string; icon: string; color: string; title: string }[], onClick: (i: number) => void) {
+    for (const m of this.photoMarkers) m.remove();
+    this.photoMarkers = points.map((p, i) => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = `photo-pin${p.photo ? ' has-photo' : ''}`;
+      el.style.setProperty('--pc', p.color);
+      el.title = p.title;
+      el.setAttribute('aria-label', p.title);
+      const face = document.createElement('span');
+      face.className = 'pp-face';
+      if (p.photo) {
+        const img = document.createElement('img');
+        img.src = p.photo;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.referrerPolicy = 'no-referrer';
+        // A photo that does not load: the icon instead.
+        img.addEventListener('error', () => {
+          el.classList.remove('has-photo');
+          face.innerHTML = p.icon;
+        });
+        face.append(img);
+      } else face.innerHTML = p.icon;
+      el.append(face);
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onClick(i);
+      });
+      return new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(p.lngLat).addTo(this.map);
+    });
   }
 
   /** Numbered pins for search results. */
