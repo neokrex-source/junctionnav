@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Persona, PRETRIP_MIN, speechText, spokenDuration, type TripInfo } from '../src/voice/persona';
+import { Persona, PRETRIP_MIN, pretripWords, speechText, spokenDuration, type TripInfo } from '../src/voice/persona';
 import type { TollState } from '../src/nav/tolls';
 import type { TunnelState } from '../src/nav/tunnels';
 
@@ -111,6 +111,12 @@ describe('the check before a long drive', () => {
     expect(make({ style: 'plain' }).pretrip(trip)).toBe('This is a longer drive. Before you go, check your Touch n Go balance, that you have enough fuel, and the car itself: tyres, lights and wipers.');
     expect(make({ lang: 'ms' }).pretrip(trip)).toBe('Sebelum kita memulakan perjalanan jauh ini, tuan, sila semak baki kad Touch n Go, minyak yang cukup, serta keadaan kereta: tayar, lampu dan pengelap cermin.');
     expect(make({ lang: 'ja' }).pretrip({ ...trip, pay: 'etc' })).toBe('旦那様、長めのドライブの前に、ETCカード、燃料、タイヤやライトなど車の状態をご確認ください。');
+  });
+
+  it('the card offers to start at once, and says guidance follows the check', () => {
+    expect(pretripWords('en', 'tng')).toMatchObject({ start: 'Start now', listening: 'Guidance starts after this check.' });
+    expect(pretripWords('ms', 'tng')).toMatchObject({ start: 'Mula sekarang', listening: 'Panduan bermula selepas semakan ini.' });
+    expect(pretripWords('ja', 'etc')).toMatchObject({ start: '今すぐ開始', listening: '確認のあとで案内を始めます。' });
   });
 
   it('says durations to the minute', () => {

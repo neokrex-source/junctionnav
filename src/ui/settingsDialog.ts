@@ -345,6 +345,10 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     surround.checked = current.jvSurround;
     const mapGround = h('input', { id: 'jvMapGround', type: 'checkbox' }) as HTMLInputElement;
     mapGround.checked = current.jvMapGround;
+    const elevation = h('input', { id: 'jvElevation', type: 'checkbox' }) as HTMLInputElement;
+    elevation.checked = current.jvElevation;
+    const hills = h('input', { id: 'jvHills', type: 'checkbox' }) as HTMLInputElement;
+    hills.checked = current.jvHills;
     const offlineUse = select('offlineUse', current.offlineUse, [
       ['auto', 'Use them when there is no internet'],
       ['always', 'Always use them (saves mobile data)'],
@@ -641,7 +645,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       h('div', { class: 'talk-topics', role: 'group', 'aria-label': 'Topics' }, ...topicBoxes.map((b, i) => h('label', { class: 'toggle' }, b, TOPIC_LABEL[TALK_TOPICS[i]]))),
       opts.talk ? h('div', { class: 'off-actions' }, talkTest) : null,
       h('label', { class: 'toggle' }, drowsyDetect, 'Watch my driving for signs of tiredness'),
-      h('label', { class: 'toggle' }, pretripCheck, 'Before drives over 30 minutes, remind me to check the Touch n Go balance, fuel and the car'),
+      h('label', { class: 'toggle' }, pretripCheck, 'Before drives over 30 minutes, remind me to check the Touch n Go balance, fuel and the car (guidance starts once it has been said; Start now skips it)'),
       h(
         'div',
         { class: 'hint' },
@@ -659,6 +663,18 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         { class: 'hint' },
         'The 3D view shows the streets, parks and water around each junction as on the map, and every flyover, bridge and tunnel within 900 m at its real height.' +
           (opts.preview ? '' : ' Surroundings download a few hundred KB from Overpass for each upcoming junction.'),
+      ),
+    );
+    const elevationGrp = h(
+      'div',
+      { class: 'grp' },
+      h('label', { for: 'jvElevation' }, 'Elevation'),
+      h('label', { class: 'toggle' }, elevation, 'Height strip on the junction view (climb or drop, and the grade)'),
+      h('label', { class: 'toggle' }, hills, 'Hills and valleys in the 3D view'),
+      h(
+        'div',
+        { class: 'hint' },
+        'The height strip shows how the road climbs onto a flyover or drops into an underpass or tunnel ("Up onto the flyover · +6.8 m · 5%"), and long slopes. Hills come from ground height tiles online, or from the offline maps; with them off the 3D ground stays flat and they are not downloaded.',
       ),
     );
     const servers = opts.preview
@@ -763,7 +779,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
           googleGrp,
         ],
       },
-      { id: 'drive', label: 'Drive', items: [voiceGrp, alertGrp, laneGrp, speedGrp, tollGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, tunnelGrp] },
+      { id: 'drive', label: 'Drive', items: [voiceGrp, alertGrp, laneGrp, speedGrp, tollGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, elevationGrp, tunnelGrp] },
       { id: 'traffic', label: 'Traffic', items: [traffic] },
       { id: 'downloads', label: 'Downloads', items: [places?.el, pack?.el] },
       { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers, about] },
@@ -855,6 +871,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         cloudVoice: cloudVoice.value,
         pretripCheck: pretripCheck.checked,
         jvSurround: surround.checked,
+        jvElevation: elevation.checked,
+        jvHills: hills.checked,
         jvMapGround: mapGround.checked,
         laneAlerts: laneAlerts.value as Settings['laneAlerts'],
         tunnelAlerts: tunnels.checked,

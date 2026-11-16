@@ -65,12 +65,13 @@ export function speechText(text: string, lang: LangCode): string {
 }
 
 /** The words on the "Before you go" card; `card` names what to check for the tolls. */
-export function pretripWords(lang: LangCode, pay: TollPay = 'generic'): { title: string; card: string; fuel: string; car: string } {
+export function pretripWords(lang: LangCode, pay: TollPay = 'generic'): { title: string; card: string; fuel: string; car: string; start: string; listening: string } {
   const w = payWords(pay, lang);
   const up = (s: string) => s[0].toUpperCase() + s.slice(1);
-  if (lang === 'ms') return { title: 'Sebelum bertolak', card: w ? `${up(w.balance)} (laluan ini bertol)` : 'Bayaran tol', fuel: 'Minyak yang cukup', car: 'Tayar, lampu dan pengelap cermin' };
-  if (lang === 'ja') return { title: '出発前の確認', card: w ? `${w.balance}（有料道路あり）` : '通行料金の準備', fuel: '燃料', car: 'タイヤ、ライト、ワイパー' };
-  return { title: 'Before you go', card: w ? `${up(w.balance.replace(/^your /, ''))} (this route has tolls)` : 'Toll payment', fuel: 'Enough fuel', car: 'Tyres, lights and wipers' };
+  if (lang === 'ms')
+    return { title: 'Sebelum bertolak', card: w ? `${up(w.balance)} (laluan ini bertol)` : 'Bayaran tol', fuel: 'Minyak yang cukup', car: 'Tayar, lampu dan pengelap cermin', start: 'Mula sekarang', listening: 'Panduan bermula selepas semakan ini.' };
+  if (lang === 'ja') return { title: '出発前の確認', card: w ? `${w.balance}（有料道路あり）` : '通行料金の準備', fuel: '燃料', car: 'タイヤ、ライト、ワイパー', start: '今すぐ開始', listening: '確認のあとで案内を始めます。' };
+  return { title: 'Before you go', card: w ? `${up(w.balance.replace(/^your /, ''))} (this route has tolls)` : 'Toll payment', fuel: 'Enough fuel', car: 'Tyres, lights and wipers', start: 'Start now', listening: 'Guidance starts after this check.' };
 }
 
 export class Persona {

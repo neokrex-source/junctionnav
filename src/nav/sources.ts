@@ -325,6 +325,8 @@ interface CloudItem {
   choice: VoiceChoice;
   audio: Promise<ArrayBuffer | null>;
   gen: number;
+  /** Called once it has been said, or dropped. */
+  done?: () => void;
 }
 
 /** About how long a text takes to say, as a limit on waiting for the phone's voice to finish. */
@@ -491,6 +493,16 @@ export class Voice {
   }
 
   /**
+   * Says this after anything already waiting, and resolves once it has been said (or cut off, or
+   * at once with the voice off): for things that must be heard to the end before something else.
+   */
+  speakDone(text: string, lang: string, choice: VoiceChoice = this.choice): Promise<void> {
+    if (!this.enabled || !text) return Promise.resolve();
+    if (this.usingCloud) return new Promise((ok) => this.cloudSpeak(text, lang, false, choice, ok));
+    return this.phoneSpeak(text, lang, false, choice);
+  }
+
+  /**
    * Fetches Google's audio for texts that are about to be said (the next turns' "now" prompts),
    * so they play the moment they are due.
    */
@@ -541,7 +553,7 @@ export class Voice {
   }
 
   /** Google's voice: urgent prompts clear the queue and cut in; the rest play in turn. */
-  private cloudSpeak(text: string, lang: string, urgent: boolean, choice: VoiceChoice) {
+  private cloudSpeak(text: string, lang: string, urgent: boolean, choice: VoiceChoice, done?: () => void) {
     if (urgent) this.stopAll();
     // Waits this long for the audio (fetching starts now), then the phone's voice says it.
     const wait = urgent ? 1500 : 3500;
@@ -558,7 +570,7 @@ export class Voice {
         return null;
       });
     const audio = Promise.race([work, new Promise<null>((ok) => setTimeout(() => ok(null), wait))]);
-    this.queue.push({ text, lang, choice, audio, gen: this.gen });
+    this.queue.push({ text, lang, choice, audio, gen: this.gen, done });
     void this.pump();
   }
 
@@ -568,12 +580,16 @@ export class Voice {
     try {
       while (this.queue.length) {
         const item = this.queue.shift()!;
-        if (item.gen !== this.gen) continue;
-        const buf = await Promise.race([item.audio, this.genSignal.done]);
-        if (buf === 'stale' || item.gen !== this.gen) continue;
-        if (buf && (await this.play(buf, item.gen))) continue;
-        if (item.gen !== this.gen) continue;
-        await this.phoneSpeak(item.text, item.lang, false, item.choice);
+        try {
+          if (item.gen !== this.gen) continue;
+          const buf = await Promise.race([item.audio, this.genSignal.done]);
+          if (buf === 'stale' || item.gen !== this.gen) continue;
+          if (buf && (await this.play(buf, item.gen))) continue;
+          if (item.gen !== this.gen) continue;
+          await this.phoneSpeak(item.text, item.lang, false, item.choice);
+        } finally {
+          item.done?.();
+        }
       }
     } finally {
       this.busy = false;
@@ -662,6 +678,7 @@ export class Voice {
     this.gen++;
     this.genSignal.fire();
     this.genSignal = Voice.signal();
+    for (const item of this.queue) item.done?.();
     this.queue = [];
     const s = this.source;
     this.source = null;

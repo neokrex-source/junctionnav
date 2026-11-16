@@ -44,6 +44,10 @@ export interface Settings {
   jvSurround: boolean;
   /** Lay the map (streets, land use, water) on the ground of the 3D junction view. */
   jvMapGround: boolean;
+  /** The height strip on the junction view: the climb or drop at flyovers, underpasses and hills. */
+  jvElevation: boolean;
+  /** Hills and valleys (ground heights) in the 3D junction view. */
+  jvHills: boolean;
   /** Lane advice before exits, entrances, junctions and turns; 'gps' also checks the current lane. */
   laneAlerts: 'gps' | 'advice' | 'off';
   /** Tunnel sign card and voice warning before tunnels. */
@@ -141,6 +145,8 @@ export const DEFAULTS: Settings = {
   avoid: { tolls: false, motorways: false, ferries: false },
   simSpeed: 1,
   jvSurround: true,
+  jvElevation: true,
+  jvHills: true,
   jvMapGround: true,
   laneAlerts: 'gps',
   tunnelAlerts: true,

@@ -2630,7 +2630,8 @@ class App {
   private sceneFor(route: Route, cand: JunctionCandidate): JunctionScene {
     const osm = this.osmReady.get(JunctionDataCache.key(cand.location)) ?? null;
     const surround = this.settings.jvSurround ? this.surroundReady.get(SurroundCache.key(cand.location)) ?? null : null;
-    const terrain = this.terrainReady.get(TerrainCache.key(cand.location)) ?? null;
+    // Hills off in Settings: the ground stays flat (and its heights are not fetched).
+    const terrain = this.settings.jvHills ? this.terrainReady.get(TerrainCache.key(cand.location)) ?? null : null;
     const gKey = this.groundKey(cand);
     const groundMap = gKey ? this.groundReady.get(gKey) ?? null : null;
     const key = `${cand.id}|${osm ? 'osm' : 'schematic'}|${surround ? 'surr' : ''}|${terrain ? 'dem' : ''}|${groundMap ? gKey : ''}|${this.L}`;
@@ -2679,6 +2680,7 @@ class App {
 
   /** Get the ground elevation around a junction, then call back to redraw with hills and valleys. */
   private loadTerrain(cand: JunctionCandidate, then: () => void) {
+    if (!this.settings.jvHills) return;
     const k = TerrainCache.key(cand.location);
     if (this.terrainReady.has(k)) return;
     const cache = this.terrain;
@@ -2738,7 +2740,7 @@ class App {
     this.preview ??= new JvPreview();
     const step = route.steps[cand.stepIndex];
     const d = describeStep(step, this.L);
-    const o = { night: isNight(this.settings), lang: this.L, units: this.settings.units };
+    const o = { night: isNight(this.settings), lang: this.L, units: this.settings.units, elevation: this.settings.jvElevation };
     this.preview.open(this.sceneFor(route, cand), this.themeFor(route), { ...o, title: d.action, sub: d.primary !== d.action ? d.primary : '' });
     const refresh = () => this.preview?.update(this.sceneFor(route, cand), this.themeFor(route), o);
     this.loadDetail(cand, refresh);
@@ -3495,8 +3497,13 @@ class App {
     const parts: string[] = [];
     if (this.persona.butler) parts.push(this.persona.greeting(trip, new Date().getHours()));
     const long = this.settings.pretripCheck && trip.duration > PRETRIP_MIN;
+    // A new start: anything left from the one before goes.
+    this.dropPredrive();
+    this.el.pretrip.hidden = true;
     if (long) {
       parts.push(this.persona.pretrip(trip));
+      // The check before a long drive is heard to the end before guidance starts.
+      if (this.settings.voice) return this.predriveCheck(parts, trip);
       this.showPretrip(trip);
     }
     // Already on the move with the first turn close: the turn first.
@@ -3508,19 +3515,88 @@ class App {
     parts.forEach((t) => this.say(t, false));
   }
 
+  /** While the check before a long drive is being said (its number; 0 when it is not). */
+  private predrive = 0;
+  private predriveSeq = 0;
+  /** The simulator was held for it (and goes again after). */
+  private predriveHeldSim = false;
+
+  /**
+   * The check before a long drive (the greeting, then the toll card, fuel and the car), heard to
+   * the end before navigation starts: the simulated drive waits, other prompts wait, and the
+   * first instruction follows it. "Start now" on the card ends it at once, and so does the car
+   * moving off towards a turn close by.
+   */
+  private predriveCheck(parts: string[], trip: TripInfo) {
+    const token = ++this.predriveSeq;
+    this.predrive = token;
+    if (this.sim && !this.sim.paused) {
+      this.sim.paused = true;
+      this.predriveHeldSim = true;
+      this.el.simPlay.textContent = 'Play';
+    }
+    this.showPretrip(trip, () => this.endPredrive(token, true));
+    this.voice.stop();
+    const lang = LANGS[this.L].speechLang;
+    void Promise.all(parts.map((t) => this.voice.speakDone(speechText(t, this.L), lang))).then(() => this.endPredrive(token));
+  }
+
+  /** Forget a check still running (a new start replaces it); the drive goes on. */
+  private dropPredrive() {
+    if (!this.predrive) return;
+    this.predrive = 0;
+    if (this.sim && this.predriveHeldSim) {
+      this.sim.paused = false;
+      this.el.simPlay.textContent = 'Pause';
+    }
+    this.predriveHeldSim = false;
+  }
+
+  /** The check is over (said to the end, or cut short): navigation starts with the first instruction. */
+  private endPredrive(token: number, cut = false) {
+    if (!token || this.predrive !== token) return;
+    this.predrive = 0;
+    if (cut) this.voice.stop();
+    if (this.sim && this.predriveHeldSim) {
+      this.sim.paused = false;
+      this.el.simPlay.textContent = 'Pause';
+    }
+    this.predriveHeldSim = false;
+    this.el.pretrip.querySelector('.pretrip-start')?.remove();
+    this.el.pretrip.querySelector('.pretrip-wait')?.remove();
+    // The card stays a while longer for the checks themselves.
+    if (!this.el.pretrip.hidden) this.el.pretrip.dataset.shownAt = String(Date.now());
+    const route = this.engine.route;
+    if (!route || this.view !== 'nav') return;
+    const p = this.engine.progress;
+    const next = p?.next ?? route.steps[1];
+    if (!next) return;
+    const dist = p ? p.distToNext : next.s;
+    this.say(spokenInstruction(next, dist > 300 ? dist : null, this.L, this.settings.units), false);
+  }
+
   /** "Before you go": the toll card (on toll routes), the fuel and the car, until the car is on its way. */
-  private showPretrip(trip: TripInfo) {
+  private showPretrip(trip: TripInfo, start?: () => void) {
     const card = this.el.pretrip;
     const w = pretripWords(this.L, trip.pay);
     const items: [string, string][] = [];
     if (trip.tolls && trip.pay !== 'none') items.push([ICON.card, w.card]);
     items.push([ICON.fuel, w.fuel], [ICON.car, w.car]);
     const close = h('button', { type: 'button', class: 'mini', html: ICON.close, 'aria-label': this.tr('close') });
-    close.addEventListener('click', () => (card.hidden = true));
+    // Closing the card while the check is said means "go": guidance starts.
+    close.addEventListener('click', () => {
+      card.hidden = true;
+      start?.();
+    });
     card.replaceChildren(
       h('div', { class: 'pretrip-head' }, h('strong', {}, w.title), close),
       h('ul', { class: 'pretrip-list' }, ...items.map(([icon, text]) => h('li', {}, h('span', { class: 'pretrip-ico', html: icon }), h('span', {}, text)))),
     );
+    if (start) {
+      const go = h('button', { type: 'button', class: 'btn btn-primary pretrip-start', id: 'pretrip-start' }, w.start);
+      go.addEventListener('click', start);
+      card.append(h('p', { class: 'pretrip-wait' }, w.listening), go);
+    }
     card.hidden = false;
     card.dataset.shownAt = String(Date.now());
   }
@@ -3528,7 +3604,7 @@ class App {
   /** The check card goes once the car is on its way (or after a minute). */
   private syncPretrip(p: Progress) {
     const card = this.el.pretrip;
-    if (card.hidden) return;
+    if (card.hidden || this.predrive) return;
     const shown = Number(card.dataset.shownAt) || 0;
     if (p.speed > 8.3) card.dataset.moving = String((Number(card.dataset.moving) || 0) + 1);
     if (Date.now() - shown > 60_000 || Number(card.dataset.moving) > 8) {
@@ -3539,6 +3615,8 @@ class App {
 
   private endNav() {
     this.pendingSwap = null;
+    this.predrive = 0;
+    this.predriveHeldSim = false;
     this.map.setPulsing(false);
     // Website mode: a newer build that arrived during the drive opens now.
     if (NATIVE) void import('./native/appMode').then((m) => m.applyPending(this.modeHooks()));
@@ -3587,6 +3665,8 @@ class App {
   }
 
   private say(text: string, urgent = true) {
+    // The check before a long drive is heard to the end: anything else waits (or is dropped).
+    if (this.predrive) return;
     // Guidance does not wait for a joke to finish: it cuts in.
     if (!urgent && Date.now() < this.talkUntil) urgent = true;
     this.talkUntil = 0;
@@ -4003,7 +4083,10 @@ class App {
     this.tunnelCard.update(this.settings.tunnelAlerts ? p.tunnel : null, { lang: this.L, units, theme: this.themeFor(route), dr: p.dr });
     this.paintMeter(p);
 
-    const prompts = this.engine.prompts(p);
+    // Nothing is announced while the check before a long drive is being said, so nothing is
+    // missed: the prompts come once it is over. Moving off towards a turn close by ends it.
+    if (this.predrive && p.speed > 5 && p.distToNext < 300) this.endPredrive(this.predrive, true);
+    const prompts = this.predrive ? [] : this.engine.prompts(p);
     for (const pr of prompts) {
       const text = this.promptText(pr);
       if (pr.kind === 'speed') {
@@ -4106,6 +4189,7 @@ class App {
       units: this.settings.units,
       mode: this.settings.jvMode,
       total: cand.s - cand.showFromS,
+      elevation: this.settings.jvElevation,
     });
     this.syncZoomMap();
   }
@@ -4468,6 +4552,7 @@ class App {
    *  - news naming a road on the route (the faster route offer speaks for itself, see checkFaster).
    */
   private trafficVoice(p: Progress) {
+    if (this.predrive) return;
     if (!this.settings.trafficAlerts || !p.onRoute || p.arrived || p.nearDestination || this.arrivedAnnounced) return;
     const tv = this.tv;
     const now = Date.now();
@@ -5075,6 +5160,14 @@ class App {
     if (prev.jvSize !== next.jvSize) {
       this.layoutJv();
       this.refollow();
+    }
+    // The height strip or the hills turned on or off: the junction view on screen redraws now.
+    if (prev.jvElevation !== next.jvElevation || prev.jvHills !== next.jvHills) {
+      const cand = this.engine.junctions.find((c) => c.id === this.activeJ);
+      if (cand && this.panel.visible) {
+        if (next.jvHills) this.loadTerrain(cand, () => this.activeJ === cand.id && this.showJunction(cand, true));
+        this.showJunction(cand, true);
+      }
     }
     if (prev.appearance !== next.appearance || prev.theme !== next.theme) this.applyDayNight();
     else this.applyTheme();

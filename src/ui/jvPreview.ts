@@ -37,12 +37,12 @@ export class JvPreview {
     return !this.el.hidden;
   }
 
-  open(scene: JunctionScene, theme: SignTheme, o: { night: boolean; lang: LangCode; units: Units; title: string; sub: string }) {
+  open(scene: JunctionScene, theme: SignTheme, o: { night: boolean; lang: LangCode; units: Units; title: string; sub: string; elevation?: boolean }) {
     this.el.hidden = false;
     this.title.textContent = o.title;
     this.sub.textContent = o.sub;
     this.closeBtn.setAttribute('aria-label', t(o.lang, 'close'));
-    this.panel.show(scene, theme, { night: o.night, lang: o.lang, units: o.units, mode: 'illustration', total: 1000 });
+    this.panel.show(scene, theme, { night: o.night, lang: o.lang, units: o.units, mode: 'illustration', total: 1000, elevation: o.elevation });
     this.unitsLabel = o.units;
     this.setDistance(Number(this.range.value));
     document.addEventListener('keydown', this.onKey);
@@ -50,7 +50,7 @@ export class JvPreview {
   }
 
   /** Swap in a better scene (e.g. once OSM detail arrives) without resetting the slider. */
-  update(scene: JunctionScene, theme: SignTheme, o: { night: boolean; lang: LangCode; units: Units }) {
+  update(scene: JunctionScene, theme: SignTheme, o: { night: boolean; lang: LangCode; units: Units; elevation?: boolean }) {
     if (!this.isOpen) return;
     this.panel.show(scene, theme, { ...o, mode: 'illustration', total: 1000 });
     this.setDistance(Number(this.range.value));

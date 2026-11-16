@@ -28,6 +28,8 @@ export interface PanelShowOptions {
   accent?: string;
   /** Draw lane arrows inside the view (off when the banner already shows them). */
   showLanes?: boolean;
+  /** The height strip (climb or drop and the grade); off in Settings → Elevation. */
+  elevation?: boolean;
 }
 
 export class JunctionPanel {
@@ -125,8 +127,10 @@ export class JunctionPanel {
     const kind = KIND[opts.lang][scene.kind] ?? '';
     const name = [scene.exitRef ? `${theme.exitLabel || '#'} ${scene.exitRef}`.trim() : '', scene.junctionName].filter(Boolean).join(' · ');
     // What the road does here, from the height model: up onto a flyover, down to street level...
+    const elevation = opts.elevation !== false;
     this.profileView.show(scene, opts.lang, opts.units);
-    const vert = scene.vertical && this.profileView.el.hidden ? profilePhrase(scene.profile.kind, opts.lang) : '';
+    if (!elevation) this.profileView.el.hidden = true;
+    const vert = elevation && scene.vertical && this.profileView.el.hidden ? profilePhrase(scene.profile.kind, opts.lang) : '';
     this.chipEl.replaceChildren(
       h('span', { class: 'jv-kind' }, kind),
       name ? h('span', { class: 'jv-name' }, name) : '',

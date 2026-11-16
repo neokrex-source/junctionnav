@@ -86,9 +86,9 @@ async function open(browser, settings, { demo = true } = {}) {
     window.__spoken = [];
     window.speechSynthesis.speak = (u) => {
       window.__spoken.push(u.text);
-      setTimeout(() => u.onend?.(), 50);
+      setTimeout(() => u.onend?.(), window.__speakDelay ?? 50);
     };
-    window.speechSynthesis.cancel = () => {};
+    window.speechSynthesis.cancel = () => (window.__cancels = (window.__cancels ?? 0) + 1);
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('junctionnav.settings.v1', JSON.stringify(s));
@@ -132,6 +132,10 @@ const waitSaid = (page, re, ms = 20_000) =>
     check('Call me: sir (default), ma’am, my first name, nothing', ui.addressValue === 'sir' && ui.address.length === 4 && /Ma.am/.test(ui.address[1]), ui.address);
     check('Voices from: the phone (default) or Google natural voices', ui.engineValue === 'phone' && ui.engine.length === 2 && /Google/.test(ui.engine[1]), ui.engine);
     check('the pre-trip reminder is on by default', ui.pretrip === true && /Touch n Go/.test(ui.pretripLabel), ui);
+    const elevUi = await page.evaluate(() => ({ elevation: document.querySelector('#jvElevation')?.checked, hills: document.querySelector('#jvHills')?.checked, label: document.querySelector('#jvElevation')?.closest('.grp')?.querySelector('label')?.textContent }));
+    check('Settings → Drive → Elevation: the height strip and the hills, both on by default', elevUi.elevation === true && elevUi.hills === true && elevUi.label === 'Elevation', elevUi);
+    await page.evaluate(() => document.querySelector('#jvElevation')?.closest('.grp')?.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: join(OUT, '02-elevation.png'), fullPage: false });
 
     await page.selectOption('#voiceEngine', 'google');
     await page.waitForFunction(() => document.querySelector('#cloudVoice').options.length > 1, null, { timeout: 8000 }).catch(() => {});
@@ -171,6 +175,7 @@ const waitSaid = (page, re, ms = 20_000) =>
       a.sayStart(a.engine.route, true);
     });
     const pre = await waitSaid(page, /^Before we set off on a longer drive, sir, a quick check: your Touch n Go balance, that you have enough fuel, and the car itself: tyres, lights and wipers\.$/, 8000);
+    await page.waitForFunction(() => window.__spoken.length >= 3, null, { timeout: 8000 }).catch(() => {});
     const order = await spoken(page);
     check('over 30 minutes: reminds to check the Touch n Go balance, fuel and the car', pre, order);
     check('in order: the greeting with the trip time, the check, then the first instruction', /^Good .+1 hour 15 minutes/.test(order[0] ?? '') && /^Before we set off/.test(order[1] ?? '') && order.length >= 3, order);
@@ -180,6 +185,72 @@ const waitSaid = (page, re, ms = 20_000) =>
     await page.evaluate(() => (window.__app.sim.speedAt = () => 60 / 3.6));
     await page.waitForFunction(() => window.__app.el.pretrip.hidden, null, { timeout: 20_000 }).catch(() => {});
     check('the card goes once the car is on its way', await page.evaluate(() => window.__app.el.pretrip.hidden));
+    // The height strip on the junction view, on and off.
+    const elev = await page.evaluate(() => {
+      const a = window.__app;
+      for (const c of a.engine.junctions) {
+        a.settings.jvElevation = true;
+        a.showJunction(c, true);
+        const strip = document.querySelector('.jv-profile');
+        if (!strip || strip.hidden) continue;
+        a.settings.jvElevation = false;
+        a.showJunction(c, true);
+        const off = document.querySelector('.jv-profile')?.hidden;
+        const vert = document.querySelector('.jv-vert');
+        a.settings.jvElevation = true;
+        return { found: c.id, off: !!off, vert: !!vert };
+      }
+      return { found: null };
+    });
+    check('the height strip shows on the junction view, and goes with Elevation off', !!elev.found && elev.off && !elev.vert, elev);
+    const flat = await page.evaluate(() => {
+      const a = window.__app;
+      const c = a.engine.junctions[0];
+      a.settings.jvHills = false;
+      const sc = a.sceneFor(a.engine.route, c);
+      a.settings.jvHills = true;
+      return { terrain: !!sc.terrain };
+    });
+    check('with hills off the 3D view gets no ground heights', flat.terrain === false, flat);
+
+    // Heard to the end before navigation starts: the drive waits, other prompts wait.
+    await page.evaluate(() => {
+      const a = window.__app;
+      const real = a.tripInfo.bind(a);
+      a.tripInfo = (r) => ({ ...real(r), duration: 75 * 60, tolls: true, pay: 'tng' });
+      a.sim.speedAt = () => 60 / 3.6;
+      window.__speakDelay = 1200;
+      window.__spoken = [];
+      a.sayStart(a.engine.route, true);
+    });
+    await sleep(300);
+    const during = await page.evaluate(() => {
+      const a = window.__app;
+      a.say('A prompt that must wait.');
+      return { paused: a.sim.paused, predrive: a.predrive > 0, start: !!document.querySelector('#pretrip-start'), wait: document.querySelector('.pretrip-wait')?.textContent ?? '', said: window.__spoken.slice() };
+    });
+    await page.screenshot({ path: join(OUT, '03-predrive.png'), fullPage: false });
+    check('while the check is said, the drive waits (simulator held) and the card offers Start now', during.paused && during.predrive && during.start && /Guidance starts after this check/.test(during.wait), during);
+    await page.waitForFunction(() => !window.__app.predrive, null, { timeout: 10_000 }).catch(() => {});
+    const afterCheck = await page.evaluate(() => ({ paused: window.__app.sim.paused, said: window.__spoken.slice(), start: !!document.querySelector('#pretrip-start') }));
+    check('when it has been said to the end, navigation starts with the first instruction', !afterCheck.paused && !afterCheck.start && /^Good .+/.test(afterCheck.said[0] ?? '') && /^Before we set off/.test(afterCheck.said[1] ?? '') && /^(In |Keep|Take|Turn|Continue|Head)/.test(afterCheck.said[2] ?? ''), afterCheck);
+    check('other prompts wait until it is over (nothing cuts in)', !afterCheck.said.includes('A prompt that must wait.'), afterCheck.said);
+    // Start now: at once.
+    await page.evaluate(() => {
+      const a = window.__app;
+      a.sim.speedAt = () => 0;
+      window.__speakDelay = 4000;
+      window.__spoken = [];
+      window.__cancels = 0;
+      a.sayStart(a.engine.route, true);
+    });
+    await sleep(300);
+    await page.click('#pretrip-start');
+    await sleep(300);
+    const now = await page.evaluate(() => ({ predrive: window.__app.predrive, paused: window.__app.sim.paused, cancels: window.__cancels, said: window.__spoken.slice() }));
+    check('Start now ends the check at once (the voice stops) and guidance starts', !now.predrive && !now.paused && now.cancels > 0 && /^(In |Keep|Take|Turn|Continue|Head)/.test(now.said.at(-1) ?? ''), now);
+    await page.evaluate(() => (window.__speakDelay = 50));
+
     const shortTrip = await page.evaluate(() => {
       const a = window.__app;
       a.tripInfo = (r) => ({ dest: 'Demo', duration: 20 * 60, arrival: '9:00 am', tolls: true, pay: 'tng' });
