@@ -63,6 +63,25 @@ describe('demo junction scenes', () => {
     expect(taken.lateral).toBeGreaterThan(other.lateral);
   });
 
+  it('knows how wide the route’s lanes are along the driving line (the lanes to be in, then the road taken)', () => {
+    // The fork: 2 of the 4 lanes lead the route's way, then the whole 2-lane road it takes.
+    const fork = buildScene(route, js[3], demo.osm);
+    expect(fork.routeHalf).toHaveLength(fork.route.pts.length);
+    const at = (sc: typeof fork, rel: number) => sc.routeHalf[sc.route.s.findIndex((v) => v >= rel)];
+    expect(at(fork, -30) * 2).toBeCloseTo(2 * fork.laneWidth, 0);
+    const taken = fork.roads.find((r) => r.role === 'taken')!;
+    expect(at(fork, 120) * 2).toBeCloseTo(taken.width[taken.s.findIndex((v) => v >= 120)], 1);
+    // The exit: one lane of three, then the ramp.
+    const exit = buildScene(route, js[4], demo.osm);
+    expect(at(exit, -30) * 2).toBeCloseTo(exit.laneWidth, 0);
+    // Without road data too.
+    for (const j of js) {
+      const sc = buildScene(route, j, null);
+      expect(sc.routeHalf).toHaveLength(sc.route.pts.length);
+      expect(sc.routeHalf.every((h) => h > 0)).toBe(true);
+    }
+  });
+
   it('falls back to a schematic scene without OSM data', () => {
     for (const j of js) {
       const sc = buildScene(route, j, null);

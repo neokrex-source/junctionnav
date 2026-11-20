@@ -29,6 +29,9 @@ interface Palette {
   shadow: string;
   route: string;
   routeEdge: string;
+  /** The lanes that lead the route's way, tinted on the map, with an edge line either side. */
+  lanes: string;
+  laneEdge: string;
 }
 const DAY: Palette = {
   deck: '#f7f5fa',
@@ -40,6 +43,8 @@ const DAY: Palette = {
   shadow: '#000000',
   route: '#ea580c',
   routeEdge: '#7c2d12',
+  lanes: '#fb923c',
+  laneEdge: '#ea580c',
 };
 const NIGHT: Palette = {
   deck: '#33284a',
@@ -51,6 +56,8 @@ const NIGHT: Palette = {
   shadow: '#000000',
   route: '#fb923c',
   routeEdge: '#431407',
+  lanes: '#fb923c',
+  laneEdge: '#fdba74',
 };
 
 /** Collects triangles per colour. */
@@ -296,7 +303,11 @@ export class JunctionLayer3D implements CustomLayerInterface {
     const smp = sampler({ pts: r.pts, h: r.h, s: r.s }, 0, ground);
     const edge = new Acc();
     const body = new Acc();
+    const lanes = new Acc();
+    const laneEdge = new Acc();
     const half = Math.max(2, sc.arrowWidth / 2);
+    // The route's lanes, as wide as they are at each point (the route line in their middle).
+    const laneSmp = sc.routeHalf?.length === r.pts.length ? sampler({ pts: r.pts, h: r.h, s: r.s, width: sc.routeHalf.map((x) => x * 2) }, 0, ground) : null;
     const lift = 0.3;
     // Hidden inside tunnels on our road (it shows again after the tunnel).
     const inTunnel = (sAbs: number) => {
@@ -319,9 +330,20 @@ export class JunctionLayer3D implements CustomLayerInterface {
         const zss = s.z < -MIN_UP ? s.z + lift : zs;
         edge.quad(P3(side(prev, -half - 0.6), zpp - 0.02), P3(side(prev, half + 0.6), zpp - 0.02), P3(side(s, half + 0.6), zss - 0.02), P3(side(s, -half - 0.6), zss - 0.02));
         body.quad(P3(side(prev, -half), zpp), P3(side(prev, half), zpp), P3(side(s, half), zss), P3(side(s, -half), zss));
+        if (laneSmp) {
+          const a = laneSmp.at(d - STEP);
+          const b = laneSmp.at(d);
+          const wa = Math.max(half + 0.6, a.w - 0.15);
+          const wb = Math.max(half + 0.6, b.w - 0.15);
+          lanes.quad(P3(side(prev, -wa), zpp - 0.1), P3(side(prev, wa), zpp - 0.1), P3(side(s, wb), zss - 0.1), P3(side(s, -wb), zss - 0.1));
+          for (const sg of [-1, 1])
+            laneEdge.quad(P3(side(prev, sg * (wa - 0.35)), zpp - 0.06), P3(side(prev, sg * wa), zpp - 0.06), P3(side(s, sg * wb), zss - 0.06), P3(side(s, sg * (wb - 0.35)), zss - 0.06));
+        }
       }
       prev = s;
     }
+    add(lanes, mat(P.lanes, { transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }), 6);
+    add(laneEdge, mat(P.laneEdge, { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }), 6);
     add(edge, mat(P.routeEdge, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }), 6);
     add(body, mat(P.route, { polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5 }), 7);
   }

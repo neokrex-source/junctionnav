@@ -176,7 +176,12 @@ describe('the three looks', () => {
       expect(jet.tree).toBe(JV_NIGHT.tree);
       expect(jet.asphalt).not.toBe(JV_NIGHT.asphalt);
       // Same lightness: only the cast moved.
-      expect(Math.abs(lum(jet.asphalt) - lum(JV_NIGHT.asphalt))).toBeLessThan(0.01);
+      const light = (c: string) => {
+        const n = parseInt(c.slice(1), 16);
+        const v = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+        return (Math.max(...v) + Math.min(...v)) / 510;
+      };
+      expect(Math.abs(light(jet.asphalt) - light(JV_NIGHT.asphalt))).toBeLessThan(0.01);
       expect(jet.arrow).toBe('#ffb020');
       setThemeId('casual');
       expect(jvPalette(false).skyTop).toBe('#7cc4f2');

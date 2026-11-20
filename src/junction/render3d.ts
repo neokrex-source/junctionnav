@@ -17,11 +17,21 @@ export interface JvPalette {
   ground: string;
   groundFar: string;
   hills: string;
+  /** The roads the route is on (the approach and the road it takes): the clearest. */
+  asphaltRoute: string;
+  /** The other roads (the other ways at the split, and roads around): set back. */
   asphalt: string;
   asphaltMinor: string;
+  deckRoute: string;
   deck: string;
   shoulder: string;
   marking: string;
+  /** Lane lines and edges on the other roads: quieter than the route's. */
+  markingDim: string;
+  edgeDim: string;
+  /** The lanes that lead the route's way: tinted, with an edge line in the route's colour. */
+  lanes: string;
+  laneEdge: string;
   arrow: string;
   arrowEdge: string;
   guardrail: string;
@@ -42,11 +52,17 @@ export const DAY: JvPalette = {
   ground: '#d9d6e0',
   groundFar: '#e2dfe8',
   hills: '#c3bdd6',
-  asphalt: '#4c4855',
-  asphaltMinor: '#5a5663',
-  deck: '#6a6575',
+  asphaltRoute: '#45414f',
+  asphalt: '#8a8696',
+  asphaltMinor: '#9692a1',
+  deckRoute: '#5a5565',
+  deck: '#a19dab',
   shoulder: '#5d5966',
   marking: '#f8f7fa',
+  markingDim: '#d6d3dd',
+  edgeDim: '#cfccd7',
+  lanes: '#8a4a33',
+  laneEdge: '#f97316',
   arrow: '#ea580c',
   arrowEdge: '#ffffff',
   guardrail: '#d3cfdb',
@@ -64,14 +80,20 @@ export const DAY: JvPalette = {
 export const NIGHT: JvPalette = {
   skyTop: '#05030a',
   skyHorizon: '#2a1650',
-  ground: '#100c18',
-  groundFar: '#130e1d',
+  ground: '#0c0913',
+  groundFar: '#100c18',
   hills: '#1a1230',
-  asphalt: '#1f1a29',
-  asphaltMinor: '#241e2f',
-  deck: '#2d2539',
+  asphaltRoute: '#524a6a',
+  asphalt: '#312b40',
+  asphaltMinor: '#2e283b',
+  deckRoute: '#5e5579',
+  deck: '#3a3349',
   shoulder: '#221c2d',
-  marking: '#e6e1ee',
+  marking: '#f4f1fa',
+  markingDim: '#8d84a1',
+  edgeDim: '#7b7290',
+  lanes: '#7e4a3e',
+  laneEdge: '#fdba74',
   arrow: '#fb923c',
   arrowEdge: '#ffedd5',
   guardrail: '#544a66',
@@ -87,12 +109,12 @@ export const NIGHT: JvPalette = {
 
 /** The sky, fog and route arrow of the other looks (the rest takes the look's cast, src/theme/tint.ts). */
 const DAY_SET: Parameters<typeof inTheme<JvPalette>>[2] = {
-  jet: { skyTop: '#86a596', skyHorizon: '#e6ece6', fog: '#e6ece6', arrow: '#d97706' },
-  casual: { skyTop: '#7cc4f2', skyHorizon: '#fff3e4', fog: '#fff3e4', arrow: '#f97316' },
+  jet: { skyTop: '#86a596', skyHorizon: '#e6ece6', fog: '#e6ece6', arrow: '#d97706', laneEdge: '#f59e0b', lanes: '#7c5527' },
+  casual: { skyTop: '#7cc4f2', skyHorizon: '#fff3e4', fog: '#fff3e4', arrow: '#f97316', laneEdge: '#fb923c', lanes: '#8a4a33' },
 };
 const NIGHT_SET: Parameters<typeof inTheme<JvPalette>>[2] = {
-  jet: { skyTop: '#010302', skyHorizon: '#0a2a18', fog: '#0a2a18', arrow: '#ffb020', arrowEdge: '#fff1c9', marking: '#c8ffd9' },
-  casual: { skyTop: '#0a0f20', skyHorizon: '#2a3462', fog: '#2a3462' },
+  jet: { skyTop: '#010302', skyHorizon: '#0a2a18', fog: '#0a2a18', arrow: '#ffb020', arrowEdge: '#fff1c9', marking: '#c8ffd9', laneEdge: '#ffc857', lanes: '#6e5226' },
+  casual: { skyTop: '#0a0f20', skyHorizon: '#2a3462', fog: '#2a3462', laneEdge: '#fdba74', lanes: '#7e4a3e' },
 };
 
 /** The junction view's colours in the current look. */
@@ -442,6 +464,9 @@ export class JunctionRenderer {
     const asphaltMinor = new Acc();
     const marks = new Acc();
     const edges = new Acc();
+    const marksDim = new Acc();
+    const edgesDim = new Acc();
+    const deckRoute = new Acc();
     const rails = new Acc();
     const concrete = new Acc();
     const concreteDark = new Acc();
@@ -454,10 +479,12 @@ export class JunctionRenderer {
       const sub = portal >= 0 ? truncate(st, portal + 1) : st;
       if (sub.pts.length < 2) continue;
       const smp = new StripSampler(sub);
-      const target = st.role === 'approach' || st.role === 'taken' ? asphaltRoute : st.cls === 'minor' ? asphaltMinor : asphalt;
+      // The route's roads stand out; the other ways and the roads around are set back.
+      const onRoute = st.role === 'approach' || st.role === 'taken';
+      const target = onRoute ? asphaltRoute : st.cls === 'minor' ? asphaltMinor : asphalt;
       this.ribbonStrip(smp, target, (s) => -(s.w / 2 + sub.shoulder), (s) => s.w / 2 + sub.shoulder, 0);
-      if (sub.h.some((_, i) => above(sub, i, jv.ground) > 2)) this.deckOverlay(smp, deck);
-      this.markings(smp, marks, edges);
+      if (sub.h.some((_, i) => above(sub, i, jv.ground) > 2)) this.deckOverlay(smp, onRoute ? deckRoute : deck);
+      this.markings(smp, onRoute ? marks : marksDim, onRoute ? edges : edgesDim);
       if (st.guardrail) this.guardrails(smp, rails, strips.filter((o) => o !== st));
       this.structures(smp, concrete, concreteDark);
       if (portal >= 0) this.portal(st, portal, tunnel, concrete);
@@ -465,8 +492,12 @@ export class JunctionRenderer {
 
     this.addMesh(asphaltMinor, this.mat(P.asphaltMinor, { polygonOffset: true, polygonOffsetFactor: 0, polygonOffsetUnits: 0 }), 0);
     this.addMesh(asphalt, this.mat(P.asphalt, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }), 1);
-    this.addMesh(asphaltRoute, this.mat(P.asphalt, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }), 2);
+    this.addMesh(asphaltRoute, this.mat(P.asphaltRoute, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }), 2);
     this.addMesh(deck, this.mat(P.deck, { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 2);
+    this.addMesh(deckRoute, this.mat(P.deckRoute, { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 2);
+    this.yourLanes(strips);
+    this.addMesh(marksDim, this.mat(P.markingDim, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), 3);
+    this.addMesh(edgesDim, this.mat(P.edgeDim, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), 3);
     this.addMesh(marks, this.mat(P.marking, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), 3);
     this.addMesh(edges, this.mat(theme.edgeLine, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), 3);
     this.addMesh(rails, this.mat(P.guardrail), 4);
@@ -947,6 +978,53 @@ export class JunctionRenderer {
       mesh.renderOrder = 6;
       this.scene3.add(mesh);
     }
+  }
+
+  /**
+   * The lanes that lead the route's way: tinted from well before the split to past it, with an
+   * edge line in the route's colour either side, so the lanes to be in stand apart from the ones
+   * that go elsewhere (day and night).
+   */
+  private yourLanes(strips: RoadStrip[]) {
+    const jv = this.jv!;
+    const P = this.palette;
+    const r = jv.route;
+    const half = jv.routeHalf;
+    if (!half || half.length !== r.pts.length || r.pts.length < 2) return;
+    const lane: RoadStrip = {
+      id: 'lanes',
+      role: 'taken',
+      cls: 'link',
+      pts: r.pts,
+      h: r.h,
+      width: half.map((x) => x * 2),
+      lanes: half.map(() => 1),
+      laneWidth: jv.laneWidth,
+      shoulder: 0,
+      oneway: true,
+      guardrail: false,
+      tunnel: r.pts.map(() => false),
+      s: r.s,
+    };
+    const smp = new StripSampler(lane);
+    const sOf = (rel: number) => clamp(rel - r.s[0], 0, smp.length);
+    // As far as the arrow goes: not into a tunnel the road takes.
+    const takenRoad = strips.find((x) => x.role === 'taken');
+    const portal = takenRoad ? portalIndex(takenRoad, jv.ground) : -1;
+    let endRel = jv.kind === 'merge' ? 150 : 140;
+    if (portal >= 0 && takenRoad) endRel = Math.min(endRel, takenRoad.s[portal] + 3);
+    const from = sOf(-MAX_DIST - 90);
+    const to = sOf(endRel);
+    if (to - from < 20) return;
+    const fill = new Acc();
+    const edge = new Acc();
+    const inset = 0.12;
+    this.ribbonStrip(smp, fill, (x) => -x.w / 2 + inset, (x) => x.w / 2 - inset, 0.012, from, to, 2);
+    const ew = 0.3;
+    for (const sgn of [-1, 1]) this.ribbonStrip(smp, edge, (x) => sgn * (x.w / 2 - inset) - ew / 2, (x) => sgn * (x.w / 2 - inset) + ew / 2, 0.04, from, to, 2);
+    const opts = (f: number) => ({ polygonOffset: true, polygonOffsetFactor: f, polygonOffsetUnits: f * 2 });
+    this.addMesh(fill, this.mat(P.lanes, opts(-3.5)), 2);
+    this.addMesh(edge, this.mat(P.laneEdge, opts(-5)), 3);
   }
 
   private buildArrow() {

@@ -129,6 +129,13 @@ export interface JunctionScene {
   drivingSide: 'left' | 'right';
   roads: RoadStrip[];
   route: ScenePath;
+  /**
+   * Half the width of the lanes that lead the route's way at each point of `route` (metres, the
+   * route line in their middle): the lanes to be in on the approach, all of the road after the split.
+   */
+  routeHalf: number[];
+  /** The lane width at the split (for the lane arrows painted in the route's lanes). */
+  laneWidth: number;
   camera: ScenePath;
   arrowWidth: number;
   approachLanes: number;
@@ -957,6 +964,7 @@ function fromOsm(
   // Driving line for the arrow, offset into our lane group.
   const tg = groups.find((gr) => gr.taken)!;
   const route_ = drivingLine(approach, taken, isMerge, tg.offset, tg.lanes, sigma, lw);
+  const routeHalf = routeLaneHalf(approach, taken, isMerge, tg.lanes, lw);
   const camera: ScenePath = {
     pts: approach.pts.map((p) => [p[0], p[1]] as XY),
     h: approach.h.slice(),
@@ -1027,6 +1035,8 @@ function fromOsm(
   return {
     roads,
     route: route_,
+    routeHalf,
+    laneWidth: lw,
     camera,
     arrowWidth: clamp(tg.lanes * lw * 0.55, 2.2, 6.5),
     approachLanes: Math.round(approach.lanes[approach.lanes.length - 1]),
@@ -1186,6 +1196,18 @@ function profileOf(
     kind = last - first > 8 ? 'uphill' : last - first < -8 ? 'downhill' : 'flat';
   }
   return { s, h, structure, ground, other, peak, grade: Math.round(grade * 1000) / 10, kind };
+}
+
+/**
+ * How wide the route's lanes are along the driving line (half widths, one per point of the line
+ * drivingLine makes): on the approach the lane group it keeps to (no wider than the road), after
+ * the split the whole road it takes; at a merge the ramp, then one lane.
+ */
+export function routeLaneHalf(approach: { width: number[] }, taken: { width: number[] }, isMerge: boolean, lanes: number, lw: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < approach.width.length; i++) out.push(isMerge ? approach.width[i] / 2 : Math.min(lanes * lw, approach.width[i]) / 2);
+  for (let i = 1; i < taken.width.length; i++) out.push(isMerge ? Math.min(lw, taken.width[i]) / 2 : taken.width[i] / 2);
+  return out;
 }
 
 function drivingLine(
@@ -1452,6 +1474,8 @@ function schematic(
   return {
     roads: [...others, approach, taken],
     route: drivingLine(approach, taken, isMerge, tg.offset, tg.lanes, 1, lw),
+    routeHalf: routeLaneHalf(approach, taken, isMerge, tg.lanes, lw),
+    laneWidth: lw,
     camera: { pts: approach.pts.slice(), h: approach.h.slice(), s: approach.s.slice() },
     arrowWidth: clamp(tg.lanes * lw * 0.55, 2.2, 6.5),
     approachLanes: W,
