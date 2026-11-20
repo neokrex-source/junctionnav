@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Persona, PRETRIP_MIN, pretripWords, speechText, spokenDuration, type TripInfo } from '../src/voice/persona';
+import { Persona, PRETRIP_MIN, pretripWords, restWords, speechText, spokenDuration, type TripInfo } from '../src/voice/persona';
 import type { TollState } from '../src/nav/tolls';
 import type { TunnelState } from '../src/nav/tunnels';
 
@@ -125,6 +125,30 @@ describe('the check before a long drive', () => {
     expect(spokenDuration(120 * 60, 'en')).toBe('2 hours');
     expect(spokenDuration(70 * 60, 'ms')).toBe('1 jam 10 minit');
     expect(spokenDuration(70 * 60, 'ja')).toBe('1時間10分');
+  });
+});
+
+describe('rest stops', () => {
+  it('said once as the stop begins, by kind of place, in each style and language', () => {
+    expect(make().restStart('fuel')).toBe('Filling up, sir? Take your time. I’ll carry on when we set off again.');
+    expect(make().restStart('rest')).toBe('A good spot for a break, sir. I’ll carry on when we set off again.');
+    expect(make().restStart(null)).toBe('Take your time, sir. I’ll carry on when we set off again.');
+    expect(make({ style: 'plain' }).restStart('fuel')).toBe('Guidance paused while you’re stopped.');
+    expect(make({ lang: 'ms' }).restStart('parking')).toBe('Silakan berehat, tuan. Panduan akan disambung apabila kita bergerak semula.');
+    expect(make({ lang: 'ja' }).restStart('fuel')).toBe('旦那様、給油ですね。ごゆっくりどうぞ。出発されましたら案内を再開いたします。');
+  });
+
+  it('welcomes the driver back before the next instruction', () => {
+    expect(make().resume()).toBe('Welcome back, sir.');
+    expect(make({ style: 'plain' }).resume()).toBe('Guidance resumed.');
+    expect(make({ lang: 'ms' }).resume()).toBe('Selamat kembali, tuan.');
+    expect(make({ lang: 'ja' }).resume()).toBe('旦那様、お帰りなさいませ。');
+  });
+
+  it('the card says what kind of place it is and offers to resume', () => {
+    expect(restWords('en')).toMatchObject({ title: 'Rest stop', fuel: 'Petrol station', parking: 'Car park', resume: 'Resume now' });
+    expect(restWords('ms').resume).toBe('Sambung sekarang');
+    expect(restWords('ja').title).toBe('休憩中');
   });
 });
 

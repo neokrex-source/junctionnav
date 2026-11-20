@@ -819,7 +819,7 @@ button { cursor: pointer; }
   display: grid;
   place-items: center;
 }
-.puck svg { position: relative; z-index: 1; width: 34px; height: 34px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 8px var(--route-glow)); }
+.puck svg { position: relative; z-index: 1; width: 34px; height: 34px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 8px var(--route-glow)); transform: scale(var(--puck-k, 1)); transition: transform 0.3s ease-out; }
 /* Radar pulse: two rings spreading from the car on the ground (the marker lies flat on the tilted
    map, so the rings do too), one after the other. Compositor-only (transform and opacity). */
 .puck::before,
@@ -840,6 +840,8 @@ button { cursor: pointer; }
   will-change: transform, opacity;
 }
 .puck::after { animation-delay: 1.2s; }
+/* The rings grow with the car icon as the map comes in close (an extra scale on top of the pulse). */
+.puck::before, .puck::after { scale: var(--puck-k, 1); }
 @keyframes radar {
   0% { transform: scale(0.7); opacity: 0.85; }
   70% { opacity: 0.18; }

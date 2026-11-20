@@ -15,6 +15,7 @@
  * Layer ids follow the OpenFreeMap style (`road-none-major`, `poi`, `water-name`, …), so the rest
  * of the app (traffic layer order, the 3D junction ground, the places layer) treats both alike.
  */
+import { ROAD_WIDTHS } from './roadWidths';
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { themeFor, themeId } from '../theme/palette';
 
@@ -50,9 +51,9 @@ export function ttName(lang: string): Expr {
 
 /** Road tiers as in the OpenFreeMap style. */
 const TIERS = [
-  { id: 'minor', match: cat('street', 'minor'), w: [12, 0.5, 14, 2, 18, 14], min: 12 },
-  { id: 'major', match: cat('primary', 'secondary', 'tertiary'), w: [8, 0.6, 12, 2.2, 14, 4, 18, 20], min: 7 },
-  { id: 'highway', match: cat('motorway', 'trunk'), w: [5, 0.8, 10, 2.4, 14, 5.5, 18, 26], min: 5 },
+  { id: 'minor', match: cat('street', 'minor'), w: ROAD_WIDTHS.minor, min: 12 },
+  { id: 'major', match: cat('primary', 'secondary', 'tertiary'), w: ROAD_WIDTHS.major, min: 7 },
+  { id: 'highway', match: cat('motorway', 'trunk'), w: ROAD_WIDTHS.highway, min: 5 },
 ] as const;
 
 /** TomTom's point-of-interest categories as the app's kinds of places (the `place-<kind>` icons). */

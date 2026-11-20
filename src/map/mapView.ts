@@ -9,6 +9,8 @@ import { fallbackStyle } from './styles';
 import { isTomTomMapTile } from './tomtomMap';
 import { TT_SOURCE } from './tomtomStyle';
 import { tunnelsFromRoute, type TunnelSpan } from '../nav/tunnels';
+import type { MapFeatureLite } from '../nav/rest';
+import { DEMO_ROADS, MAP_ROADS, type RoadTier, type RoadWidthSpec } from './roadWidths';
 import { tollImage } from '../ui/tollIcon';
 import { cameraImage } from '../ui/cameraIcon';
 
@@ -134,19 +136,48 @@ export function closeSpan(base: number, w: number): number {
   return Math.exp(Math.log(base) + (Math.log(Math.min(base, CLOSE_SPAN)) - Math.log(base)) * k);
 }
 
-/** Below this scale (so in a close-up) the route line and the turn arrow are drawn thin, so the roads show beside them. */
+/**
+ * Below this scale (so in a close-up) the route and the turn arrow are drawn as a share of the
+ * road they are on (ROUTE_ON_ROAD of its width), so the road's edges show beside them.
+ */
 export const THIN_BELOW = 70;
+export const ROUTE_ON_ROAD = 0.8;
 
-/** Line widths by zoom ([zoom, px, ...]) of the route layers, and the factor each gets when thin. */
-const ROUTE_WIDTHS: Record<string, { stops: number[]; thin: number }> = {
-  'route-glow': { stops: [10, 12, 16, 30, 19, 54], thin: 0.32 },
-  'route-casing': { stops: [10, 6, 16, 14, 19, 26], thin: 0.42 },
-  'route-line': { stops: [10, 4, 16, 10, 19, 20], thin: 0.38 },
-  'route-tunnel': { stops: [10, 1.5, 16, 4, 19, 8], thin: 0.5 },
-  'route-pulse-glow': { stops: [10, 9, 16, 22, 19, 40], thin: 0.35 },
-  'route-pulse': { stops: [10, 2, 16, 4.5, 19, 9], thin: 0.45 },
-  'maneuver-casing': { stops: [14, 6, 18, 18], thin: 0.55 },
-  'maneuver-line': { stops: [14, 3, 18, 11], thin: 0.5 },
+/** Each route layer's width in a close-up, as a share of the route's own width there. */
+const CLOSE_PART: Record<string, number> = {
+  'route-glow': 1.5,
+  'route-casing': 1,
+  'route-line': 0.74,
+  'route-tunnel': 0.3,
+  'route-pulse-glow': 1.1,
+  'route-pulse': 0.34,
+  'maneuver-casing': 1,
+  'maneuver-line': 0.58,
+};
+
+/** A width that follows the road's own (as the map style draws it) times k. */
+export function roadShare(tier: RoadTier, k: number, spec: RoadWidthSpec = MAP_ROADS): maplibregl.ExpressionSpecification {
+  const w = spec.tiers[tier];
+  const e: unknown[] = ['interpolate', ['exponential', spec.base], ['zoom']];
+  for (let i = 0; i < w.length; i += 2) e.push(w[i], Math.round(w[i + 1] * k * 100) / 100);
+  return e as maplibregl.ExpressionSpecification;
+}
+
+/** The car icon's size at a zoom: as drawn up to the usual scale, a little bigger closer in. */
+export function puckScale(zoom: number): number {
+  return Math.max(1, Math.min(1.55, 1 + (zoom - 16) * 0.18));
+}
+
+/** Line widths by zoom ([zoom, px, ...]) of the route layers away from close-ups. */
+const ROUTE_WIDTHS: Record<string, { stops: number[] }> = {
+  'route-glow': { stops: [10, 12, 16, 30, 19, 54] },
+  'route-casing': { stops: [10, 6, 16, 14, 19, 26] },
+  'route-line': { stops: [10, 4, 16, 10, 19, 20] },
+  'route-tunnel': { stops: [10, 1.5, 16, 4, 19, 8] },
+  'route-pulse-glow': { stops: [10, 9, 16, 22, 19, 40] },
+  'route-pulse': { stops: [10, 2, 16, 4.5, 19, 9] },
+  'maneuver-casing': { stops: [14, 6, 18, 18] },
+  'maneuver-line': { stops: [14, 3, 18, 11] },
 };
 
 /** A zoom-interpolated line width from [zoom, px, ...] stops, times k. */
@@ -156,7 +187,12 @@ export function widthExpr(stops: number[], k = 1): maplibregl.ExpressionSpecific
   return e as maplibregl.ExpressionSpecification;
 }
 
-const routeWidth = (id: string, thin = false) => widthExpr(ROUTE_WIDTHS[id].stops, thin ? ROUTE_WIDTHS[id].thin : 1);
+/** A route layer's width: the usual one, or in a close-up its share of the road (of `tier`) the car is on. */
+const routeWidth = (id: string, thin = false, tier: RoadTier = 'major', spec: RoadWidthSpec = MAP_ROADS) =>
+  thin ? roadShare(tier, ROUTE_ON_ROAD * CLOSE_PART[id], spec) : widthExpr(ROUTE_WIDTHS[id].stops);
+
+/** The road widths the style draws: the demo network's own, or the JunctionNav look's (other styles come close). */
+const roadsOf = (style: string | StyleSpecification): RoadWidthSpec => (typeof style !== 'string' && style.sources && 'demo' in style.sources ? DEMO_ROADS : MAP_ROADS);
 
 /** Other roads at a split: thin lines like the close-up route line, with an outline. */
 const FORK_WIDTH = [12, 2, 16, 4, 19, 7];
@@ -238,6 +274,7 @@ export class MapView {
 
   constructor(container: HTMLElement, style: string | StyleSpecification, center: LngLat, zoom = 13) {
     this.currentStyle = style;
+    this.roads = roadsOf(style);
     this.map = new maplibregl.Map({
       container,
       style,
@@ -260,6 +297,10 @@ export class MapView {
     const puckEl = document.createElement('div');
     puckEl.className = 'puck';
     puckEl.innerHTML = PUCK_SVG;
+    // A little bigger as the map comes in close.
+    const sizePuck = () => puckEl.style.setProperty('--puck-k', puckScale(this.map.getZoom()).toFixed(3));
+    this.map.on('zoom', sizePuck);
+    sizePuck();
     this.puck = new maplibregl.Marker({ element: puckEl, rotationAlignment: 'map', pitchAlignment: 'map' });
     const pinEl = document.createElement('div');
     pinEl.className = 'dest-pin';
@@ -412,6 +453,7 @@ export class MapView {
       this.stopRecovery();
     }
     this.currentStyle = style;
+    this.roads = roadsOf(style);
     this.map.setStyle(style, { diff: false });
   }
 
@@ -647,14 +689,33 @@ export class MapView {
   /* ------------------------------------------------------------ close-ups at splits */
 
   private thin = false;
+  /** The kind of road the car is on, for the route's width in a close-up. */
+  private tier: RoadTier = 'major';
+  /** How wide the style draws its roads. */
+  private roads: RoadWidthSpec = MAP_ROADS;
 
-  /** Thin route line and turn arrow (in a close-up), or the usual widths. */
+  /** The route and turn arrow as a share of the road (in a close-up), or the usual widths. */
   private setThin(on: boolean) {
     if (on === this.thin) return;
     this.thin = on;
+    this.applyRouteWidths();
+  }
+
+  /** The kind of road under the car: in a close-up the route is drawn to its width. */
+  setRoadTier(tier: RoadTier) {
+    if (tier === this.tier) return;
+    this.tier = tier;
+    if (this.thin) this.applyRouteWidths();
+  }
+
+  get roadTier(): RoadTier {
+    return this.tier;
+  }
+
+  private applyRouteWidths() {
     const m = this.map;
     if (!m.getLayer('route-line')) return;
-    for (const id of Object.keys(ROUTE_WIDTHS)) if (m.getLayer(id)) m.setPaintProperty(id, 'line-width', routeWidth(id, on));
+    for (const id of Object.keys(ROUTE_WIDTHS)) if (m.getLayer(id)) m.setPaintProperty(id, 'line-width', routeWidth(id, this.thin, this.tier, this.roads));
     if (m.getLayer('maneuver-head')) m.setLayoutProperty('maneuver-head', 'icon-size', this.arrowSize());
   }
 
@@ -663,8 +724,41 @@ export class MapView {
   }
 
   private arrowSize(): maplibregl.ExpressionSpecification {
-    const k = this.thin ? 0.6 : 1;
-    return ['interpolate', ['linear'], ['zoom'], 14, 0.45 * k, 18, 1.4 * k];
+    // In a close-up the head grows with the arrow's line, as it does at the usual widths (1.4 on 18 px).
+    if (this.thin) return roadShare(this.tier, (ROUTE_ON_ROAD * 1.4) / 18, this.roads);
+    return ['interpolate', ['linear'], ['zoom'], 14, 0.45, 18, 1.4];
+  }
+
+  /**
+   * What the map draws under the car (the buildings and areas it is inside) and the points of
+   * interest right by it, from the map's own tiles, for telling a rest stop.
+   */
+  featuresAt(p: LngLat, radiusPx = 28): MapFeatureLite[] {
+    const m = this.map;
+    const out: MapFeatureLite[] = [];
+    try {
+      const pt = m.project(p);
+      const lite = (f: maplibregl.MapGeoJSONFeature): MapFeatureLite | null => {
+        if (!f.sourceLayer) return null;
+        const t = f.geometry?.type;
+        return { layer: f.sourceLayer.toLowerCase(), props: (f.properties ?? {}) as Record<string, unknown>, polygon: t === 'Polygon' || t === 'MultiPolygon' };
+      };
+      for (const f of m.queryRenderedFeatures(pt)) {
+        const x = lite(f);
+        if (x?.polygon) out.push(x);
+      }
+      const box: [maplibregl.PointLike, maplibregl.PointLike] = [
+        [pt.x - radiusPx, pt.y - radiusPx],
+        [pt.x + radiusPx, pt.y + radiusPx],
+      ];
+      for (const f of m.queryRenderedFeatures(box)) {
+        const x = lite(f);
+        if (x && !x.polygon && f.geometry?.type === 'Point') out.push(x);
+      }
+    } catch {
+      /* the style is not loaded */
+    }
+    return out;
   }
 
   private forks: { role: 'branch' | 'incoming'; pts: LngLat[] }[] = [];
@@ -790,7 +884,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-gradient': this.gradient('glow'), 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin), 'line-opacity': this.routeOpacity('route-glow') },
+        paint: { 'line-gradient': this.gradient('glow'), 'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 10], 'line-width': routeWidth('route-glow', this.thin, this.tier, this.roads), 'line-opacity': this.routeOpacity('route-glow') },
       },
       before,
     );
@@ -800,7 +894,7 @@ export class MapView {
         type: 'line',
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-gradient': this.gradient('casing'), 'line-width': routeWidth('route-casing', this.thin), 'line-opacity': this.routeOpacity('route-casing') },
+        paint: { 'line-gradient': this.gradient('casing'), 'line-width': routeWidth('route-casing', this.thin, this.tier, this.roads), 'line-opacity': this.routeOpacity('route-casing') },
       },
       before,
     );
@@ -811,7 +905,7 @@ export class MapView {
         source: 'route-main',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-width': routeWidth('route-line', this.thin),
+          'line-width': routeWidth('route-line', this.thin, this.tier, this.roads),
           'line-gradient': this.gradient('line'),
           'line-opacity': this.routeOpacity('route-line'),
         },
@@ -828,7 +922,7 @@ export class MapView {
         paint: {
           'line-color': '#ffffff',
           'line-opacity': 0.9,
-          'line-width': routeWidth('route-tunnel', this.thin),
+          'line-width': routeWidth('route-tunnel', this.thin, this.tier, this.roads),
           'line-dasharray': [1.4, 1.2],
         },
       },
@@ -845,7 +939,7 @@ export class MapView {
           'line-color': this.theme.pulseGlow,
           'line-opacity': ['*', 0.75, ['get', 'a']],
           'line-blur': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
-          'line-width': routeWidth('route-pulse-glow', this.thin),
+          'line-width': routeWidth('route-pulse-glow', this.thin, this.tier, this.roads),
         },
       },
       before,
@@ -859,7 +953,7 @@ export class MapView {
         paint: {
           'line-color': this.theme.pulse,
           'line-opacity': ['get', 'a'],
-          'line-width': routeWidth('route-pulse', this.thin),
+          'line-width': routeWidth('route-pulse', this.thin, this.tier, this.roads),
         },
       },
       before,
@@ -869,14 +963,14 @@ export class MapView {
       type: 'line',
       source: 'maneuver',
       layout: { 'line-cap': 'butt', 'line-join': 'round' },
-      paint: { 'line-color': this.theme.routeCasing, 'line-width': routeWidth('maneuver-casing', this.thin) },
+      paint: { 'line-color': this.theme.routeCasing, 'line-width': routeWidth('maneuver-casing', this.thin, this.tier, this.roads) },
     });
     m.addLayer({
       id: 'maneuver-line',
       type: 'line',
       source: 'maneuver',
       layout: { 'line-cap': 'butt', 'line-join': 'round' },
-      paint: { 'line-color': '#ffffff', 'line-width': routeWidth('maneuver-line', this.thin) },
+      paint: { 'line-color': '#ffffff', 'line-width': routeWidth('maneuver-line', this.thin, this.tier, this.roads) },
     });
     if (!m.hasImage('arrowhead')) m.addImage('arrowhead', arrowheadImage(), { pixelRatio: 2 });
     m.addLayer({

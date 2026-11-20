@@ -95,6 +95,18 @@ describe('lane advisor', () => {
     expect(lanePhrase('wrong', wrong[0].lane!, 'en', 'metric')).toBe("You're not in a lane for exit 114. Move 2 lanes to the left.");
   });
 
+  it('no wrong-lane warnings while the car stands (at a light, at a stop)', () => {
+    const r = route();
+    const eng = new NavEngine();
+    eng.setRoute(r, []);
+    const s = exitS - 700;
+    const brg = r.line.bearingAt(s, 15);
+    const at = destination(r.line.pointAt(s), brg + 90, LANE_W);
+    const prompts: Prompt[] = [];
+    for (let i = 0; i < 90; i++) prompts.push(...eng.prompts(eng.update({ lngLat: at, accuracy: 4, heading: brg, speed: 0, time: 1_000_000 + i * 1000 })!));
+    expect(prompts.filter((p) => p.kind === 'laneWrong')).toHaveLength(0);
+  });
+
   it('confirms the lane and stays quiet when already in the exit lane', () => {
     const { prompts, states } = drive(-LANE_W);
     expect(prompts.some((p) => p.kind === 'laneWrong' || p.kind === 'laneLate' || p.kind === 'laneEarly')).toBe(false);

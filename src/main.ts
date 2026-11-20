@@ -17,6 +17,7 @@ import { ZoomMap } from './junction/zoomMap';
 import { TerrainCache, TerrariumProvider, type TerrainPatch } from './junction/terrain';
 import { closeWeight, MapView, SCALE_STEPS, routeBounds, type FollowOptions, type RouteZone } from './map/mapView';
 import { RoadTiles } from './map/roadTiles';
+import { tierAt, type RoadTier } from './map/roadWidths';
 import { demoStyle, fallbackStyle, resolveStyle } from './map/styles';
 import { OFM_TILES } from './map/techStyle';
 import { TomTomMap } from './map/tomtomMap';
@@ -77,7 +78,8 @@ import { AlertWatch, type AlertEvent, type AlertSnapshot } from './nav/alert';
 import { TalkDeck } from './talk/deck';
 import type { TalkTopic } from './talk/types';
 import { answerLead, chipWords, drivenWords, drowsySpeech, limitSpeech, remindSpeech, restedText, talkIntro, talkLead, type RestAhead } from './talk/speech';
-import { Persona, PRETRIP_MIN, pretripWords, speechText, type TripInfo } from './voice/persona';
+import { Persona, PRETRIP_MIN, pretripWords, restWords, speechText, type TripInfo } from './voice/persona';
+import { bestRestPlace, PULL_OUT_MS, PULL_SPEED, RestPlaceFinder, RestWatch, type RestEvent, type RestInput, type RestKind, type RestPlace, type Resting } from './nav/rest';
 import { CloudTts, cloudTier, cloudVoicesFor, type CloudProblem } from './voice/cloud';
 import { PlacesService } from './places/service';
 import { SmartSearch, searchTexts } from './search/smartSearch';
@@ -205,6 +207,9 @@ const ICON = {
   fuel: svg(`<path ${S} d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M6 9h6"/><path ${S} d="M14 10h2a2 2 0 0 1 2 2v4a1.5 1.5 0 0 0 3 0V8l-3-3"/>`),
   car: svg(`<path ${S} d="M5 16V11l2-5h10l2 5v5M3 16h18v3H3zM7.5 19v1.5M16.5 19v1.5M5 11h14"/><circle cx="7.5" cy="13.5" r="1" fill="currentColor"/><circle cx="16.5" cy="13.5" r="1" fill="currentColor"/>`),
   coffee: svg(`<path ${S} d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3c0 1.5 1 1.5 1 3M12 3c0 1.5 1 1.5 1 3M3 21h14"/>`),
+  parking: svg(`<rect ${S} x="3.5" y="3.5" width="17" height="17" rx="3"/><path ${S} d="M9.5 17V7h3.5a3 3 0 0 1 0 6H9.5"/>`),
+  building: svg(`<path ${S} d="M4 21V5l8-2v18M12 8l8 2v11M3 21h18M7.5 8v.01M7.5 12v.01M7.5 16v.01M15.5 13v.01M15.5 17v.01"/>`),
+  pause: svg(`<circle ${S} cx="12" cy="12" r="9"/><path ${S} d="M10 9v6M14 9v6"/>`),
   share: svg(`<circle ${S} cx="18" cy="5.5" r="2.5"/><circle ${S} cx="6" cy="12" r="2.5"/><circle ${S} cx="18" cy="18.5" r="2.5"/><path ${S} d="m8.2 10.8 7.6-4.1M8.2 13.2l7.6 4.1"/>`),
   edit: svg(`<path ${S} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path ${S} d="m13.5 6.5 4 4"/>`),
   flag: svg(`<path ${S} d="M5 21V4M5 4h11l-2 4 2 4H5"/>`),
@@ -518,6 +523,7 @@ class App {
     camChip: h('div', { class: 'cam-chip card', hidden: true, role: 'status' }),
     alertChip: h('div', { class: 'alert-chip card', hidden: true, role: 'status' }),
     pretrip: h('div', { class: 'pretrip card', hidden: true, role: 'status' }),
+    restCard: h('div', { class: 'pretrip rest-card card', hidden: true, role: 'status' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -2873,7 +2879,7 @@ class App {
     e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
-      h('div', { class: 'nav-stack' }, e.pretrip, e.faster, e.trafficCard, e.trafficChip, e.alertChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
+      h('div', { class: 'nav-stack' }, e.pretrip, e.restCard, e.faster, e.trafficCard, e.trafficChip, e.alertChip, e.camChip, e.tollChip, e.sim, h('div', { class: 'eta card' }, etaText, h('div', { class: 'eta-btns' }, find, e.mute, overview, end))),
       e.speed,
     );
     // Recenter: back to the car when the map was moved; when already following, steps the scale
@@ -3400,6 +3406,10 @@ class App {
     this.endingNav = false;
     this.stillSince = 0;
     this.stopsPassed = 0;
+    this.rest.reset();
+    this.paintRest(null);
+    this.resumeLine = { text: '', until: 0 };
+    this.routeSaid = { text: '', at: null, time: 0 };
     this.navDest = route.geometry[route.geometry.length - 1];
     this.trip.stops = this.trip.stops.filter((p): p is Place => !!p);
     // The other routes from planning are the first alternatives; they are refreshed on the way.
@@ -3601,6 +3611,156 @@ class App {
     card.dataset.shownAt = String(Date.now());
   }
 
+  /* ================================================================ rest stops */
+
+  /** Rest stops (src/nav/rest.ts): guidance pauses while the car stands at a petrol station, rest area, car park or building. */
+  private rest = new RestWatch();
+  private restFinder = new RestPlaceFinder({
+    map: (p) => this.map.featuresAt(p),
+    places: (p) => this.restFromPlaces(p),
+    overpass: (q, signal) => this.overpassJson(q, signal),
+  });
+  /** Said before the first instruction of a route found just after a rest stop, instead of "New route ready". */
+  private resumeLine = { text: '', until: 0 };
+  /** The turn the last new route started with: the same turn is not said again soon after. */
+  private routeSaid: { text: string; at: LngLat | null; time: number } = { text: '', at: null, time: 0 };
+
+  private restInput(p: Progress, fix: Fix): RestInput {
+    return {
+      time: fix.time,
+      lngLat: fix.lngLat,
+      speed: p.speed,
+      accuracy: fix.accuracy,
+      offset: p.offset,
+      nearDestination: p.nearDestination || this.arrivedAnnounced,
+      place: this.restFinder.at(fix.lngLat),
+    };
+  }
+
+  /** Each fix: a look at where the car stands or pulls in, and the rest stop starting. */
+  private restTick(p: Progress, fix: Fix): RestEvent {
+    if (fix.dr) return null;
+    const since = this.rest.standingSince;
+    const standing = since != null && fix.time - since > 2500;
+    if (standing || (p.speed < PULL_SPEED && p.offset >= 15)) void this.restFinder.lookAt(fix.lngLat, Date.now()).catch(() => null);
+    const ev = this.rest.update(this.restInput(p, fix));
+    if (ev?.kind === 'start') this.onRestStart(ev.rest);
+    return ev;
+  }
+
+  private onRestStart(rest: Resting) {
+    this.paintRest(rest);
+    this.el.pretrip.hidden = true;
+    if (this.settings.voice) this.say(this.persona.restStart(rest.place?.kind ?? null), false, true);
+  }
+
+  /**
+   * Driving off after a rest stop: after a longer one, "Welcome back" and the next instruction
+   * (or the way back, if the car is off the route: it comes with the new route).
+   */
+  private onRestEnd(duration: number, p: Progress, prompts: Prompt[]) {
+    this.paintRest(null);
+    if (duration < 45_000) return;
+    const hello = this.persona.resume();
+    if (!p.onRoute) {
+      this.resumeLine = { text: hello, until: Date.now() + PULL_OUT_MS + 30_000 };
+      return;
+    }
+    if (prompts.some((x) => x.kind !== 'speed')) {
+      this.say(hello, false);
+      return;
+    }
+    this.say(`${hello} ${spokenInstruction(p.next, p.distToNext > 300 ? p.distToNext : null, this.L, this.settings.units)}`.trim(), false);
+  }
+
+  /** "Resume now" on the card: guidance carries on at once (from here, if the car is off the route). */
+  private resumeFromRest() {
+    const fix = this.lastFix;
+    const ev = this.rest.resumeNow(fix?.time ?? Date.now());
+    const p = this.engine.progress;
+    if (ev?.kind !== 'end' || !p) return;
+    this.onRestEnd(Infinity, p, []);
+    if (!p.onRoute && fix && !this.sim && !this.demo && !p.nearDestination) void this.reroute(fix, true);
+  }
+
+  private paintRest(rest: Resting | null) {
+    const card = this.el.restCard;
+    if (!rest) {
+      card.hidden = true;
+      card.replaceChildren();
+      return;
+    }
+    const w = restWords(this.L);
+    const kind: RestKind | undefined = rest.place?.kind;
+    const icon = kind === 'fuel' ? ICON.fuel : kind === 'rest' ? ICON.coffee : kind === 'parking' ? ICON.parking : kind === 'building' ? ICON.building : ICON.pause;
+    const go = h('button', { type: 'button', class: 'btn btn-primary pretrip-start', id: 'rest-resume' }, w.resume);
+    go.addEventListener('click', () => this.resumeFromRest());
+    card.dataset.kind = kind ?? 'stopped';
+    card.replaceChildren(
+      h('div', { class: 'pretrip-head' }, h('strong', {}, w.title)),
+      h(
+        'ul',
+        { class: 'pretrip-list' },
+        h('li', {}, h('span', { class: 'pretrip-ico', html: icon }), h('span', { class: 'rest-where' }, h('span', {}, kind ? w[kind] : w.stopped), rest.place?.name ? h('small', {}, rest.place.name) : null)),
+      ),
+      h('p', { class: 'pretrip-wait' }, w.hint),
+      go,
+    );
+    card.hidden = false;
+  }
+
+  /**
+   * The kind of road the car is on: from the map's own roads where they are loaded, else from the
+   * route (an expressway, or a main or minor road by how fast the router expects it).
+   */
+  private roadTierAt(p: Progress): RoadTier {
+    const roads = (this.mapOnTomTom ? this.ttAligner : this.osmAligner).roads;
+    const t = this.demo || ARTIFACT ? null : tierAt(roads.near(p.snapped, 25), p.snapped, p.heading);
+    if (t) return t;
+    if (this.engine.speed.highwayAt?.(p.s)) return 'highway';
+    const cur = this.engine.route?.steps[p.next.index - 1];
+    const v = cur && cur.duration > 0 ? cur.distance / cur.duration : 0;
+    return v > 19 ? 'highway' : v > 9 ? 'major' : 'minor';
+  }
+
+  /** Petrol stations, charging points, rest areas and car parks from the downloaded places, right by p. */
+  private async restFromPlaces(p: LngLat): Promise<RestPlace | null> {
+    const svc = this.placesSvc;
+    if (!svc.available || !svc.covers(p)) return null;
+    const cats: [PlaceCategory, RestKind, number][] = [
+      ['fuel', 'fuel', 50],
+      ['ev', 'fuel', 40],
+      ['rest', 'rest', 150],
+      ['parking', 'parking', 50],
+    ];
+    const hits = await Promise.all(
+      cats.map(([cat, kind, r]) =>
+        svc.client
+          .near([p], r, cat, 2)
+          .then((hs): RestPlace | null => (hs[0] ? { kind, ...(hs[0].name ? { name: hs[0].name } : {}) } : null))
+          .catch(() => null),
+      ),
+    );
+    return bestRestPlace(hits);
+  }
+
+  /** An Overpass answer, trying each server in turn. */
+  private async overpassJson(query: string, signal: AbortSignal): Promise<{ elements?: { tags?: Record<string, string> }[] }> {
+    if (this.demo) return {};
+    let last: unknown;
+    for (const url of overpassList(this.settings)) {
+      try {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(query), signal });
+        if (!res.ok) throw new Error(`Overpass ${res.status}`);
+        return (await res.json()) as { elements?: { tags?: Record<string, string> }[] };
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e;
+        last = e;
+      }
+    }
+    throw last instanceof Error ? last : new Error('Overpass unavailable');
+  }
+
   /** The check card goes once the car is on its way (or after a minute). */
   private syncPretrip(p: Progress) {
     const card = this.el.pretrip;
@@ -3617,6 +3777,11 @@ class App {
     this.pendingSwap = null;
     this.predrive = 0;
     this.predriveHeldSim = false;
+    this.rest.reset();
+    this.restFinder.reset();
+    this.paintRest(null);
+    this.resumeLine = { text: '', until: 0 };
+    this.routeSaid = { text: '', at: null, time: 0 };
     this.map.setPulsing(false);
     // Website mode: a newer build that arrived during the drive opens now.
     if (NATIVE) void import('./native/appMode').then((m) => m.applyPending(this.modeHooks()));
@@ -3664,9 +3829,11 @@ class App {
     this.computeRoutes();
   }
 
-  private say(text: string, urgent = true) {
+  private say(text: string, urgent = true, duringRest = false) {
     // The check before a long drive is heard to the end: anything else waits (or is dropped).
     if (this.predrive) return;
+    // Nothing about the road while the car stands at a rest stop.
+    if (this.rest.resting && !duringRest) return;
     // Guidance does not wait for a joke to finish: it cuts in.
     if (!urgent && Date.now() < this.talkUntil) urgent = true;
     this.talkUntil = 0;
@@ -4070,6 +4237,8 @@ class App {
       if (this.navOverlay === 'steps') this.renderSheet();
     }
     this.map.follow(p.snapped, p.heading, this.followOpts(p));
+    // In a close-up the route is drawn to the width of the road the car is on.
+    this.map.setRoadTier(this.roadTierAt(p));
     this.keepCarInView(p);
     this.syncForks(p);
     this.paintRecenter();
@@ -4086,7 +4255,10 @@ class App {
     // Nothing is announced while the check before a long drive is being said, so nothing is
     // missed: the prompts come once it is over. Moving off towards a turn close by ends it.
     if (this.predrive && p.speed > 5 && p.distToNext < 300) this.endPredrive(this.predrive, true);
-    const prompts = this.predrive ? [] : this.engine.prompts(p);
+    // At a rest stop nothing about the road is said (no turn repeated while the car stands).
+    const restEv = this.restTick(p, fix);
+    const prompts = this.predrive || this.rest.resting ? [] : this.engine.prompts(p);
+    if (restEv?.kind === 'end') this.onRestEnd(restEv.duration, p, prompts);
     for (const pr of prompts) {
       const text = this.promptText(pr);
       if (pr.kind === 'speed') {
@@ -4103,14 +4275,14 @@ class App {
     this.testRun?.progress(p, prompts, this.settings.tunnelAlerts);
     // Live traffic: what is due to be asked, warnings for what is ahead, a faster route on offer.
     this.traffic.tick(p.s);
-    if (!prompts.length) this.trafficVoice(p);
+    if (!prompts.length && !this.rest.resting) this.trafficVoice(p);
     this.paintTrafficChip(p);
     this.paintTollChip(p);
     this.paintCamChip(p);
-    this.alertTick(p, fix, prompts.length > 0);
+    this.alertTick(p, fix, prompts.length > 0 || !!this.rest.resting);
     this.syncPretrip(p);
     this.prefetchVoice(p);
-    if (Date.now() - this.fasterCheckedAt > 3000) this.checkFaster();
+    if (Date.now() - this.fasterCheckedAt > 3000 && !this.rest.resting) this.checkFaster();
     if (p.stopsPassed > this.stopsPassed) {
       this.stopsPassed = p.stopsPassed;
       toast(describeStep(route.steps.find((st) => st.waypoint === p.stopsPassed) ?? p.next, this.L).action);
@@ -4142,11 +4314,14 @@ class App {
       }
     }
 
-    // Inside the arrival zone (car parks, side streets) leaving the route is expected.
-    if (p.offRoute && !this.sim && !this.demo && !p.nearDestination && !this.arrivedAnnounced) {
+    // Inside the arrival zone (car parks, side streets) leaving the route is expected. So it is at a
+    // rest stop, standing still (GPS wanders), and pulling in to or slowly out of a petrol station,
+    // rest area or car park; and off the route at low speed, a new route at most every 20 s.
+    const holdReroute = this.rest.holdReroute(this.restInput(p, fix)) || (p.speed < PULL_SPEED && Date.now() - this.lastReroute < 20_000);
+    if (p.offRoute && !this.sim && !this.demo && !p.nearDestination && !this.arrivedAnnounced && !holdReroute) {
       if (!this.rerouting && !this.switchToAlternative(fix)) this.reroute(fix);
     } else if (!this.rerouting) this.el.reroute.hidden = true;
-    if (!this.sim && !this.demo) this.refreshAlternatives(p, fix);
+    if (!this.sim && !this.demo && !this.rest.resting) this.refreshAlternatives(p, fix);
 
     if (Date.now() - this.lastPrefetch > 15000) this.prefetch(p.s);
   }
@@ -4270,7 +4445,17 @@ class App {
     this.lastStepIdx = -1;
     this.prefetch(startS);
     const next = r.steps.find((st) => st.s > startS + 5 && st.type !== 'depart');
-    if (next) this.say(`${this.persona.newRoute()} ${spokenInstruction(next, next.s - startS > 200 ? next.s - startS : null, this.L, this.settings.units)}`.trim());
+    if (!next) return;
+    const back = this.resumeLine.until > Date.now() ? this.resumeLine.text : '';
+    this.resumeLine = { text: '', until: 0 };
+    // The same turn as the last new route began with, a moment ago (rerouting again on the way out
+    // of a car park, or GPS wandering): not said again.
+    const turn = spokenInstruction(next, null, this.L, this.settings.units);
+    const last = this.routeSaid;
+    const again = !back && turn === last.text && !!last.at && haversine(last.at, next.location) < 60 && Date.now() - last.time < 120_000;
+    this.routeSaid = { text: turn, at: next.location, time: Date.now() };
+    if (again) return;
+    this.say(`${back || this.persona.newRoute()} ${spokenInstruction(next, next.s - startS > 200 ? next.s - startS : null, this.L, this.settings.units)}`.trim());
   }
 
   /**

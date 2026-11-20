@@ -568,7 +568,8 @@ export class NavEngine {
         this.lastSpeech = this.now;
       }
     }
-    if (lane.status === 'wrong') {
+    // Not while the car stands (at a light, at a stop): a lane change cannot be made then.
+    if (lane.status === 'wrong' && p.speed >= 2) {
       const count = this.wrongCount.get(i) ?? 0;
       const sustained = this.now - this.wrongSince >= 4000;
       const quiet = this.now - this.lastSpeech >= (count === 0 ? 9000 : 22000);

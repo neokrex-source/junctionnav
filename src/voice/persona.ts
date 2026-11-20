@@ -74,6 +74,14 @@ export function pretripWords(lang: LangCode, pay: TollPay = 'generic'): { title:
   return { title: 'Before you go', card: w ? `${up(w.balance.replace(/^your /, ''))} (this route has tolls)` : 'Toll payment', fuel: 'Enough fuel', car: 'Tyres, lights and wipers', start: 'Start now', listening: 'Guidance starts after this check.' };
 }
 
+/** The words on the rest stop card. */
+export function restWords(lang: LangCode): { title: string; fuel: string; rest: string; parking: string; building: string; stopped: string; hint: string; resume: string } {
+  if (lang === 'ms')
+    return { title: 'Berhenti rehat', fuel: 'Stesen minyak', rest: 'Kawasan rehat', parking: 'Tempat letak kereta', building: 'Berhenti di bangunan', stopped: 'Berhenti di luar laluan', hint: 'Panduan disambung apabila anda bergerak semula. Tiada arahan diulang semasa berhenti.', resume: 'Sambung sekarang' };
+  if (lang === 'ja') return { title: '休憩中', fuel: 'ガソリンスタンド', rest: 'サービスエリア・休憩所', parking: '駐車場', building: '建物に停車中', stopped: 'ルート外に停車中', hint: '走り出すと案内を再開します。停車中は案内を繰り返しません。', resume: '今すぐ再開' };
+  return { title: 'Rest stop', fuel: 'Petrol station', rest: 'Rest area', parking: 'Car park', building: 'Stopped at a building', stopped: 'Stopped off the route', hint: 'Guidance carries on when you drive off. No instructions are repeated while you are stopped.', resume: 'Resume now' };
+}
+
 export class Persona {
   style: VoiceStyle = 'butler';
   addressAs: AddressAs = 'sir';
@@ -314,6 +322,31 @@ export class Persona {
     if (this.lang === 'ms') return this.fill('Laluan baharu sudah sedia{,w}.');
     if (this.lang === 'ja') return this.fill('{w、}新しいルートをご案内します。');
     return this.fill('New route ready{,w}.');
+  }
+
+  /** Once, as a rest stop begins (a petrol station, a rest area, a car park, a building, off the road). */
+  restStart(kind: 'fuel' | 'rest' | 'parking' | 'building' | null): string {
+    const L = this.lang;
+    if (!this.butler) return L === 'ms' ? 'Panduan dijeda semasa berhenti.' : L === 'ja' ? '停車中は案内を休止します。' : 'Guidance paused while you’re stopped.';
+    if (L === 'ms') {
+      const first = kind === 'fuel' ? 'Isi minyak{,w}? Silakan.' : kind === 'rest' ? 'Tempat yang baik untuk berehat{,w}.' : 'Silakan berehat{,w}.';
+      return this.fill(`${first} Panduan akan disambung apabila kita bergerak semula.`);
+    }
+    if (L === 'ja') {
+      const first = kind === 'fuel' ? '{w、}給油ですね。ごゆっくりどうぞ。' : kind === 'rest' ? '{w、}休憩にちょうど良い場所ですね。' : '{w、}ごゆっくりどうぞ。';
+      return this.fill(`${first}出発されましたら案内を再開いたします。`);
+    }
+    const first = kind === 'fuel' ? 'Filling up{,w}? Take your time.' : kind === 'rest' ? 'A good spot for a break{,w}.' : 'Take your time{,w}.';
+    return this.fill(`${first} I’ll carry on when we set off again.`);
+  }
+
+  /** As guidance carries on after a rest stop, before the next instruction. */
+  resume(): string {
+    const L = this.lang;
+    if (!this.butler) return L === 'ms' ? 'Panduan disambung.' : L === 'ja' ? '案内を再開します。' : 'Guidance resumed.';
+    if (L === 'ms') return this.fill('Selamat kembali{,w}.');
+    if (L === 'ja') return this.fill('{w、}お帰りなさいませ。');
+    return this.fill('Welcome back{,w}.');
   }
 
   /* ---------------------------------------------------------------- the rest */

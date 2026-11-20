@@ -7,6 +7,7 @@
  * street level. The route line on top (violet by day, glowing lilac by night) is the brightest
  * thing on screen.
  */
+import { ROAD_WIDTHS } from './roadWidths';
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { namedFlavor, type Flavor } from '@protomaps/basemaps';
 import { themeFor, themeId } from '../theme/palette';
@@ -125,9 +126,9 @@ function nameExpr(lang: string): Expr {
 
 /** Road tiers: casing and fill widths per zoom, and their colours. */
 const TIERS = [
-  { id: 'minor', match: cls('minor', 'service', 'track'), w: [12, 0.5, 14, 2, 18, 14], min: 12 },
-  { id: 'major', match: cls('primary', 'secondary', 'tertiary'), w: [8, 0.6, 12, 2.2, 14, 4, 18, 20], min: 7 },
-  { id: 'highway', match: cls('motorway', 'trunk'), w: [5, 0.8, 10, 2.4, 14, 5.5, 18, 26], min: 5 },
+  { id: 'minor', match: cls('minor', 'service', 'track'), w: ROAD_WIDTHS.minor, min: 12 },
+  { id: 'major', match: cls('primary', 'secondary', 'tertiary'), w: ROAD_WIDTHS.major, min: 7 },
+  { id: 'highway', match: cls('motorway', 'trunk'), w: ROAD_WIDTHS.highway, min: 5 },
 ] as const;
 
 /**

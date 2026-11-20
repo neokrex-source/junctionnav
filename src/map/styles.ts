@@ -4,6 +4,7 @@ import type { Settings } from '../state/settings';
 import { themeFor } from '../theme/palette';
 import { techStyle } from './techStyle';
 import { tomtomStyle } from './tomtomStyle';
+import { DEMO_ROAD_CURVE, DEMO_ROAD_FACTOR, DEMO_ROADS } from './roadWidths';
 
 export interface StyleDef {
   id: string;
@@ -107,10 +108,11 @@ export function demoStyle(geojson: FeatureCollection, night: boolean): StyleSpec
   const m = themeFor(night).map;
   const c = { land: m.land, minor: m.minor, major: m.major, motorway: m.highway, casing: m.highwayCase, label: m.label, wood: m.wood, tunnel: m.tunnel };
   // Zoom must be the input of a top-level interpolate; the stops can be data expressions.
-  const zw = (wExpr: unknown) => ['interpolate', ['exponential', 1.6], ['zoom'], 12, ['*', wExpr, 0.6], 16, ['*', wExpr, 3.4], 19, ['*', wExpr, 14]];
+  const [z0, k0, z1, k1, z2, k2] = DEMO_ROAD_CURVE;
+  const zw = (wExpr: unknown) => ['interpolate', ['exponential', DEMO_ROADS.base], ['zoom'], z0, ['*', wExpr, k0], z1, ['*', wExpr, k1], z2, ['*', wExpr, k2]];
   const cls = ['match', ['get', 'highway'], ['motorway', 'motorway_link'], 'motorway', ['trunk', 'trunk_link', 'primary', 'primary_link'], 'major', 'minor'];
   const colour = ['match', cls, 'motorway', c.motorway, 'major', c.major, c.minor];
-  const w = ['match', cls, 'motorway', 3.2, 'major', 2.6, 1.8];
+  const w = ['match', cls, 'motorway', DEMO_ROAD_FACTOR.highway, 'major', DEMO_ROAD_FACTOR.major, DEMO_ROAD_FACTOR.minor];
   return {
     version: 8,
     sources: { demo: { type: 'geojson', data: geojson } },
