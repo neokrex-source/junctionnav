@@ -1828,3 +1828,27 @@ button { cursor: pointer; }
 .chip-close { flex: none; width: 30px; height: 30px; padding: 6px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
 .chip-close .ico { width: 16px; height: 16px; display: block; }
 .chip-close:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+
+/* The offer to download the offline map for where you are. */
+.offline-ask {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+  transform: translateX(-50%);
+  width: min(360px, calc(100vw - 24px));
+  padding: 12px 14px;
+  z-index: 40;
+  color: var(--ink);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow), var(--edge), inset 4px 0 0 var(--route);
+  display: grid;
+  gap: 6px;
+}
+.offline-ask[hidden] { display: none; }
+.offline-ask strong { font: 700 16px/1.15 var(--font-cond); }
+.offline-ask p { margin: 0; font-size: 13.5px; line-height: 1.35; color: var(--muted); }
+.offline-ask-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+@media (max-width: 480px) {
+  /* Clear of the map buttons on the right. */
+  .offline-ask { left: 12px; right: 66px; width: auto; transform: none; }
+}

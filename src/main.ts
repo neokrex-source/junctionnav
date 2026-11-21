@@ -25,8 +25,11 @@ import { TT_SOURCE } from './map/tomtomStyle';
 import type { StyleSpecification } from 'maplibre-gl';
 import { OfflineClient } from './offline/client';
 import { disableOfflineMap, enableOfflineMap, offlineStyle } from './offline/offlineMap';
-import { packName } from './offline/store';
-import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridSpeed, HybridTerrain, HybridTolls, HybridTunnels, isNetworkError, type OfflineSwitch } from './offline/providers';
+import { downloadSize, packName, type CatalogEntry } from './offline/store';
+import { autoDecision, connectionNow, type AutoAnswer } from './offline/autoDownload';
+import { formatBytes } from './ui/offlinePanel';
+import { safeStorage } from './auth/types';
+import { HybridJunctionData, HybridPois, HybridRouter, HybridSearch, HybridSpeed, HybridTerrain, HybridTolls, HybridTunnels, isNetworkError, OfflineFirstRouter, type OfflineSwitch } from './offline/providers';
 import { OfflineTerrainProvider, TerrainPackReader } from './offline/offlineTerrain';
 import { OfflineStore } from './offline/store';
 import { NavEngine, type Fix, type Progress, type Prompt } from './nav/engine';
@@ -540,6 +543,7 @@ class App {
     alertChip: h('div', { class: 'alert-chip card', hidden: true, role: 'status' }),
     pretrip: h('div', { class: 'pretrip card', hidden: true, role: 'status' }),
     restCard: h('div', { class: 'pretrip rest-card card', hidden: true, role: 'status' }),
+    offlineAsk: h('div', { class: 'offline-ask card', hidden: true, role: 'dialog', 'aria-label': 'Offline map' }),
     faster: h('div', { class: 'faster card', hidden: true, role: 'status' }),
   };
 
@@ -562,9 +566,11 @@ class App {
     const sw = this.offlineSw;
     const overpass = () => overpassList(this.settings);
     this.osrm = new OsrmRouter(this.settings.routerUrl);
-    // TomTom first (when chosen and the key works), OSRM when it cannot answer, the offline maps without internet.
+    // TomTom first (when chosen and the key works); when it cannot answer, the offline maps where
+    // they cover the trip (no routing server needed), else OSRM; the offline maps without internet.
     const ttKey = () => tomtomKey(this.settings);
-    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L), () => this.osrm, this.ttGate);
+    const noTomTom = new OfflineFirstRouter(sw, () => this.osrm, () => this.settings.offlineRoutes);
+    const online = new FallbackRouter(new TomTomRouter(ttKey, () => this.L), () => noTomTom, this.ttGate);
     this.router = new AligningRouter(new HybridRouter(() => online, sw), (r) => this.alignerFor(r));
     this.jdata = new JunctionDataCache(new HybridJunctionData(new OverpassProvider(overpass()), sw));
     this.surr = new SurroundCache(new OverpassSurroundProvider(overpass));
@@ -748,10 +754,103 @@ class App {
   }
   private offlineDir: string | undefined;
 
+  /* ================================================================ the offline map for where you are */
+
+  private autoKv = safeStorage('local');
+  private offlineStarted: Promise<void> = Promise.resolve();
+  private autoBusy = false;
+
+  /** What was said before to the offer of each pack ("Later", "Not now"). */
+  private autoAnswers(): Record<string, AutoAnswer> {
+    try {
+      return (JSON.parse(this.autoKv.get('junctionnav.offline.auto') || '{}') as Record<string, AutoAnswer>) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  private answerAuto(id: string, answer: AutoAnswer['answer']) {
+    const all = this.autoAnswers();
+    all[id] = { answer, at: Date.now() };
+    this.autoKv.set('junctionnav.offline.auto', JSON.stringify(all));
+  }
+
+  /**
+   * Gets the offline map for where you are, so routes are planned on the phone when TomTom cannot
+   * answer and everything keeps working without a signal: in the Android app on Wi-Fi by itself,
+   * on mobile data or in the browser after asking once. Checked at start, when guidance starts,
+   * and when the connection changes (Wi-Fi joined).
+   */
+  private async autoOffline() {
+    if (ARTIFACT || this.demo || this.autoBusy || !this.settings.offlineAuto || !this.offline.supported) return;
+    const position = this.myPos ?? lastPosition();
+    if (!position) return;
+    this.autoBusy = true;
+    try {
+      const catalog = await this.offline.catalog().catch(() => null);
+      const d = autoDecision({
+        enabled: this.settings.offlineAuto,
+        supported: this.offline.supported,
+        native: NATIVE,
+        position,
+        catalog,
+        installed: this.offline.installed.map((p) => p.id),
+        jobs: this.offline.jobs,
+        answers: this.autoAnswers(),
+        connection: connectionNow(),
+        now: Date.now(),
+      });
+      const name = d.kind === 'none' ? '' : packName(d.pack, this.L);
+      if (d.kind === 'download') {
+        this.answerAuto(d.pack.id, 'auto');
+        toast(`Downloading the offline map for ${name} (${formatBytes(downloadSize(d.pack.manifest))}) on Wi-Fi. Then routes work without TomTom or a signal.`, 6500);
+        void this.offline.download(d.pack.id);
+      } else if (d.kind === 'pause') {
+        this.offline.pause(d.pack.id);
+        toast(`On mobile data now: the offline map for ${name} carries on when you're back on Wi-Fi.`, 5000);
+      } else if (d.kind === 'resume') {
+        void this.offline.download(d.pack.id);
+      } else if (d.kind === 'ask' && this.view !== 'nav') this.askOffline(d.pack);
+    } finally {
+      this.autoBusy = false;
+    }
+  }
+
+  /** The offer to download the offline map for where you are, with its size. */
+  private askOffline(pack: CatalogEntry) {
+    const card = this.el.offlineAsk;
+    if (!card.hidden) return;
+    const name = packName(pack, this.L);
+    const size = formatBytes(downloadSize(pack.manifest));
+    const cell = connectionNow().type === 'cellular';
+    const go = h('button', { type: 'button', class: 'btn btn-primary', id: 'offline-ask-go' }, `Download (${size})`);
+    const later = h('button', { type: 'button', class: 'btn btn-ghost', id: 'offline-ask-later' }, NATIVE ? 'Later, on Wi-Fi' : 'Not now');
+    go.addEventListener('click', () => {
+      card.hidden = true;
+      this.answerAuto(pack.id, 'yes');
+      void this.offline.download(pack.id);
+      toast(`Downloading the offline map for ${name}. Progress is in Settings → Downloads.`, 4500);
+    });
+    later.addEventListener('click', () => {
+      card.hidden = true;
+      this.answerAuto(pack.id, NATIVE ? 'wifi' : 'no');
+    });
+    card.replaceChildren(
+      h('strong', {}, `Offline map for ${name}`),
+      h(
+        'p',
+        {},
+        `With it on your phone, routes are planned on the phone when TomTom can't answer, and the map, directions and search keep working with no signal.${cell ? ' You are on mobile data.' : ''}`,
+      ),
+      h('div', { class: 'offline-ask-btns' }, later, go),
+    );
+    card.hidden = false;
+  }
+
   init() {
     const e = this.el;
     document.body.append(e.app);
-    e.app.append(e.map);
+    e.app.append(e.map, e.offlineAsk);
     // The layout keys off the view (the map buttons show only while browsing on phones).
     e.app.dataset.view = this.view;
     this.applyTheme();
@@ -878,6 +977,7 @@ class App {
       .then((p) => {
         this.myPos = p;
         rememberPosition(p);
+        void this.offlineStarted.then(() => this.autoOffline());
         // Sunrise and sunset where the user actually is.
         setSunPlace(p);
         this.checkDayNight();
@@ -890,7 +990,10 @@ class App {
         /* no permission yet; GPS starts with navigation */
       });
 
-    void this.initOffline();
+    this.offlineStarted = this.initOffline();
+    void this.offlineStarted.then(() => this.autoOffline());
+    // Joining Wi-Fi (home after a trip somewhere new) is the moment to fetch that region's map.
+    (navigator as Navigator & { connection?: EventTarget }).connection?.addEventListener?.('change', () => void this.autoOffline());
     void this.placesSvc.start();
     this.syncTrafficFlow();
     if (this.settings.trafficNews) void this.traffic.refreshNews(true);
@@ -5399,6 +5502,7 @@ class App {
       if (this.engine.progress) this.paintMeter(this.engine.progress);
     }
     if (prev.placesOnMap !== next.placesOnMap) this.placesLayer.refresh(0);
+    if (!prev.offlineAuto && next.offlineAuto) void this.autoOffline();
     if (prev.placesRadius !== next.placesRadius || prev.placesUpdate !== next.placesUpdate || prev.placesWifiOnly !== next.placesWifiOnly) this.placesSvc.check();
     this.map.setUnits(next.units);
     this.applyLang();

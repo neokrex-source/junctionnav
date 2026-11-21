@@ -70,6 +70,40 @@ export class OfflineRouter implements Router {
   }
 }
 
+/**
+ * The offline maps first, wherever they cover the trip; the online router (OSRM) where they do
+ * not, or when they find no route. What plans the routes when TomTom cannot answer (no key, the
+ * key refused or used up, TomTom not reachable): the phone needs no routing server then.
+ */
+export class OfflineFirstRouter implements Router {
+  constructor(
+    private sw: OfflineSwitch,
+    private online: () => Router,
+    /** Off in Settings: the online router as before. */
+    private enabled: () => boolean = () => true,
+  ) {}
+
+  private covers(req: RouteRequest): boolean {
+    return this.enabled() && this.sw.available() && this.sw.client.covers([req.origin, ...(req.via ?? []), req.destination]);
+  }
+
+  get name() {
+    return this.enabled() && this.sw.available() ? 'Offline' : this.online().name;
+  }
+
+  async route(req: RouteRequest, signal?: AbortSignal): Promise<RouteResult> {
+    if (!this.covers(req)) return this.online().route(req, signal);
+    try {
+      return await new OfflineRouter(this.sw.client).route(req);
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      const r = await this.online().route(req, signal);
+      r.warnings.unshift(`The offline maps found no route here (${(e as Error).message}); this one comes from the online router.`);
+      return r;
+    }
+  }
+}
+
 export class HybridRouter implements Router {
   constructor(
     private online: () => Router,

@@ -39,7 +39,8 @@ export class FallbackRouter implements Router {
       console.warn('[tomtom] routing:', (e as Error).message);
       this.gate.fail(e);
       const r = await this.secondary().route(req, signal);
-      r.note = `TomTom could not plan this (${shortReason(e)}), so these routes come from OpenStreetMap, without live traffic.`;
+      const where = r.routes[0]?.provider === 'Offline' ? 'the offline maps on this device' : 'OpenStreetMap';
+      r.note = `TomTom could not plan this (${shortReason(e)}), so these routes come from ${where}, without live traffic.`;
       return r;
     }
   }

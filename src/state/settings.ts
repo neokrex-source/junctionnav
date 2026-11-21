@@ -77,6 +77,10 @@ export interface Settings {
   drowsyDetect: boolean;
   /** With offline maps downloaded: use them only without internet ('auto') or all the time. */
   offlineUse: 'auto' | 'always';
+  /** When TomTom cannot plan a route, plan it with the offline maps where they cover the trip (before OSRM). */
+  offlineRoutes: boolean;
+  /** Download the offline map for where you are by itself (on Wi-Fi, or asking first on mobile data). */
+  offlineAuto: boolean;
   /** Version of the app's look the settings were saved with (moves old default map styles on). */
   look: number;
   /** How much map the navigation camera shows: 'auto', or what the scale bar stands for (100 to 1000 m). */
@@ -162,6 +166,8 @@ export const DEFAULTS: Settings = {
   talkTopics: ['jokes', 'riddles', 'malaysia', 'world', 'cars', 'animals', 'lifehacks', 'science'],
   drowsyDetect: true,
   offlineUse: 'auto',
+  offlineRoutes: true,
+  offlineAuto: true,
   look: 2,
   mapScale: 'auto',
   jvSize: '1:3',

@@ -182,6 +182,36 @@ const save = () => fs.writeFileSync(path.join(out, 'report.json'), JSON.stringif
     await shot('2b-map-retry');
   }
 
+  // The offline map for where you are: with the fix in Kuala Lumpur the app starts the Peninsular
+  // Malaysia download by itself on Wi-Fi, or offers it on mobile data. The check then stops it.
+  const auto = await page.evaluate(async () => {
+    const a = window.__app;
+    const seen = () => {
+      const card = document.querySelector('.offline-ask');
+      return {
+        jobs: [...a.offline.jobs.entries()].map(([id, j]) => [id, j.status]),
+        card: !!card && !card.hidden,
+        text: card?.textContent ?? '',
+        connection: navigator.connection?.type ?? null,
+        position: a.myPos ?? null,
+        answers: localStorage.getItem('junctionnav.offline.auto'),
+      };
+    };
+    const t0 = Date.now();
+    let s = seen();
+    while (Date.now() - t0 < 30_000 && !s.jobs.length && !s.card) {
+      await new Promise((r) => setTimeout(r, 1000));
+      s = seen();
+    }
+    a.settings.offlineAuto = false;
+    for (const [id] of s.jobs) await a.offline.cancel(id).catch(() => {});
+    const card = document.querySelector('.offline-ask');
+    if (card) card.hidden = true;
+    return s;
+  });
+  report.info.offlineAuto = auto;
+  check('the offline map for Kuala Lumpur downloads by itself on Wi-Fi, or is offered on mobile data', auto.jobs.some(([id]) => id === 'peninsular-my') || /Peninsular Malaysia/.test(auto.text), auto);
+
   // Settings, scrolled to the offline maps, then the Android back button closes it.
   await page.click('button[aria-label="Settings"]');
   await page.click('dialog.settings [role="tab"][data-tab="downloads"]');

@@ -323,6 +323,10 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     drowsyDetect.checked = current.drowsyDetect;
     const pretripCheck = h('input', { id: 'pretripCheck', type: 'checkbox' }) as HTMLInputElement;
     pretripCheck.checked = current.pretripCheck;
+    const offlineRoutes = h('input', { id: 'offlineRoutes', type: 'checkbox' }) as HTMLInputElement;
+    offlineRoutes.checked = current.offlineRoutes;
+    const offlineAuto = h('input', { id: 'offlineAuto', type: 'checkbox' }) as HTMLInputElement;
+    offlineAuto.checked = current.offlineAuto;
     const TOPIC_LABEL: Record<TalkTopic, string> = {
       jokes: 'Jokes',
       riddles: 'Riddles and quizzes',
@@ -600,6 +604,16 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
     );
     syncVoiceRows();
     const laneGrp = grp('Lane alerts', laneAlerts, 'Says which lane to be in before exits, entrances, junctions and turns ("Move into the right lane" with the first notice of a turn when the map has no lane detail). The GPS check warns again only when your position clearly puts you outside those lanes; phone GPS is accurate to a few metres, so it stays cautious.');
+    const offlineGrp = opts.pack
+      ? h(
+          'div',
+          { class: 'grp' },
+          h('label', { for: 'offlineRoutes' }, 'When TomTom is out of reach'),
+          h('label', { class: 'toggle' }, offlineRoutes, 'Plan routes with the offline maps on this device, where they cover the trip'),
+          h('label', { class: 'toggle' }, offlineAuto, 'Get the offline map for where I am by itself (on Wi-Fi in the Android app; it asks first on mobile data)'),
+          h('div', { class: 'hint' }, 'Routes then come from TomTom with live traffic, then from the offline maps, then from OpenStreetMap online. Offline routes have no live traffic.'),
+        )
+      : null;
     const tunnelGrp = h(
       'div',
       { class: 'grp' },
@@ -781,7 +795,7 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
       },
       { id: 'drive', label: 'Drive', items: [voiceGrp, alertGrp, laneGrp, speedGrp, tollGrp, closeUpGrp, h('div', { class: 'row' }, grp('Junction view', jvMode), grp('View size', jvSize)), surroundGrp, elevationGrp, tunnelGrp] },
       { id: 'traffic', label: 'Traffic', items: [traffic] },
-      { id: 'downloads', label: 'Downloads', items: [places?.el, pack?.el] },
+      { id: 'downloads', label: 'Downloads', items: [offlineGrp, places?.el, pack?.el] },
       { id: 'app', label: 'App', items: [accountEl, h('div', { class: 'row' }, grp('Language', lang), grp('Units', units)), appVersion, androidApp, servers, about] },
     ]
       .map((t) => ({ ...t, items: t.items.filter((x): x is HTMLElement => !!x) }))
@@ -870,6 +884,8 @@ export function openSettings(current: Settings, opts: SettingsOptions = {}): Pro
         voiceEngine: voiceEngine.value as Settings['voiceEngine'],
         cloudVoice: cloudVoice.value,
         pretripCheck: pretripCheck.checked,
+        offlineRoutes: offlineRoutes.checked,
+        offlineAuto: offlineAuto.checked,
         jvSurround: surround.checked,
         jvElevation: elevation.checked,
         jvHills: hills.checked,
