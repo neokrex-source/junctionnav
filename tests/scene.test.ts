@@ -92,6 +92,31 @@ describe('demo junction scenes', () => {
   });
 });
 
+describe('the entrance ramp up to the elevated expressway', () => {
+  it('climbs from the road onto a viaduct after its toll plaza', () => {
+    const sc = buildScene(route, js[1], demo.osm);
+    expect(sc.kind).toBe('entry');
+    expect(sc.vertical).toBe('up');
+    expect(sc.profile.kind).toBe('flyover');
+    expect(sc.profile.peak.h).toBeGreaterThan(6);
+    const taken = sc.roads.find((r) => r.role === 'taken')!;
+    const at = (rel: number) => taken.h[taken.s.findIndex((v) => v >= rel)];
+    expect(at(40)).toBeLessThan(0.5); // on the ground at the plaza
+    expect(at(150)).toBeGreaterThan(1); // climbing
+    expect(at(280)).toBeGreaterThan(6); // up on the viaduct
+    // The road it leaves stays on the ground.
+    expect(Math.max(...sc.roads.find((r) => r.role === 'branch')!.h)).toBeLessThan(0.5);
+  });
+
+  it('merges onto the expressway up on its viaduct', () => {
+    const sc = buildScene(route, js[2], demo.osm);
+    expect(sc.kind).toBe('merge');
+    // Everything at the merge is level with it, high above the ground.
+    expect(sc.ground.level).toBeLessThan(-6);
+    for (const r of sc.roads.filter((x) => x.role !== 'context')) expect(Math.abs(r.h[r.h.length - 1])).toBeLessThan(0.5);
+  });
+});
+
 describe('junction heights', () => {
   it('describes the climb onto the flyover with its height and grade', () => {
     const sc = buildScene(route, js[0], demo.osm);

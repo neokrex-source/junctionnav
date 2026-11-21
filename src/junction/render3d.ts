@@ -4,7 +4,7 @@
  * line drawn as a large arrow. Uses unlit materials for an illustration look.
  */
 import * as THREE from 'three';
-import { clamp, distToPolyline, lerp, LocalFrame, rightNormals, rng, xyAt, type XY } from '../geo/geo';
+import { angleDiff, clamp, distToPolyline, lerp, LocalFrame, rightNormals, rng, xyAt, type XY } from '../geo/geo';
 import type { GroundMap } from './groundMap';
 import { cameraPose, groundAt, type JunctionScene, type RoadStrip, type SceneGround } from './scene';
 import { signCanvas, type SignTheme } from './signs';
@@ -146,6 +146,37 @@ export function virtualDistance(real: number): number {
   return clamp(50 + real * 0.11, MIN_DIST, MAX_DIST);
 }
 
+/**
+ * How the camera looks at a scene. Where the route climbs (onto a flyover, or a ramp up to an
+ * elevated expressway) it sits lower and looks more level, turned part of the way towards the
+ * middle of the climb, so the ramp is seen rising ahead instead of lying flat seen from above.
+ */
+export function climbView(jv: Pick<JunctionScene, 'vertical' | 'profile' | 'kind'>): { height: number; pitch: number; turn: number; at: number } {
+  if (jv.vertical !== 'up') return { height: CAM_HEIGHT, pitch: CAM_PITCH, turn: 0, at: 0 };
+  const peak = jv.profile.peak;
+  return { height: 11, pitch: (4 * Math.PI) / 180, turn: jv.kind === 'entry' ? 0.6 : 0.35, at: Math.max(40, peak.s * 0.6) };
+}
+
+/**
+ * Heights are drawn this much taller than they are (as the map mode does, at 1.8), so a 7 m
+ * ramp or flyover reads as one on a phone-sized view a couple of hundred metres off.
+ */
+export const JV_EXAGGERATE = 1.6;
+
+/** The scene with every height (roads, route, camera path, ground) drawn `k` times taller. */
+export function exaggerated(jv: JunctionScene, k = JV_EXAGGERATE): JunctionScene {
+  if (k === 1) return jv;
+  const up = (h: number[]) => h.map((v) => v * k);
+  const g = jv.ground;
+  return {
+    ...jv,
+    roads: jv.roads.map((r) => ({ ...r, h: up(r.h) })),
+    route: { ...jv.route, h: up(jv.route.h) },
+    camera: { ...jv.camera, h: up(jv.camera.h) },
+    ground: { level: g.level * k, ...(g.grid ? { grid: { ...g.grid, h: Float32Array.from(g.grid.h, (v) => v * k) } } : {}) },
+  };
+}
+
 /** Accumulates triangles per material so the scene is a handful of draw calls. */
 class Acc {
   pos: number[] = [];
@@ -229,6 +260,8 @@ export class JunctionRenderer {
   private scene3 = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(45, 16 / 9, 0.5, 4000);
   private jv: JunctionScene | null = null;
+  /** The scene as given (this.jv is it drawn with taller heights). */
+  private source: JunctionScene | null = null;
   private palette: JvPalette = DAY;
   private night = false;
   private theme: SignTheme | null = null;
@@ -273,7 +306,7 @@ export class JunctionRenderer {
     });
     this.canvas.addEventListener('webglcontextrestored', () => {
       this.lost = false;
-      if (this.jv && this.theme) this.setScene(this.jv, this.theme, this.night);
+      if (this.source && this.theme) this.setScene(this.source, this.theme, this.night);
     });
   }
 
@@ -282,7 +315,8 @@ export class JunctionRenderer {
   }
 
   setScene(jv: JunctionScene, theme: SignTheme, night = false) {
-    this.jv = jv;
+    this.source = jv;
+    this.jv = exaggerated(jv);
     this.theme = theme;
     this.night = night;
     this.palette = jvPalette(night);
@@ -447,13 +481,22 @@ export class JunctionRenderer {
     const rc = jv.route.s.map((v) => v - jv.route.s[0]);
     const routeAt = xyAt(jv.route.pts, rc, clamp(-this.dist - jv.route.s[0], 0, rc[rc.length - 1])).p;
     // Up/down scenes keep the camera centred so the walls of the ramp stay in view.
-    const drift = jv.vertical === 'up' || jv.vertical === 'down' ? 0.1 : 0.4;
+    const drift = jv.vertical === 'up' ? 0.25 : jv.vertical === 'down' ? 0.1 : 0.4;
     const cx = lerp(pose.pos[0], routeAt[0], drift);
     const cy = lerp(pose.pos[1], routeAt[1], drift);
-    const hr = (pose.heading * Math.PI) / 180;
     const look = 100;
-    this.camera.position.set(...(W(cx, cy, pose.h + CAM_HEIGHT) as [number, number, number]));
-    const ty = pose.h + CAM_HEIGHT - Math.tan(CAM_PITCH) * look;
+    const v = climbView(jv);
+    // Where the route climbs onto a flyover or a ramp up to an expressway: the camera comes down
+    // nearer the road and turns a little towards the climb, so the ramp is seen rising ahead.
+    let heading = pose.heading;
+    if (v.turn > 0) {
+      const at = xyAt(jv.route.pts, rc, clamp(v.at - jv.route.s[0], 0, rc[rc.length - 1])).p;
+      const toClimb = (Math.atan2(at[0] - cx, at[1] - cy) * 180) / Math.PI;
+      heading += clamp(angleDiff(pose.heading, toClimb), -14, 14) * v.turn;
+    }
+    const hr = (heading * Math.PI) / 180;
+    this.camera.position.set(...(W(cx, cy, pose.h + v.height) as [number, number, number]));
+    const ty = pose.h + v.height - Math.tan(v.pitch) * look;
     this.camera.lookAt(...(W(cx + Math.sin(hr) * look, cy + Math.cos(hr) * look, ty) as [number, number, number]));
     // Rebuild the arrow when the camera has moved enough.
     if (Math.abs(this.arrowFrom - this.dist) > 4) this.buildArrow();
@@ -1078,6 +1121,7 @@ export class JunctionRenderer {
     const takenRoad = strips.find((x) => x.role === 'taken');
     const portal = takenRoad ? portalIndex(takenRoad, jv.ground) : -1;
     let endRel = jv.kind === 'merge' ? 150 : 140;
+    if (jv.vertical === 'up') endRel = clamp(jv.profile.peak.s + 30, endRel, 265);
     if (portal >= 0 && takenRoad) endRel = Math.min(endRel, takenRoad.s[portal] + 3);
     const from = sOf(-MAX_DIST - 90);
     const to = sOf(endRel);
@@ -1123,6 +1167,8 @@ export class JunctionRenderer {
     const takenRoad = jv.roads.find((x) => x.role === 'taken');
     const portal = takenRoad ? portalIndex(takenRoad, jv.ground) : -1;
     let endRel = jv.kind === 'merge' ? 150 : 135;
+    // Up a ramp: on to the top of the climb, so the arrow is seen going up.
+    if (jv.vertical === 'up') endRel = clamp(jv.profile.peak.s + 25, endRel, 260);
     if (portal >= 0 && takenRoad) endRel = Math.min(endRel, takenRoad.s[portal] + 3);
     const end = sOf(endRel);
     if (end - start < 20) return;

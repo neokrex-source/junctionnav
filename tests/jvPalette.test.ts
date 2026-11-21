@@ -63,3 +63,30 @@ describe('junction view colours: the route’s lanes apart from the other ways',
     }
   });
 });
+
+describe('the 3D view’s camera and heights', () => {
+  it('draws heights taller, and keeps the real ones for the height strip', async () => {
+    const { exaggerated, JV_EXAGGERATE, climbView } = await import('../src/junction/render3d');
+    const { buildDemo } = await import('../src/demo/network');
+    const { detectJunctions } = await import('../src/junction/detect');
+    const { buildScene } = await import('../src/junction/scene');
+    const { normalizeOsrm } = await import('../src/routing/osrm');
+    const demo = buildDemo();
+    const route = normalizeOsrm(structuredClone(demo.osrm), 'Demo')[0];
+    const sc = buildScene(route, detectJunctions(route)[1], demo.osm);
+    const tall = exaggerated(sc);
+    const taken = (x: typeof sc) => x.roads.find((r) => r.role === 'taken')!;
+    const top = Math.max(...taken(sc).h);
+    expect(Math.max(...taken(tall).h)).toBeCloseTo(top * JV_EXAGGERATE, 5);
+    expect(tall.ground.level).toBeCloseTo(sc.ground.level * JV_EXAGGERATE, 5);
+    expect(tall.profile).toBe(sc.profile);
+    // The scene itself is left as it was.
+    expect(Math.max(...taken(sc).h)).toBe(top);
+    // Up a ramp the camera comes down and turns towards the climb; elsewhere as usual.
+    const up = climbView(sc);
+    const flat = climbView({ ...sc, vertical: null });
+    expect(up.height).toBeLessThan(flat.height);
+    expect(up.turn).toBeGreaterThan(0);
+    expect(flat.turn).toBe(0);
+  });
+});

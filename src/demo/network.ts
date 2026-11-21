@@ -182,24 +182,28 @@ export function buildDemo(): DemoData {
   net.way(['M1', [0, 1550], 'J2'], trunk({ lanes: '3', 'turn:lanes': 'through|through|slight_right' }), 15);
   net.way(['S0', [14, 990], [14, 700], 'S1'], trunk({ lanes: '3' }), 20);
 
-  // --- Section B: fork to the expressway entry ramp
+  // --- Section B: fork to the expressway entry ramp. The ramp passes its toll plaza on the
+  // ground, then climbs onto a viaduct and curves up to merge onto the elevated E1.
+  net.node('RB0', 6.5, 1885);
   net.way(['J2', [-3, 1860], [-20, 1960], [-60, 2100], [-120, 2250], [-170, 2380]], trunk({ lanes: '2', destination: 'Pusat Bandar;Klang' }), 15);
-  net.way(['J2', [3.5, 1860], [22, 1955], [65, 2060], [130, 2160], [200, 2250], [255, 2330], [287, 2385], 'M2'], {
-    highway: 'motorway_link',
-    oneway: 'yes',
-    lanes: '1',
-    maxspeed: '60',
-    destination: 'Kuala Lumpur;Ipoh',
-    'destination:ref': 'E1',
-  }, 12);
+  const ramp = { highway: 'motorway_link', oneway: 'yes', lanes: '1', maxspeed: '60' };
+  net.way(['J2', [3.5, 1860], 'RB0'], { ...ramp, destination: 'Kuala Lumpur;Ipoh', 'destination:ref': 'E1' }, 12);
+  net.way(['RB0', [22, 1955], [65, 2060], [130, 2160], [200, 2250], [255, 2330], [287, 2385], 'M2'], { ...ramp, bridge: 'yes', layer: '1' }, 12);
 
-  // --- Section C: expressway E1 northbound, merge with acceleration lane
+  // --- Section C: expressway E1 northbound on a viaduct where the ramp merges (acceleration lane)
   const e1 = (o: Tags) => T({ highway: 'motorway', oneway: 'yes', ref: 'E1', name: 'Lebuhraya Demo', toll: 'yes', maxspeed: '110', ...o });
-  net.way(['E0', [300, 1800], 'M2'], e1({ lanes: '3' }), 25);
-  net.way(['M2', 'E_a'], e1({ lanes: '4' }), 25);
-  net.way(['E_a', 'E_b'], e1({ lanes: '3' }), 25);
+  const viaduct = { bridge: 'yes', layer: '1' };
+  net.node('EV0', 300, 1450);
+  net.node('ESV0', 330, 2950);
+  net.node('ESV1', 330, 1450);
+  net.way(['E0', 'EV0'], e1({ lanes: '3' }), 25);
+  net.way(['EV0', [300, 1800], 'M2'], e1({ lanes: '3', ...viaduct }), 25);
+  net.way(['M2', 'E_a'], e1({ lanes: '4', ...viaduct }), 25);
+  net.way(['E_a', 'E_b'], e1({ lanes: '3', ...viaduct }), 25);
   net.way(['E_b', 'J3'], e1({ lanes: '4', 'turn:lanes': 'slight_left|slight_left|slight_right|slight_right' }), 25);
-  net.way(['ES0', [330, 2400], 'ES1'], e1({ lanes: '3', name: 'Lebuhraya Demo' }), 30);
+  net.way(['ES0', 'ESV0'], e1({ lanes: '3', name: 'Lebuhraya Demo' }), 30);
+  net.way(['ESV0', [330, 2400], 'ESV1'], e1({ lanes: '3', name: 'Lebuhraya Demo', ...viaduct }), 30);
+  net.way(['ESV1', 'ES1'], e1({ lanes: '3', name: 'Lebuhraya Demo' }), 30);
 
   // --- Section D: JCT fork, E1 to Ipoh (left) and E35 to Kuala Lumpur (right)
   net.way(['J3', [297, 3360], [286, 3460], [256, 3580], [212, 3720], [152, 3900], [100, 4100]], e1({ lanes: '2', destination: 'Ipoh;Rawang' }), 15);
@@ -277,7 +281,8 @@ export function buildDemo(): DemoData {
   push(between(first((w) => w.tags.bridge === 'yes' && w.tags.ref === '5'), 'Fb0', 'Fb1'));
   push(between(first((w) => w.nodes[0] === net.named.get('Fb1')), 'Fb1', 'M1'));
   push(between(first((w) => w.nodes[0] === net.named.get('M1')), 'M1', 'J2'));
-  push(between(first((w) => w.tags.highway === 'motorway_link' && w.nodes[0] === net.named.get('J2')), 'J2', 'M2'));
+  push(between(first((w) => w.tags.highway === 'motorway_link' && w.nodes[0] === net.named.get('J2')), 'J2', 'RB0'));
+  push(between(first((w) => w.tags.highway === 'motorway_link' && w.nodes[0] === net.named.get('RB0')), 'RB0', 'M2'));
   push(between(first((w) => w.nodes[0] === net.named.get('M2')), 'M2', 'E_a'));
   push(between(first((w) => w.nodes[0] === net.named.get('E_a')), 'E_a', 'E_b'));
   push(between(first((w) => w.nodes[0] === net.named.get('E_b')), 'E_b', 'J3'));
@@ -520,8 +525,9 @@ export function buildDemo(): DemoData {
     spot('Terowong Bukit Demo', 'Tunnel on Jalan Demo · 500 m', 0, -400),
     spot('Jalan Demo', 'Demo start', 0, -1900),
   ];
-  // The plaza sits on the E1 entrance ramp, as Malaysian expressway entrances do.
-  const tolls = [{ id: 'demo/toll', at: frame.toLngLat(130, 2160), name: 'Plaza Tol Demo' }];
+  // The plaza sits on the E1 entrance ramp, as Malaysian expressway entrances do: on the ground,
+  // before the ramp climbs onto the viaduct.
+  const tolls = [{ id: 'demo/toll', at: frame.toLngLat(3, 1855), name: 'Plaza Tol Demo' }];
   // A speed camera on E35 (on its road, so it counts for this direction only), and an average
   // speed check over the E1 stretch from the merge to the JCT.
   const e35Way = osm.ways.find((w) => w.tags.ref === 'E35' && w.nodes[0] === net.named.get('J3'))!;

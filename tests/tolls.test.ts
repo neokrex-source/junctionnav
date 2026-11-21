@@ -221,9 +221,10 @@ describe('toll plazas on the route', () => {
     const found = matchTolls(r, pts, [0, r.line.length]);
     expect(found.length).toBe(1);
     expect(found[0].name).toBe('Plaza Tol Demo');
+    // On the ground just after the ramp leaves the road, before it climbs onto the viaduct.
     const ramp = r.steps.find((s) => s.type === 'on ramp')!;
-    expect(found[0].s - ramp.s).toBeGreaterThan(300);
-    expect(found[0].s - ramp.s).toBeLessThan(450);
+    expect(found[0].s - ramp.s).toBeGreaterThan(30);
+    expect(found[0].s - ramp.s).toBeLessThan(90);
   });
 });
 
