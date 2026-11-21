@@ -3,6 +3,7 @@
  * lead the route's way are in the route's colour with a bright edge line, every other lane at the
  * split (the rest of the approach, the other ways) is bright blue in contrast, and the other
  * carriageway is left out. Colours are read from screenshots of the view at the fork and at exit 114.
+ * Impulses run along the route in the 3D view and the map mode, and stop when the view closes.
  *
  *   VITE_AUTH_REQUIRED=false npx vite build --outDir dist-alert
  *   npx vite preview --outDir dist-alert --port 4184 &
@@ -93,6 +94,33 @@ const COLOURS = {
       const opp = await page.evaluate(() => (window.__app.panel.current?.roads ?? []).filter((r) => r.opposite).length);
       if (i === 3) check(`${appearance}, ${what}: the other carriageway (traffic the other way) is left out`, opp >= 1, opp);
     }
+    // Impulses: running along the 3D arrow while the view shows, and on the map mode's route.
+    const pulse = await page.evaluate(async () => {
+      const a = window.__app;
+      const r = a.panel.renderer;
+      const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+      const off0 = r.pulseTex?.offset.y;
+      await sleep(400);
+      const off1 = r.pulseTex?.offset.y;
+      const running3d = !!r.pulseRaf;
+      const c = a.engine.junctions.find((j) => j.id === a.activeJ);
+      a.settings.jvMode = 'map';
+      a.showJunction(c, true);
+      await sleep(1500);
+      const src = a.zoom.map?.getSource('jv-pulse');
+      const flat = src?.serialize?.().data?.features?.length ?? 0;
+      const runningMap = !!a.zoom.pulseRaf;
+      const ribbon = !!a.zoom.layer3d.pulseTex;
+      a.settings.jvMode = 'illustration';
+      a.showJunction(c, true);
+      await sleep(300);
+      a.panel.hide();
+      await sleep(300);
+      return { off0, off1, running3d, flat, runningMap, ribbon, stopped: !r.pulseRaf && !a.zoom.pulseRaf };
+    });
+    check(`${appearance}: impulses run along the 3D arrow while it shows`, pulse.off0 !== pulse.off1 && pulse.running3d, pulse);
+    check(`${appearance}: and along the route in the map mode (the flat line and the 3D ribbon)`, pulse.runningMap && pulse.flat >= 1 && pulse.ribbon, pulse);
+    check(`${appearance}: and stop when the junction view closes`, pulse.stopped, pulse);
     check(`${appearance}: no page errors`, errors.length === 0, errors.slice(0, 3));
     await ctx.close();
   }

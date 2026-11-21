@@ -77,7 +77,7 @@ import { googleMapsUrl, googleWords, openGooglePanel } from './google/placesKit'
 import { AlertWatch, type AlertEvent, type AlertSnapshot } from './nav/alert';
 import { TalkDeck } from './talk/deck';
 import type { TalkTopic } from './talk/types';
-import { answerLead, chipWords, drivenWords, drowsySpeech, limitSpeech, remindSpeech, restedText, talkIntro, talkLead, type RestAhead } from './talk/speech';
+import { answerLead, chipWords, sayAgain, drivenWords, drowsySpeech, limitSpeech, remindSpeech, restedText, talkIntro, talkLead, type RestAhead } from './talk/speech';
 import { Persona, PRETRIP_MIN, pretripWords, restWords, speechText, type TripInfo } from './voice/persona';
 import { bestRestPlace, PULL_OUT_MS, PULL_SPEED, RestPlaceFinder, RestWatch, type RestEvent, type RestInput, type RestKind, type RestPlace, type Resting } from './nav/rest';
 import { CloudTts, cloudTier, cloudVoicesFor, type CloudProblem } from './voice/cloud';
@@ -3981,12 +3981,17 @@ class App {
     const intro = this.talkedThisDrive ? '' : `${this.persona.attention(talkIntro(reason, L))} `;
     this.talkedThisDrive = true;
     const text = `${intro}${talkLead(pick.topic, L, pick.n)} ${q}`;
+    // Each one is said twice, so it is not missed while driving.
+    const again = sayAgain(q, L);
     this.say(text, false);
+    this.say(again, false);
     const perChar = L === 'ja' ? 140 : 70;
-    this.talkUntil = Date.now() + text.length * perChar + 600;
+    const both = text.length + again.length;
+    this.talkUntil = Date.now() + both * perChar + 900;
     if (typeof pick.item !== 'string') {
       // The answer a few seconds after the question, at a moment the guidance is not speaking.
       const answer = `${answerLead(L)} ${pick.item[1]}`;
+      const answerAgain = sayAgain(pick.item[1], L);
       const sayAnswer = (tries: number) => {
         if (this.view !== 'nav') return;
         // A quiet moment first; on a busy stretch a shorter one, and in the end after what is playing.
@@ -3995,9 +4000,10 @@ class App {
           return;
         }
         this.say(answer, false);
-        this.talkUntil = Date.now() + answer.length * perChar + 400;
+        this.say(answerAgain, false);
+        this.talkUntil = Date.now() + (answer.length + answerAgain.length) * perChar + 700;
       };
-      window.setTimeout(() => sayAnswer(10), text.length * perChar + 7000);
+      window.setTimeout(() => sayAnswer(10), both * perChar + 7000);
     }
   }
 
@@ -4012,7 +4018,11 @@ class App {
     const was = this.voice.enabled;
     this.voice.enabled = true;
     this.voice.speak(text, speech, true);
-    if (typeof pick.item !== 'string') this.voice.speak(`${answerLead(lang)} ${pick.item[1]}`, speech, false);
+    this.voice.speak(sayAgain(q, lang), speech, false);
+    if (typeof pick.item !== 'string') {
+      this.voice.speak(`${answerLead(lang)} ${pick.item[1]}`, speech, false);
+      this.voice.speak(sayAgain(pick.item[1], lang), speech, false);
+    }
     this.voice.enabled = was;
     toast(typeof pick.item === 'string' ? q : `${q} ${pick.item[1]}`, 6000);
   }
@@ -4438,7 +4448,7 @@ class App {
       }
       if (this.panel.visible) {
         this.panel.setDistance(p.junction.dist);
-        if (this.settings.jvMode !== 'illustration' && this.zoom.updatePuck(p.snapped, p.heading) && this.testRun && this.panel.current)
+        if (this.settings.jvMode !== 'illustration' && this.zoom.updatePuck(p.snapped, p.heading, p.s) && this.testRun && this.panel.current)
           this.testRun.map3dShown(this.panel.current);
       }
     } else if (this.activeJ) {

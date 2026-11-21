@@ -98,6 +98,7 @@ const waitSaid = (page, re, ms = 20_000) =>
     await sleep(300);
     let said = await spoken(page);
     check('"Say one now" speaks a joke, fact or riddle', said.length >= 1 && said[0].length > 20, said);
+    check('and says it twice ("Once more: …")', said.length >= 2 && said[1].startsWith('Once more: ') && said[0].endsWith(said[1].slice('Once more: '.length)), said);
     // In Malay.
     await page.locator('.set-tab', { hasText: 'App' }).click();
     await page.selectOption('#lang', 'ms');
@@ -117,7 +118,7 @@ const waitSaid = (page, re, ms = 20_000) =>
     await page.click('text=Say one now');
     await sleep(300);
     said = (await spoken(page)).slice(before);
-    check('a riddle is said with its answer after it', said.length === 2 && /\?$/.test(said[0]) && /^The answer: /.test(said[1]), said);
+    check('a riddle is said twice, then its answer twice', said.length === 4 && /\?$/.test(said[0]) && /^Once more: .+\?$/.test(said[1]) && /^The answer: /.test(said[2]) && said[3] === `Once more: ${said[2].slice('The answer: '.length)}`, said);
     check('no page errors in Settings', errors.length === 0, errors.slice(0, 3));
     await ctx.close();
   }
@@ -144,6 +145,9 @@ const waitSaid = (page, re, ms = 20_000) =>
     const talked = await waitSaid(page, /^I will chat a little to help you stay awake(, sir)?\./, 30_000);
     const talk = (await spoken(page)).find((t) => t.startsWith('I will chat'));
     check('the first chat says why, then a joke or riddle', talked && /stay awake(, sir)?\. (Here is a joke\.|Joke time\.|A quick one for you\.|This one might make you smile\.|Riddle time\. Have a think\.|Here is a riddle\.|Quick quiz\.|Try this one\.) .{10,}/.test(talk ?? ''), talk);
+    await page.waitForFunction(() => window.__spoken.some((t) => t.startsWith('Once more: ')), null, { timeout: 15_000 }).catch(() => {});
+    const again = (await spoken(page)).find((t) => t.startsWith('Once more: '));
+    check('then says it again ("Once more: …"), so it is not missed', !!again && (talk ?? '').endsWith(again.slice('Once more: '.length)), { talk, again });
     if (/\?$/.test(talk ?? '')) {
       const answered = await waitSaid(page, /^The answer: /, 40_000);
       check('a riddle’s answer follows a few seconds later', answered, await spoken(page));

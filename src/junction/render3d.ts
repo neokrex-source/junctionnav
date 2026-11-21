@@ -10,6 +10,7 @@ import { cameraPose, groundAt, type JunctionScene, type RoadStrip, type SceneGro
 import { signCanvas, type SignTheme } from './signs';
 import { buildSurroundings, surroundPalette } from './surroundRender';
 import { inTheme } from '../theme/tint';
+import { motionOk, PULSE_PERIOD, PULSE_SPEED, pulseTexture } from './pulse';
 
 export interface JvPalette {
   skyTop: string;
@@ -36,6 +37,8 @@ export interface JvPalette {
   lanesOther: string;
   arrow: string;
   arrowEdge: string;
+  /** The impulses running along the arrow towards its head. */
+  pulse: string;
   guardrail: string;
   concrete: string;
   concreteDark: string;
@@ -68,6 +71,7 @@ export const DAY: JvPalette = {
   lanesOther: '#7486e0',
   arrow: '#ea580c',
   arrowEdge: '#ffffff',
+  pulse: '#ffffff',
   guardrail: '#d3cfdb',
   concrete: '#cbc6d4',
   concreteDark: '#9e98aa',
@@ -100,6 +104,7 @@ export const NIGHT: JvPalette = {
   lanesOther: '#8090e0',
   arrow: '#fb923c',
   arrowEdge: '#ffedd5',
+  pulse: '#fffbeb',
   guardrail: '#544a66',
   concrete: '#3d3450',
   concreteDark: '#2c253b',
@@ -236,6 +241,10 @@ export class JunctionRenderer {
   private raf = 0;
   private lost = false;
   private arrowMats: THREE.MeshBasicMaterial[] = [];
+  private pulseTex: THREE.CanvasTexture | null = null;
+  private pulseMat: THREE.MeshBasicMaterial | null = null;
+  private pulseRaf = 0;
+  private pulseLast = 0;
   /** HTML labels for nearby roads, places and stops, positioned over the canvas each frame. */
   readonly labelLayer: HTMLDivElement;
   private labelEls: HTMLDivElement[] = [];
@@ -281,11 +290,33 @@ export class JunctionRenderer {
     this.build();
     this.arrowFrom = Infinity;
     this.requestRender();
+    this.startPulse();
   }
+
+  /** Runs the impulses along the arrow while the view is on screen (stops by itself when it is not). */
+  private startPulse() {
+    if (this.pulseRaf || !this.pulseTex || !this.renderer || !motionOk()) return;
+    this.pulseLast = 0;
+    this.pulseRaf = requestAnimationFrame(this.pulseFrame);
+  }
+
+  private pulseFrame = (now: number) => {
+    this.pulseRaf = 0;
+    // Not on screen (the view closed, or the map mode showing): stop until the view comes back.
+    if (!this.jv || !this.pulseTex || this.lost || !this.canvas.isConnected || this.canvas.offsetParent === null) return;
+    this.pulseRaf = requestAnimationFrame(this.pulseFrame);
+    // About 25 frames a second, and nothing while the app is in the background.
+    if (document.hidden || now - this.pulseLast < 40) return;
+    const dt = this.pulseLast ? Math.min(0.2, (now - this.pulseLast) / 1000) : 0;
+    this.pulseLast = now;
+    this.pulseTex.offset.y = (this.pulseTex.offset.y - (dt * PULSE_SPEED) / PULSE_PERIOD) % 1;
+    this.render();
+  };
 
   /** Real distance to the junction in metres; the camera position is derived from it. */
   setDistance(d: number) {
     const nd = virtualDistance(d);
+    this.startPulse();
     if (Math.abs(nd - this.dist) < 0.25 && this.arrowFrom !== Infinity) return;
     this.dist = nd;
     this.requestRender();
@@ -377,6 +408,8 @@ export class JunctionRenderer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    cancelAnimationFrame(this.pulseRaf);
+    this.pulseRaf = 0;
     this.clear();
     this.renderer?.dispose();
     this.canvas.remove();
@@ -553,6 +586,20 @@ export class JunctionRenderer {
         polygonOffsetUnits: -12,
       });
     this.arrowMats = [arrowMat(P.arrowEdge, 0.95), arrowMat(P.arrow, 0.94)];
+    // The impulses: a streak pattern scrolled along the arrow's body.
+    this.pulseTex = motionOk() ? pulseTexture() : null;
+    if (this.pulseTex) {
+      this.disposables.push(this.pulseTex);
+      this.pulseMat = this.mat(P.pulse, {
+        map: this.pulseTex,
+        transparent: true,
+        vertexColors: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -7,
+        polygonOffsetUnits: -14,
+      });
+    } else this.pulseMat = null;
     this.scene3.add(this.arrowGroup);
   }
 
@@ -1105,7 +1152,50 @@ export class JunctionRenderer {
     };
     mk(outline, this.arrowMats[0], 7);
     mk(body, this.arrowMats[1], 8);
+    if (this.pulseMat) {
+      const g = pulseRibbon(smp, start, bodyEnd, aw * 0.28, lift + 0.03);
+      if (g) {
+        const m = new THREE.Mesh(g, this.pulseMat);
+        m.renderOrder = 9;
+        m.frustumCulled = false;
+        this.arrowGroup.add(m);
+      }
+    }
   }
+}
+
+/**
+ * The ribbon the impulses run on: along the arrow's body between `from` and `to` (metres along
+ * the route path), `half` wide each side, with the pattern laid by distance along the route (so a
+ * rebuilt arrow does not make it jump) and faded in and out at the ends.
+ */
+function pulseRibbon(smp: StripSampler, from: number, to: number, half: number, lift: number): THREE.BufferGeometry | null {
+  if (to - from < 8) return null;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  const s0 = smp.st.s[0];
+  let i = 0;
+  for (let d = from; d <= to + 1e-6; d = d >= to ? to + 1 : Math.min(to, d + 2)) {
+    const s = smp.at(d);
+    const a = clamp((d - from) / 18, 0, 1) * clamp((to - d) / 10, 0, 1);
+    const v = (s0 + d) / PULSE_PERIOD;
+    pos.push(...offsetPt(s, -half, lift), ...offsetPt(s, half, lift));
+    uv.push(0, v, 1, v);
+    col.push(1, 1, 1, a, 1, 1, 1, a);
+    if (i > 0) {
+      const b = (i - 1) * 2;
+      idx.push(b, b + 1, b + 3, b, b + 3, b + 2);
+    }
+    i++;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+  g.setIndex(idx);
+  return g;
 }
 
 /** Bounding box [minX, minY, maxX, maxY, pad] expanded by pad. */

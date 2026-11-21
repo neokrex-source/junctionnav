@@ -133,6 +133,18 @@ export function answerLead(lang: LangCode): string {
   return 'The answer:';
 }
 
+/** Before a joke, fact, riddle or answer said the second time, so it is not missed while driving. */
+export function againLead(lang: LangCode): string {
+  if (lang === 'ms') return 'Sekali lagi:';
+  if (lang === 'ja') return 'もう一度、';
+  return 'Once more:';
+}
+
+/** The text said again, after its first time. */
+export function sayAgain(text: string, lang: LangCode): string {
+  return lang === 'ja' ? `${againLead(lang)}${text}` : `${againLead(lang)} ${text}`;
+}
+
 /** Said with the first joke of a drive, so the driver knows why the app has started talking. */
 export function talkIntro(reason: 'tired' | 'drowsy' | 'often', lang: LangCode): string {
   if (lang === 'ms') return reason === 'often' ? 'Perjalanan masih jauh. Mari berbual sedikit supaya anda kekal segar.' : 'Saya akan berbual sedikit supaya anda kekal berjaga.';

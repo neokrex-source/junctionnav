@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { clamp, lerp, LocalFrame, rightNormals, xyAt, type LngLat, type XY } from '../geo/geo';
 import { groundAt, type JunctionScene, type RoadStrip } from './scene';
 import { inTheme } from '../theme/tint';
+import { motionOk, PULSE_PERIOD, PULSE_SPEED, pulseTexture } from './pulse';
 
 /** Heights are shown 1.8× on the map so a 7 m deck reads at junction-view zoom on a phone. */
 const EXAGGERATE = 1.8;
@@ -131,6 +132,8 @@ export class JunctionLayer3D implements CustomLayerInterface {
   private model = new THREE.Matrix4();
   private junction: JunctionScene | null = null;
   private frame: LocalFrame | null = null;
+  /** The impulses running along the route ribbon (a streak pattern scrolled along it). */
+  private pulseTex: THREE.CanvasTexture | null = null;
 
   constructor() {
     this.scene3.add(this.roads, this.car);
@@ -172,7 +175,16 @@ export class JunctionLayer3D implements CustomLayerInterface {
     this.renderer.render(this.scene3, this.camera);
   }
 
+  /** Moves the impulses along the ribbon to time `t` (seconds); false when there are none. */
+  pulse(t: number): boolean {
+    if (!this.pulseTex || !this.junction) return false;
+    this.pulseTex.offset.y = -((t * PULSE_SPEED) / PULSE_PERIOD) % 1;
+    return true;
+  }
+
   private clear() {
+    this.pulseTex?.dispose();
+    this.pulseTex = null;
     for (const o of [...this.roads.children]) {
       const mesh = o as THREE.Mesh;
       mesh.geometry?.dispose();
@@ -338,6 +350,7 @@ export class JunctionLayer3D implements CustomLayerInterface {
     const body = new Acc();
     const lanes = new Acc();
     const laneEdge = new Acc();
+    const pulse = { pos: [] as number[], uv: [] as number[] };
     const half = Math.max(2, sc.arrowWidth / 2);
     // The route's lanes, as wide as they are at each point (the route line in their middle).
     const laneSmp = sc.routeHalf?.length === r.pts.length ? sampler({ pts: r.pts, h: r.h, s: r.s, width: sc.routeHalf.map((x) => x * 2) }, 0, ground) : null;
@@ -363,6 +376,13 @@ export class JunctionLayer3D implements CustomLayerInterface {
         const zss = s.z < -MIN_UP ? s.z + lift : zs;
         edge.quad(P3(side(prev, -half - 0.6), zpp - 0.02), P3(side(prev, half + 0.6), zpp - 0.02), P3(side(s, half + 0.6), zss - 0.02), P3(side(s, -half - 0.6), zss - 0.02));
         body.quad(P3(side(prev, -half), zpp), P3(side(prev, half), zpp), P3(side(s, half), zss), P3(side(s, -half), zss));
+        // The impulses' strip in the middle of the ribbon, the pattern laid by distance along it.
+        const ph = half * 0.55;
+        const v0 = (smp.s0 + d - STEP) / PULSE_PERIOD;
+        const v1 = (smp.s0 + d) / PULSE_PERIOD;
+        const q = [P3(side(prev, -ph), zpp + 0.05), P3(side(prev, ph), zpp + 0.05), P3(side(s, ph), zss + 0.05), P3(side(s, -ph), zss + 0.05)];
+        pulse.pos.push(...q[0], ...q[1], ...q[2], ...q[0], ...q[2], ...q[3]);
+        pulse.uv.push(0, v0, 1, v0, 1, v1, 0, v0, 1, v1, 0, v1);
         if (laneSmp) {
           const a = laneSmp.at(d - STEP);
           const b = laneSmp.at(d);
@@ -374,6 +394,19 @@ export class JunctionLayer3D implements CustomLayerInterface {
         }
       }
       prev = s;
+    }
+    if (motionOk() && pulse.pos.length) {
+      this.pulseTex = pulseTexture();
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pulse.pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(pulse.uv, 2));
+      const m = new THREE.Mesh(
+        g,
+        mat('#ffffff', { map: this.pulseTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }),
+      );
+      m.renderOrder = 8;
+      m.frustumCulled = false;
+      this.roads.add(m);
     }
     add(lanes, mat(P.lanes, { transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }), 6);
     add(laneEdge, mat(P.laneEdge, { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }), 6);
