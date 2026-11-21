@@ -7,7 +7,10 @@
  *    stands, however the GPS wanders.
  *  - Driving off: "Welcome back, sir." with the next instruction, once. Leaving the route at speed
  *    still gets a new route.
- *  - Resume now ends a rest stop at once (and asks for the way back from off the route).
+ *  - Resume now ends a rest stop at once (and asks for the way back from off the route); its ×
+ *    only puts the card away.
+ *  - The toll, camera, break, traffic and tunnel alerts each have a × that closes them until the
+ *    next one of their kind (signs of tiredness still show after a closed break reminder).
  *  - A new route starting with the same turn as one a moment ago is not said again.
  *  - In the close-up at a junction the route covers 80% of the road it is on, and the car icon is
  *    a little bigger than at the usual scale.
@@ -104,6 +107,9 @@ const check = (name, ok, detail) => {
   check('said once: "Filling up, sir? Take your time. I’ll carry on when we set off again."', st.said.length === 1 && st.said[0] === 'Filling up, sir? Take your time. I’ll carry on when we set off again.', st.said);
   check('no new route asked for while pulling in and standing', st.reroutes === 0, st.reroutes);
   await page.screenshot({ path: join(OUT, '01-rest-card.png') });
+  await page.click('#rest-close');
+  st = await state();
+  check('the rest card’s × puts it away; the rest stop goes on (nothing said, no new route)', st.card === null && st.resting && st.said.length === 1, st);
 
   // A long stop: GPS wanders under the canopy (and jumps once), the speed flickers.
   await page.evaluate(
@@ -160,6 +166,80 @@ const check = (name, ok, detail) => {
   // After Resume now off the route, the way back starts with the welcome instead of "New route ready".
   check('the way back after Resume now starts "Welcome back, sir." with its first turn', /^Welcome back, sir\. (In |Keep|Take|Turn|Continue|Exit|At )/.test(twice[0] ?? ''), twice);
   check('a new route starting with the same turn as one a moment ago is said once', twice.length === 1, twice);
+
+  /* ---------------------------------------------------------------- closing alerts on the map */
+  const closing = await page.evaluate(async () => {
+    const a = window.__app;
+    const p = a.engine.progress;
+    const tick = () => new Promise((r) => setTimeout(r, 30));
+    const shown = (el) => !el.hidden;
+    const out = {};
+    // The toll plaza: closed until the next plaza.
+    const plaza = (id) => ({ ...p, toll: { plaza: { id, s: p.s + 900, at: [101.6, 3.1], name: 'Plaza Tol Demo' }, dist: 900 } });
+    a.paintTollChip(plaza('t1'));
+    out.tollShown = shown(a.el.tollChip) && !!a.el.tollChip.querySelector('.chip-close');
+    a.el.tollChip.querySelector('.chip-close').click();
+    await tick();
+    a.paintTollChip({ ...plaza('t1'), toll: { ...plaza('t1').toll, dist: 600 } });
+    out.tollStaysClosed = !shown(a.el.tollChip);
+    a.paintTollChip(plaza('t2'));
+    out.tollNextShows = shown(a.el.tollChip);
+    // The speed camera: closed until the next camera.
+    const cam = (id) => ({ ...p, speedo: { ...p.speedo, check: null, camera: { cam: { id, at: [101.6, 3.1], limit: 80 }, dist: 400 } } });
+    a.paintCamChip(cam('c1'));
+    out.camShown = shown(a.el.camChip);
+    a.el.camChip.querySelector('.chip-close').click();
+    await tick();
+    a.paintCamChip({ ...cam('c1'), speedo: { ...cam('c1').speedo, camera: { ...cam('c1').speedo.camera, dist: 200 } } });
+    out.camStaysClosed = !shown(a.el.camChip);
+    a.paintCamChip(cam('c2'));
+    out.camNextShows = shown(a.el.camChip);
+    // Time for a break: closed until the break is taken; tiredness still comes up.
+    const realState = a.alertWatch.state.bind(a.alertWatch);
+    a.alertWatch.state = () => ({ driven: 7_300_000, limit: 7_200_000, due: true, drowsy: false });
+    a.paintAlertChip();
+    out.breakShown = shown(a.el.alertChip);
+    a.el.alertChip.querySelector('.chip-close').click();
+    await tick();
+    a.paintAlertChip();
+    out.breakStaysClosed = !shown(a.el.alertChip);
+    a.alertWatch.state = () => ({ driven: 7_400_000, limit: 7_200_000, due: true, drowsy: true });
+    a.paintAlertChip();
+    out.tiredShows = shown(a.el.alertChip);
+    a.alertWatch.state = realState;
+    a.paintAlertChip();
+    // Traffic ahead: closed until the next incident (and the chip itself still opens the list).
+    const realTraffic = a.traffic;
+    const inc = (id) => ({ id, kind: 'jam', s: p.s + 1500, endS: p.s + 2200, delay: 240, description: '', from: '', to: '' });
+    a.traffic = { live: true, onRoute: [inc('i1')], routeNews: [] };
+    a.paintTrafficChip(p);
+    out.trafficShown = shown(a.el.trafficChip) && !!a.el.trafficChip.querySelector('.tc-open') && !!a.el.trafficChip.querySelector('.chip-close');
+    a.el.trafficChip.querySelector('.chip-close').click();
+    await tick();
+    out.trafficListNotOpened = a.navOverlay !== 'traffic';
+    a.paintTrafficChip(p);
+    out.trafficStaysClosed = !shown(a.el.trafficChip);
+    a.traffic = { live: true, onRoute: [inc('i2')], routeNews: [] };
+    a.paintTrafficChip(p);
+    out.trafficNextShows = shown(a.el.trafficChip);
+    a.traffic = realTraffic;
+    a.paintTrafficChip(p);
+    // The tunnel card: closed for this tunnel.
+    const span = { id: 'tn1', fromS: p.s + 300, toS: p.s + 1000, length: 700, entrance: [101.6, 3.1], name: 'Terowong Demo', names: {}, highway: 'motorway', source: 'osm' };
+    const opts = { lang: 'en', units: 'metric', theme: a.themeFor(a.engine.route), dr: false };
+    a.tunnelCard.update({ span, phase: 'ahead', dist: 300, toExit: 1000, progress: 0 }, opts);
+    out.tunnelShown = shown(a.tunnelCard.el) && !!a.tunnelCard.el.querySelector('.tcard-x');
+    a.tunnelCard.el.querySelector('.tcard-x').click();
+    a.tunnelCard.update({ span, phase: 'ahead', dist: 200, toExit: 900, progress: 0 }, opts);
+    out.tunnelStaysClosed = !shown(a.tunnelCard.el);
+    a.tunnelCard.hide();
+    return out;
+  });
+  check('the toll plaza chip has a ×: closed until the next plaza', closing.tollShown && closing.tollStaysClosed && closing.tollNextShows, closing);
+  check('the speed camera chip has a ×: closed until the next camera', closing.camShown && closing.camStaysClosed && closing.camNextShows, closing);
+  check('the break chip has a ×: closed until the break, but signs of tiredness still show', closing.breakShown && closing.breakStaysClosed && closing.tiredShows, closing);
+  check('the traffic chip has a × (not opening the list): closed until the next incident', closing.trafficShown && closing.trafficListNotOpened && closing.trafficStaysClosed && closing.trafficNextShows, closing);
+  check('the tunnel card has a ×: closed for that tunnel', closing.tunnelShown && closing.tunnelStaysClosed, closing);
 
   /* ---------------------------------------------------------------- the close-up */
   const normal = await page.evaluate(() => ({ k: Number(document.querySelector('.puck')?.style.getPropertyValue('--puck-k')), thin: window.__app.map.isThin, zoom: window.__app.map.map.getZoom() }));

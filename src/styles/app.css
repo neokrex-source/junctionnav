@@ -1077,6 +1077,9 @@ button { cursor: pointer; }
   cursor: pointer;
 }
 .tcard[hidden] { display: none; }
+.tcard { position: relative; }
+.tcard-x { position: absolute; top: -9px; right: -9px; background: var(--surface-solid); box-shadow: var(--shadow), var(--edge); }
+.tcard[data-phase="inside"] .tcard-x { background: #140c22; color: #b8b0c6; }
 .tcard-sign canvas { display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
 .tcard-side { text-align: right; min-width: 64px; }
 .tcard-dist { font: 700 28px/1 var(--font-cond); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -1508,16 +1511,26 @@ button { cursor: pointer; }
   max-width: 100%;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   border: 0;
-  padding: 8px 14px 8px 10px;
+  padding: 0 4px 0 0;
   border-radius: 999px;
   color: var(--ink);
   font: 700 15px/1.1 var(--font-cond);
   letter-spacing: 0.01em;
   box-shadow: var(--shadow), var(--edge), inset 3px 0 0 var(--tc, var(--route));
-  cursor: pointer;
 }
+.tc-open {
+  all: unset;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px 8px 10px;
+  cursor: pointer;
+  border-radius: 999px 0 0 999px;
+}
+.tc-open:focus-visible { outline: 2px solid var(--route); outline-offset: 2px; }
 .traffic-chip[hidden], .faster[hidden] { display: none; }
 .tc-icon { width: 24px; height: 24px; flex: none; display: block; }
 .tc-ico .ico { width: 18px; height: 18px; color: var(--route); display: block; }
@@ -1630,7 +1643,7 @@ button { cursor: pointer; }
   align-items: center;
   gap: 8px;
   height: max(36px, 5vh);
-  padding: 0 14px 0 5px;
+  padding: 0 4px 0 5px;
   border-radius: 999px;
   color: var(--ink);
   box-shadow: var(--shadow), var(--edge), inset 0 0 0 2px #f59e0b;
@@ -1809,3 +1822,9 @@ button { cursor: pointer; }
 .gp-actions[hidden] { display: none; }
 .gp-actions .btn { text-decoration: none; }
 .gp-note { margin: 0; padding: 8px 16px 12px; font-size: 12px; color: var(--muted); }
+
+/* The × on the alerts over the map (rest stop, break, toll plaza, camera, traffic, tunnel): closes
+   that one until the next of its kind. A big enough target without making the chip taller. */
+.chip-close { flex: none; width: 30px; height: 30px; padding: 6px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+.chip-close .ico { width: 16px; height: 16px; display: block; }
+.chip-close:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }

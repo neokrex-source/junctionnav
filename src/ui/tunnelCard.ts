@@ -25,7 +25,14 @@ export class TunnelCard {
   private dismissed: string | null = null;
 
   constructor() {
-    this.el.append(this.sign, h('div', { class: 'tcard-side' }, this.dist, this.label), this.bar, this.note);
+    // × (or a tap anywhere on it) hides the card for this tunnel.
+    const close = h('button', {
+      type: 'button',
+      class: 'mini chip-close tcard-x',
+      'aria-label': 'Hide',
+      html: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>',
+    });
+    this.el.append(this.sign, h('div', { class: 'tcard-side' }, this.dist, this.label), this.bar, this.note, close);
     this.el.title = 'Tap to hide';
     // Tap hides the card for this tunnel.
     this.el.addEventListener('click', () => {

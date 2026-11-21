@@ -245,6 +245,9 @@ interface Trip {
   destination: Place | null;
 }
 
+/** The alerts on the map the driver can close (each until the next one of its kind). */
+type AlertKind = 'toll' | 'cam' | 'alert' | 'traffic';
+
 class App {
   settings: Settings = loadSettings();
   places = new PlaceStore();
@@ -490,6 +493,19 @@ class App {
   /** The incident the popup card shows (within 500 m), and the ones closed by hand on this drive. */
   private cardId = '';
   private cardClosed = new Set<string>();
+  /** Alerts on the map the driver closed, by kind: the one each was showing (the next one shows). */
+  private closedAlert: Partial<Record<AlertKind, string>> = {};
+
+  /** A small × that closes an alert on the map until the next one of its kind. */
+  private alertClose(kind: AlertKind, id: string, el: HTMLElement): HTMLButtonElement {
+    const b = h('button', { type: 'button', class: 'mini chip-close', html: ICON.close, 'aria-label': this.tr('close'), title: this.tr('close') });
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.closedAlert[kind] = id;
+      el.hidden = true;
+    });
+    return b;
+  }
   private fasterDeclined = new Map<Route, number>();
   private fasterCheckedAt = 0;
 
@@ -517,7 +533,7 @@ class App {
     simSpeed: h('button', { type: 'button' }, '×1') as HTMLButtonElement,
     fabs: h('div', { class: 'fabs' }),
     pinCross: h('div', { class: 'pin-cross', hidden: true }),
-    trafficChip: h('button', { class: 'traffic-chip card', type: 'button', hidden: true }) as HTMLButtonElement,
+    trafficChip: h('div', { class: 'traffic-chip card', hidden: true }),
     trafficCard: h('div', { class: 'traffic-card card', hidden: true, role: 'status', 'aria-live': 'polite' }),
     tollChip: h('div', { class: 'toll-chip card', hidden: true, role: 'status' }),
     camChip: h('div', { class: 'cam-chip card', hidden: true, role: 'status' }),
@@ -2875,7 +2891,9 @@ class App {
     // Tapping the arrival time opens the traffic on the route (incidents ahead and the news).
     const etaText = h('button', { class: 'eta-text', type: 'button', 'aria-label': 'Traffic on the route' }, e.etaMain, e.etaSub);
     etaText.addEventListener('click', () => this.toggleNavOverlay('traffic'));
-    e.trafficChip.addEventListener('click', () => this.toggleNavOverlay('traffic'));
+    e.trafficChip.addEventListener('click', (ev) => {
+      if (!(ev.target as Element).closest('.chip-close')) this.toggleNavOverlay('traffic');
+    });
     e.trafficCard.addEventListener('click', () => this.toggleNavOverlay('traffic'));
     e.foot.append(
       // The simulator bar sits in the same column, so the traffic cards stay clear of it.
@@ -3431,6 +3449,7 @@ class App {
     this.trafficWarned.clear();
     this.tv = newTrafficVoice();
     this.cardClosed.clear();
+    this.closedAlert = {};
     this.fasterDeclined.clear();
     this.hideFaster();
     // The travel time with traffic from planning, while it is fresh.
@@ -3707,8 +3726,11 @@ class App {
     const go = h('button', { type: 'button', class: 'btn btn-primary pretrip-start', id: 'rest-resume' }, w.resume);
     go.addEventListener('click', () => this.resumeFromRest());
     card.dataset.kind = kind ?? 'stopped';
+    // × puts the card away; the rest stop goes on (guidance carries on when the car drives off).
+    const close = h('button', { type: 'button', class: 'mini', id: 'rest-close', html: ICON.close, 'aria-label': this.tr('close'), title: this.tr('close') });
+    close.addEventListener('click', () => (card.hidden = true));
     card.replaceChildren(
-      h('div', { class: 'pretrip-head' }, h('strong', {}, w.title)),
+      h('div', { class: 'pretrip-head' }, h('strong', {}, w.title), close),
       h(
         'ul',
         { class: 'pretrip-list' },
@@ -4001,12 +4023,18 @@ class App {
     const d = new Date();
     const st = this.alertWatch.state(this.alertClock, d.getHours() + d.getMinutes() / 60);
     if (!st.due && !st.drowsy) {
+      delete this.closedAlert.alert;
       if (!chip.hidden) chip.hidden = true;
       return;
     }
     const w = chipWords(this.L);
     const time = drivenWords(st.driven, this.L);
     const state = st.drowsy ? 'drowsy' : 'due';
+    // Closed: until the break has been taken, or signs of tiredness come up after a closed reminder.
+    if (this.closedAlert.alert === state) {
+      if (!chip.hidden) chip.hidden = true;
+      return;
+    }
     const key = `${state}|${time}|${this.L}`;
     if (chip.dataset.key !== key) {
       chip.dataset.key = key;
@@ -4015,8 +4043,9 @@ class App {
       find.addEventListener('click', () => this.findRestAreas());
       chip.replaceChildren(
         h('span', { class: 'alert-ico', html: ICON.coffee }),
-        h('span', { class: 'alert-line' }, h('span', { class: 'alert-title' }, st.drowsy ? w.drowsy : w.due), h('span', { class: 'alert-time' }, `${w.driving} ${time}`)),
+        h('span', { class: 'alert-line' }, h('span', { class: 'alert-title' }, st.drowsy ? w.drowsy : w.due), h('span', { class: 'alert-time' }, h('span', { class: 'alert-driving' }, `${w.driving} `), time)),
         find,
+        this.alertClose('alert', state, chip),
       );
       chip.setAttribute('aria-label', `${st.drowsy ? w.drowsy : w.due}, ${w.driving} ${time}`);
     }
@@ -4085,6 +4114,7 @@ class App {
     const words = speedWords(this.L);
     const units = this.settings.units;
     let key = '';
+    let id = '';
     let parts: (string | HTMLElement)[] = [];
     let label = '';
     let state = 'ok';
@@ -4094,6 +4124,7 @@ class App {
       const avg = c.average != null ? speedIn(c.average, units) : null;
       const dist = formatDistance(c.dist, units);
       state = avg != null && lim != null && c.average! > lim ? 'over' : 'ok';
+      id = `chk|${c.check.id}`;
       key = `chk|${c.check.id}|${c.inside}|${dist}|${avg}|${state}`;
       // Before it: "Average speed check · 400 m". Inside: "Average speed 104 · 3.2 km" (what is left of it).
       parts = c.inside
@@ -4106,19 +4137,21 @@ class App {
       const lim = c.cam.limit ?? sp.limit?.kmh ?? null;
       const dist = formatDistance(c.dist, units);
       state = sp.speeding === 'over' ? 'over' : 'ok';
+      id = `cam|${c.cam.id}`;
       key = `cam|${c.cam.id}|${dist}|${lim}|${state}`;
       parts = [h('span', { class: 'cam-title' }, words.camera), h('span', { class: 'cam-dist' }, dist)];
       if (lim != null) parts.push(h('span', { class: 'cam-limit' }, String(speedIn(lim, units))));
       label = `${words.camera}, ${dist}${lim != null ? `, ${words.limit} ${speedIn(lim, units)}` : ''}`;
     }
-    if (!key) {
+    if (!key || this.closedAlert.cam === id) {
+      if (!key) delete this.closedAlert.cam;
       if (!chip.hidden) chip.hidden = true;
       return;
     }
     if (chip.dataset.key !== key) {
       chip.dataset.key = key;
       chip.dataset.state = state;
-      chip.replaceChildren(h('span', { class: 'cam-ico-wrap', html: cameraSvg() }), h('span', { class: 'cam-line' }, ...parts));
+      chip.replaceChildren(h('span', { class: 'cam-ico-wrap', html: cameraSvg() }), h('span', { class: 'cam-line' }, ...parts), this.alertClose('cam', id, chip));
       chip.setAttribute('aria-label', label);
     }
     if (chip.hidden) chip.hidden = false;
@@ -4131,7 +4164,8 @@ class App {
   private paintTollChip(p: Progress) {
     const chip = this.el.tollChip;
     const t = this.settings.tollAlerts ? p.toll : null;
-    if (!t) {
+    if (!t || this.closedAlert.toll === t.plaza.id) {
+      if (!t) delete this.closedAlert.toll;
       if (!chip.hidden) chip.hidden = true;
       return;
     }
@@ -4144,6 +4178,7 @@ class App {
       chip.replaceChildren(
         h('span', { class: 'toll-ico-wrap', html: tollSvg() }),
         h('span', { class: 'toll-line' }, h('span', { class: 'toll-title' }, title), h('span', { class: 'toll-dist' }, dist), pay ? h('span', { class: 'toll-pay' }, pay) : ''),
+        this.alertClose('toll', t.plaza.id, chip),
       );
       chip.setAttribute('aria-label', `${title}, ${dist}${pay ? `, ${pay}` : ''}`);
     }
@@ -4846,25 +4881,32 @@ class App {
     }
     this.hideTrafficCard();
     const next = ahead[0];
+    const news = this.traffic.routeNews.length;
+    const id = next ? `i|${next.id}` : news ? 'news' : '';
+    if (!id) delete this.closedAlert.traffic;
     let key = '';
-    if (next) {
+    // The chip opens the traffic list; its × closes it until the next incident.
+    const fill = (...inner: HTMLElement[]) => {
+      chip.innerHTML = '';
+      chip.append(h('button', { type: 'button', class: 'tc-open' }, ...inner), this.alertClose('traffic', id, chip));
+    };
+    if (id && this.closedAlert.traffic === id) {
+      key = '';
+    } else if (next) {
       const d = next.s - p.s;
       const where = d <= 30 ? tt(L, 'now') : tt(L, 'inDist', { d: formatDistance(d, this.settings.units) });
       const delay = next.delay >= 60 ? ` · ${tt(L, 'delay', { m: minutes(next.delay) })}` : '';
       const text = `${kindName(L, next.kind)} · ${where}${delay}`;
       key = `i|${next.id}|${text}`;
       if (chip.dataset.key !== key) {
-        chip.innerHTML = '';
         chip.style.setProperty('--tc', incidentColor(next));
-        chip.append(h('img', { class: 'tc-icon', src: incidentIconUrl(next.kind), alt: '' }), h('span', { class: 'tc-text' }, text));
+        fill(h('img', { class: 'tc-icon', src: incidentIconUrl(next.kind), alt: '' }), h('span', { class: 'tc-text' }, text));
       }
-    } else if (this.traffic.routeNews.length) {
-      const n = this.traffic.routeNews.length;
-      key = `n|${n}|${L}`;
+    } else if (news) {
+      key = `n|${news}|${L}`;
       if (chip.dataset.key !== key) {
-        chip.innerHTML = '';
         chip.style.removeProperty('--tc');
-        chip.append(h('span', { class: 'tc-ico', html: ICON.news }), h('span', { class: 'tc-text' }, `${tt(L, 'newsRoute')} (${n})`));
+        fill(h('span', { class: 'tc-ico', html: ICON.news }), h('span', { class: 'tc-text' }, `${tt(L, 'newsRoute')} (${news})`));
       }
     }
     chip.dataset.key = key;

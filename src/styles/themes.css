@@ -125,6 +125,9 @@
 .app:has(.sheet.is-nav:not([hidden])) .alert-chip { visibility: hidden; }
 @media (max-width: 480px) {
   .alert-chip { margin-right: 66px; }
+  /* Room for the ×: "2 hours" without "Driving", and a slimmer button. */
+  .alert-driving { display: none; }
+  .alert-find { padding: 0 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .app[data-view] .alert-chip[data-state="drowsy"] { animation: none; }

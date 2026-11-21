@@ -137,7 +137,7 @@ const waitSaid = (page, re, ms = 20_000) =>
     const limitSaid = await waitSaid(page, /^You have been driving for (2 hours|1 hour 55 minutes)(, sir)?\. Time for a break of at least 15 minutes\./);
     const after = await page.evaluate(() => ({ tones: window.__tones.slice(), chip: window.__app.el.alertChip.hidden ? null : window.__app.el.alertChip.innerText.replace(/\s+/g, ' '), state: window.__app.el.alertChip.dataset.state }));
     check('at the focus limit: a tone and "You have been driving for 2 hours. Time for a break"', limitSaid && after.tones.includes('camera'), { tones: after.tones, spoken: await spoken(page) });
-    check('the break chip shows the driving time and Find R&R', /Time for a break/.test(after.chip ?? '') && /Driving (2 hours|1 hour 55 minutes)/.test(after.chip ?? '') && /Find R&R/.test(after.chip ?? '') && after.state === 'due', after.chip);
+    check('the break chip shows the driving time and Find R&R', /Time for a break/.test(after.chip ?? '') && /(Driving )?(2 hours|1 hour 55 minutes)/.test(after.chip ?? '') && /Find R&R/.test(after.chip ?? '') && after.state === 'due', after.chip);
     await page.screenshot({ path: join(OUT, '02-break-chip.png') });
     // The talk starts a few minutes (of the sped-up drive) later.
     await page.evaluate(() => (window.__app.alertWatch.nextTalk = 1));
