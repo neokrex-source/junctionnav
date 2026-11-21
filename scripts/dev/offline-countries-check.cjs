@@ -166,8 +166,9 @@ const CATALOG = {
   /* ---------------------------------------------------------------- two downloads, one after the other */
   await page.click('.off-row[data-pack="peninsular-my"] .btn-primary');
   await page.click('.off-row[data-pack="my-borneo"] .btn-primary');
-  const waiting = await page.evaluate(() => document.querySelector('.off-row[data-pack="my-borneo"]')?.dataset.state);
-  check('a second download waits for the first', waiting === 'queued' || waiting === 'installed', waiting);
+  const waiting = await page.evaluate(() => ({ second: document.querySelector('.off-row[data-pack="my-borneo"]')?.dataset.state, first: document.querySelector('.off-row[data-pack="peninsular-my"]')?.dataset.state }));
+  // (A fast machine may finish the first, small test pack before the second click: then it starts.)
+  check('a second download waits for the first', waiting.second === 'queued' || waiting.second === 'installed' || (waiting.second === 'downloading' && waiting.first === 'installed'), waiting);
   await page.waitForFunction(() => ['peninsular-my', 'my-borneo'].every((id) => document.querySelector(`.off-row[data-pack="${id}"]`)?.dataset.state === 'installed'), null, { timeout: 30_000 }).catch(() => {});
   const after = await page.evaluate(() => ({
     states: [...document.querySelectorAll('.off-row')].map((r) => [r.dataset.pack, r.dataset.state]),

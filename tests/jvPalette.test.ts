@@ -20,7 +20,25 @@ describe('junction view colours: the route’s lanes apart from the other ways',
       expect(contrast(P.asphalt, P.ground)).toBeGreaterThan(1.4);
     });
 
-    it(`${name}: the lanes to be in are tinted and edged in the route's colour`, () => {
+    it(`${name}: every other lane is bright, in contrast with the lanes to be in`, () => {
+      expect(contrast(P.lanesOther, P.ground)).toBeGreaterThan(name === 'night' ? 5 : 1.8);
+      expect(contrast(P.lanesOther, P.lanes)).toBeGreaterThan(1.5);
+      // Blue against orange: far apart in hue too.
+      const hue = (c: string) => {
+        const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16) / 255);
+        const mx = Math.max(r, g, b);
+        const mn = Math.min(r, g, b);
+        const h = mx === r ? ((g - b) / (mx - mn)) % 6 : mx === g ? (b - r) / (mx - mn) + 2 : (r - g) / (mx - mn) + 4;
+        return (h * 60 + 360) % 360;
+      };
+      const dh = Math.abs(hue(P.lanesOther) - hue(P.lanes));
+      expect(Math.min(dh, 360 - dh)).toBeGreaterThan(120);
+      // Lane lines show on both.
+      expect(contrast(P.marking, P.lanesOther)).toBeGreaterThan(2.5);
+      expect(contrast(P.arrow, P.lanes)).toBeGreaterThan(name === 'night' ? 2 : 1.6);
+    });
+
+    it(`${name}: the lanes to be in are in the route's colour, edged`, () => {
       expect(P.lanes).not.toBe(P.asphaltRoute);
       expect(contrast(P.laneEdge, P.lanes)).toBeGreaterThan(2);
       expect(contrast(P.marking, P.lanes)).toBeGreaterThan(3);

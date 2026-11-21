@@ -29,9 +29,11 @@ export interface JvPalette {
   /** Lane lines and edges on the other roads: quieter than the route's. */
   markingDim: string;
   edgeDim: string;
-  /** The lanes that lead the route's way: tinted, with an edge line in the route's colour. */
+  /** The lanes that lead the route's way: in the route's colour, with an edge line either side. */
   lanes: string;
   laneEdge: string;
+  /** Every other lane at the split (the rest of the approach, the other ways): bright, in contrast. */
+  lanesOther: string;
   arrow: string;
   arrowEdge: string;
   guardrail: string;
@@ -61,8 +63,9 @@ export const DAY: JvPalette = {
   marking: '#f8f7fa',
   markingDim: '#d6d3dd',
   edgeDim: '#cfccd7',
-  lanes: '#8a4a33',
-  laneEdge: '#f97316',
+  lanes: '#9a3412',
+  laneEdge: '#fff7ed',
+  lanesOther: '#7486e0',
   arrow: '#ea580c',
   arrowEdge: '#ffffff',
   guardrail: '#d3cfdb',
@@ -92,8 +95,9 @@ export const NIGHT: JvPalette = {
   marking: '#f4f1fa',
   markingDim: '#8d84a1',
   edgeDim: '#7b7290',
-  lanes: '#7e4a3e',
+  lanes: '#c2410c',
   laneEdge: '#fdba74',
+  lanesOther: '#8090e0',
   arrow: '#fb923c',
   arrowEdge: '#ffedd5',
   guardrail: '#544a66',
@@ -109,12 +113,12 @@ export const NIGHT: JvPalette = {
 
 /** The sky, fog and route arrow of the other looks (the rest takes the look's cast, src/theme/tint.ts). */
 const DAY_SET: Parameters<typeof inTheme<JvPalette>>[2] = {
-  jet: { skyTop: '#86a596', skyHorizon: '#e6ece6', fog: '#e6ece6', arrow: '#d97706', laneEdge: '#f59e0b', lanes: '#7c5527' },
-  casual: { skyTop: '#7cc4f2', skyHorizon: '#fff3e4', fog: '#fff3e4', arrow: '#f97316', laneEdge: '#fb923c', lanes: '#8a4a33' },
+  jet: { skyTop: '#86a596', skyHorizon: '#e6ece6', fog: '#e6ece6', arrow: '#d97706', laneEdge: '#fff7ed', lanes: '#92400e' },
+  casual: { skyTop: '#7cc4f2', skyHorizon: '#fff3e4', fog: '#fff3e4', arrow: '#f97316', laneEdge: '#fff7ed', lanes: '#9a3412' },
 };
 const NIGHT_SET: Parameters<typeof inTheme<JvPalette>>[2] = {
-  jet: { skyTop: '#010302', skyHorizon: '#0a2a18', fog: '#0a2a18', arrow: '#ffb020', arrowEdge: '#fff1c9', marking: '#c8ffd9', laneEdge: '#ffc857', lanes: '#6e5226' },
-  casual: { skyTop: '#0a0f20', skyHorizon: '#2a3462', fog: '#2a3462', laneEdge: '#fdba74', lanes: '#7e4a3e' },
+  jet: { skyTop: '#010302', skyHorizon: '#0a2a18', fog: '#0a2a18', arrow: '#ffb020', arrowEdge: '#fff1c9', marking: '#c8ffd9', laneEdge: '#ffc857', lanes: '#b45309' },
+  casual: { skyTop: '#0a0f20', skyHorizon: '#2a3462', fog: '#2a3462', laneEdge: '#fdba74', lanes: '#c2410c' },
 };
 
 /** The junction view's colours in the current look. */
@@ -473,18 +477,32 @@ export class JunctionRenderer {
     const tunnel = new Acc();
     const deck = new Acc();
 
-    const strips = jv.roads.filter((r) => !hiddenUnderground(r, jv.ground));
+    const visible = jv.roads.filter((r) => !hiddenUnderground(r, jv.ground));
+    // The other carriageway (traffic the other way) is left out: it is not one of the ways ahead.
+    const strips = visible.filter((r) => !r.opposite);
+    const others = new Acc();
+    const merge = jv.kind === 'merge';
     for (const st of strips) {
       const portal = portalIndex(st, jv.ground);
       const sub = portal >= 0 ? truncate(st, portal + 1) : st;
       if (sub.pts.length < 2) continue;
       const smp = new StripSampler(sub);
-      // The route's roads stand out; the other ways and the roads around are set back.
+      // The route's roads stand out; the roads around are set back.
       const onRoute = st.role === 'approach' || st.role === 'taken';
+      const atSplit = st.role !== 'context';
       const target = onRoute ? asphaltRoute : st.cls === 'minor' ? asphaltMinor : asphalt;
       this.ribbonStrip(smp, target, (s) => -(s.w / 2 + sub.shoulder), (s) => s.w / 2 + sub.shoulder, 0);
       if (sub.h.some((_, i) => above(sub, i, jv.ground) > 2)) this.deckOverlay(smp, onRoute ? deckRoute : deck);
-      this.markings(smp, onRoute ? marks : marksDim, onRoute ? edges : edgesDim);
+      // Every lane at the split in a bright colour (the route's own lanes go over it in theirs):
+      // the rest of the approach and the other ways; the road taken is all the route's own,
+      // except at a merge, where it is the road joined. On a two-way road, our side only.
+      if (atSplit && (st.role !== 'taken' || merge)) {
+        const own = jv.drivingSide === 'left' ? -1 : 1;
+        const lo = (x: Sample) => (st.oneway ? -x.w / 2 : own < 0 ? -x.w / 2 : 0);
+        const hi = (x: Sample) => (st.oneway ? x.w / 2 : own < 0 ? 0 : x.w / 2);
+        this.ribbonStrip(smp, others, lo, hi, 0.008);
+      }
+      this.markings(smp, atSplit ? marks : marksDim, atSplit ? edges : edgesDim);
       if (st.guardrail) this.guardrails(smp, rails, strips.filter((o) => o !== st));
       this.structures(smp, concrete, concreteDark);
       if (portal >= 0) this.portal(st, portal, tunnel, concrete);
@@ -495,6 +513,7 @@ export class JunctionRenderer {
     this.addMesh(asphaltRoute, this.mat(P.asphaltRoute, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }), 2);
     this.addMesh(deck, this.mat(P.deck, { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 2);
     this.addMesh(deckRoute, this.mat(P.deckRoute, { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 2);
+    this.addMesh(others, this.mat(P.lanesOther, { polygonOffset: true, polygonOffsetFactor: -3.2, polygonOffsetUnits: -6.4 }), 2);
     this.yourLanes(strips);
     this.addMesh(marksDim, this.mat(P.markingDim, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), 3);
     this.addMesh(edgesDim, this.mat(P.edgeDim, { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), 3);
@@ -522,7 +541,7 @@ export class JunctionRenderer {
       const before = blocked;
       blocked = before ? (p: XY) => before(p) || notGreen(p) : notGreen;
     }
-    this.addTrees(strips, blocked);
+    this.addTrees(visible, blocked);
     this.addGantry();
     const arrowMat = (color: string, opacity: number) =>
       this.mat(color, {

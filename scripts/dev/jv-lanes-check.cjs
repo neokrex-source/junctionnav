@@ -1,8 +1,8 @@
 /**
  * Browser check of the 3D junction view's lanes, day and night, on the demo drive: the lanes that
- * lead the route's way are tinted with an edge line in the route's colour, the route's roads stand
- * out from the ground, and the other ways at the split are set back in a quieter grey. Colours are
- * read from screenshots of the view at the fork and at exit 114.
+ * lead the route's way are in the route's colour with a bright edge line, every other lane at the
+ * split (the rest of the approach, the other ways) is bright blue in contrast, and the other
+ * carriageway is left out. Colours are read from screenshots of the view at the fork and at exit 114.
  *
  *   VITE_AUTH_REQUIRED=false npx vite build --outDir dist-alert
  *   npx vite preview --outDir dist-alert --port 4184 &
@@ -23,8 +23,8 @@ const check = (name, ok, detail) => {
 };
 
 const COLOURS = {
-  day: { route: '#45414f', other: '#8a8696', lanes: '#8a4a33', edge: '#f97316' },
-  night: { route: '#524a6a', other: '#312b40', lanes: '#7e4a3e', edge: '#fdba74' },
+  day: { lanes: '#9a3412', edge: '#fff7ed', others: '#7486e0' },
+  night: { lanes: '#c2410c', edge: '#fdba74', others: '#8090e0' },
 };
 
 (async () => {
@@ -88,8 +88,10 @@ const COLOURS = {
         },
         { b64: png.toString('base64'), colours: COLOURS[appearance] },
       );
-      check(`${appearance}, ${what}: the lanes to be in are ${several ? 'tinted, ' : ''}edged in the route's colour`, (!several || counts.lanes > 150) && counts.edge > 150, counts);
-      check(`${appearance}, ${what}: the route's road and the other ways in their own greys`, counts.route > 1500 && counts.other > 300, counts);
+      check(`${appearance}, ${what}: the lanes to be in are ${several ? 'orange, ' : ''}edged in a bright line`, (!several || counts.lanes > 150) && counts.edge > 150, counts);
+      check(`${appearance}, ${what}: every other lane bright blue, in contrast`, counts.others > 2500, counts);
+      const opp = await page.evaluate(() => (window.__app.panel.current?.roads ?? []).filter((r) => r.opposite).length);
+      if (i === 3) check(`${appearance}, ${what}: the other carriageway (traffic the other way) is left out`, opp >= 1, opp);
     }
     check(`${appearance}: no page errors`, errors.length === 0, errors.slice(0, 3));
     await ctx.close();

@@ -3,6 +3,7 @@ import type { TollPay, TollState } from '../nav/tolls';
 import { payWords } from '../nav/tollPay';
 import type { SpeedPrompt } from '../nav/speedWatch';
 import { tunnelName, type TunnelSpan, type TunnelState } from '../nav/tunnels';
+import { angleDiff } from '../geo/geo';
 import { parseDestinations, splitRefs, type Modifier, type Step } from './types';
 
 export type LangCode = 'en' | 'ms' | 'ja';
@@ -730,11 +731,15 @@ function laneWhat(l: LaneState, lang: LangCode): string {
   return tbl[lang][l.target.label];
 }
 
-/** "the left lane", "the right 2 lanes", "the middle lane" in each language. */
+/**
+ * "the left lane", "the right 2 lanes" at the edges; lanes in the middle counted from the left
+ * ("the 2nd lane from the left"), in each language.
+ */
 function laneGroup(l: LaneState, lang: LangCode): string {
   const t = l.target;
   const k = t.to - t.from + 1;
   const side = t.side;
+  if (side === 'middle' && t.known) return lanesFromLeft({ from: t.from, to: t.to, count: t.count }, lang, false);
   if (lang === 'ms') {
     const sd = side === 'left' ? 'kiri' : side === 'right' ? 'kanan' : 'tengah';
     return k === 1 ? `lorong ${sd}` : `${k} lorong ${sd}`;
@@ -815,6 +820,124 @@ export function lanePhrase(kind: LanePhraseKind, l: LaneState, lang: LangCode, u
       if (l.status === 'wrong') return `Move ${n === 1 ? 'one lane' : `${n} lanes`} ${dir} · ${cueDist}`;
       return known ? `Use ${group} · ${cueDist}` : `Keep ${dir} · ${cueDist}`;
   }
+}
+
+/* ------------------------------------------------------------------ forks */
+
+/** The lanes to be in, counted from the left (inclusive, from 0), of how many there are. */
+export interface LaneSpan {
+  from: number;
+  to: number;
+  count: number;
+}
+
+export interface ForkInfo {
+  /** The branch the route takes, counted from the left (from 0), and how many go on from the split. */
+  branch: number;
+  branches: number;
+  /** The lanes to be in, when the router gave them (and not every lane goes this way). */
+  lanes: LaneSpan | null;
+}
+
+/** The lanes that go the route's way at a step, from the router's lane data. */
+export function laneSpanOf(step: Step): LaneSpan | null {
+  const lanes = step.intersections[0]?.lanes;
+  if (!lanes || lanes.length < 2 || !lanes.some((l) => l.valid) || lanes.every((l) => l.valid)) return null;
+  const valid = lanes.map((l, i) => (l.valid ? i : -1)).filter((i) => i >= 0);
+  return { from: Math.min(...valid), to: Math.max(...valid), count: lanes.length };
+}
+
+/**
+ * A fork: where the road splits into two or more ways going on ahead (the router's fork, or a
+ * keep left or right where another road goes on too), which of them the route takes counted from
+ * the left, and the lanes for it.
+ */
+export function forkInfo(step: Step): ForkInfo | null {
+  const keep = (step.type === 'continue' || step.type === 'new name') && (step.modifier ?? '').startsWith('slight');
+  if (step.type !== 'fork' && !keep) return null;
+  const x = step.intersections[0];
+  const lanes = laneSpanOf(step);
+  if (x?.bearings?.length && x.out != null && x.out < x.bearings.length) {
+    const ahead = x.bearings
+      .map((b, i) => ({ i, d: angleDiff(step.bearingBefore, b) }))
+      .filter(({ i, d }) => i === x.out || (i !== x.in && x.entry?.[i] !== false && Math.abs(d) <= 75))
+      .sort((a, b) => a.d - b.d);
+    const branch = ahead.findIndex((a) => a.i === x.out);
+    if (ahead.length >= 2 && branch >= 0) return { branch, branches: ahead.length, lanes };
+    if (keep) return null;
+  }
+  if (step.type !== 'fork') return null;
+  // No bearings (another router): the side the router says.
+  const m = step.modifier ?? '';
+  if (m.includes('left')) return { branch: 0, branches: 2, lanes };
+  if (m.includes('right')) return { branch: 1, branches: 2, lanes };
+  return null;
+}
+
+/**
+ * The lanes counted from the left: "the 2nd lane from the left", "the 3rd and 4th lanes from the
+ * left", "lanes 2 to 4 from the left" (on a two-lane road, just "the left lane"). With `inThe`
+ * the English and Malay start with "in" ("in the 2nd lane from the left").
+ */
+export function lanesFromLeft(l: LaneSpan, lang: LangCode, inThe = true): string {
+  const k = l.to - l.from + 1;
+  const a = l.from + 1;
+  const b = l.to + 1;
+  if (lang === 'ms') {
+    const pre = inThe ? 'di ' : '';
+    if (l.count === 2) return `${pre}lorong ${l.from === 0 ? 'kiri' : 'kanan'}`;
+    if (k === 1) return `${pre}lorong ke-${a} dari kiri`;
+    if (k === 2) return `${pre}lorong ke-${a} dan ke-${b} dari kiri`;
+    return `${pre}lorong ${a} hingga ${b} dari kiri`;
+  }
+  if (lang === 'ja') {
+    if (l.count === 2) return l.from === 0 ? '左車線' : '右車線';
+    if (k === 1) return `左から${a}番目の車線`;
+    if (k === 2) return `左から${a}番目と${b}番目の車線`;
+    return `左から${a}〜${b}番目の車線`;
+  }
+  const pre = inThe ? 'in ' : '';
+  if (l.count === 2) return `${pre}the ${l.from === 0 ? 'left' : 'right'} lane`;
+  if (k === 1) return `${pre}the ${ordinalEn(a)} lane from the left`;
+  if (k === 2) return `${pre}the ${ordinalEn(a)} and ${ordinalEn(b)} lanes from the left`;
+  return `${pre}lanes ${a} to ${b} from the left`;
+}
+
+/** "the right fork", "the middle fork", "the 2nd fork from the left" in each language. */
+function forkName(f: ForkInfo, lang: LangCode): string {
+  const n = f.branch + 1;
+  const pos = f.branches === 2 ? (f.branch === 0 ? 'left' : 'right') : f.branches === 3 ? (['left', 'middle', 'right'] as const)[f.branch] : null;
+  if (lang === 'ms') return pos ? `simpang ${{ left: 'kiri', middle: 'tengah', right: 'kanan' }[pos]}` : `simpang ke-${n} dari kiri`;
+  if (lang === 'ja') return pos ? `${{ left: '左側', middle: '中央', right: '右側' }[pos]}の分岐` : `左から${n}番目の分岐`;
+  return pos ? `the ${pos} fork` : `the ${ordinalEn(n)} fork from the left`;
+}
+
+/**
+ * What to say for a fork: which fork, where it goes and, in a heads-up, the lanes for it counted
+ * from the left ("In 1 kilometre, take the right fork toward Kuala Lumpur, in the 3rd and 4th
+ * lanes from the left."). Null when the step is not a fork. "Now" prompts leave the lanes out.
+ */
+export function forkSpeech(step: Step, distance: number | null, lang: LangCode, units: Units): string | null {
+  const f = forkInfo(step);
+  if (!f) return null;
+  const L = LANGS[lang];
+  const dest = parseDestinations(step.destinations);
+  const toward = dest.places.slice(0, 2).join(' / ') || dest.refs.slice(0, 2).join(' / ');
+  const road = step.name || splitRefs(step.ref)[0] || '';
+  const name = forkName(f, lang);
+  const lanes = distance != null && f.lanes ? lanesFromLeft(f.lanes, lang) : '';
+  let text: string;
+  if (lang === 'ms') {
+    const where = toward ? ` ke arah ${toward}` : road ? ` ke ${road}` : '';
+    text = `Ambil ${name}${where}${lanes ? `, ${lanes}` : ''}`;
+  } else if (lang === 'ja') {
+    const pre = toward ? `${toward}方面、` : road ? `${road}、` : '';
+    text = lanes ? `${pre}${name}へ進み、${lanes}を走行してください` : `${pre}${name}へ進んでください`;
+  } else {
+    const where = toward ? ` toward ${toward}` : road ? ` onto ${road}` : '';
+    text = `Take ${name}${where}${lanes ? `, ${lanes}` : ''}`;
+  }
+  return distance == null ? L.now(text) : L.inDistance(L.spokenDistance(distance, units), text);
 }
 
 /** Two spoken sentences as one prompt, with the full stop each language wants between them. */

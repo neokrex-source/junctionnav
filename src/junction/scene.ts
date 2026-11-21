@@ -50,6 +50,11 @@ export interface RoadStrip {
   /** Road name and ref, for labels in the junction view. */
   name?: string;
   ref?: string;
+  /**
+   * The other carriageway of the road the route is on (traffic the other way, alongside), and its
+   * ramps: left out of the junction view so it cannot be taken for one of the ways ahead.
+   */
+  opposite?: boolean;
 }
 
 export interface SignSpec {
@@ -944,6 +949,7 @@ function fromOsm(
 
   // Context: every other road segment near the junction, joined into runs.
   const context = contextStrips(g, used);
+  markOpposite(context, [approach, taken, ...others]);
 
   // Heights: ground plus structures, relative to the approach at the split.
   const groundFn = terrainFn(opts.terrain, frame);
@@ -1254,6 +1260,67 @@ function drivingLine(
     }
   }
   return { pts, h, s };
+}
+
+/**
+ * The other carriageway: one-way roads running alongside the route's roads (within 45 m) the
+ * other way, for most of their length near the junction; then one-way roads joined to it that run
+ * the other way too (its own ramps).
+ */
+export function markOpposite(context: RoadStrip[], ours: RoadStrip[]) {
+  const NEAR = 45;
+  const refs = ours.filter((r) => r.pts.length >= 2);
+  /** The nearest of our roads to p: distance and its heading there. */
+  const nearest = (p: XY) => {
+    let best = { d: Infinity, brg: 0, h: 0 };
+    for (const r of refs) {
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const a = r.pts[i];
+        const b = r.pts[i + 1];
+        const dx = b[0] - a[0];
+        const dy = b[1] - a[1];
+        const l2 = dx * dx + dy * dy;
+        const t = l2 > 0 ? clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2, 0, 1) : 0;
+        const d = Math.hypot(a[0] + dx * t - p[0], a[1] + dy * t - p[1]);
+        if (d < best.d) best = { d, brg: xyBearing(dx, dy), h: lerp(r.h[i] ?? 0, r.h[i + 1] ?? 0, t) };
+      }
+    }
+    return best;
+  };
+  const against = (st: RoadStrip) => {
+    let near = 0;
+    let anti = 0;
+    let turned = 0;
+    for (let i = 0; i < st.pts.length - 1; i++) {
+      const p = st.pts[i];
+      const brg = xyBearing(st.pts[i + 1][0] - p[0], st.pts[i + 1][1] - p[1]);
+      const n = nearest(p);
+      const diff = Math.abs(angleDiff(n.brg, brg));
+      turned += diff;
+      if (n.d > NEAR) continue;
+      near++;
+      if (diff > 140 && Math.abs((st.h[i] ?? 0) - n.h) < 5) anti++;
+    }
+    return { near, anti, mean: turned / Math.max(1, st.pts.length - 1) };
+  };
+  const opp: RoadStrip[] = [];
+  for (const st of context) {
+    if (!st.oneway || st.pts.length < 3) continue;
+    const a = against(st);
+    if (a.near >= 3 && a.anti >= a.near * 0.6) {
+      st.opposite = true;
+      opp.push(st);
+    }
+  }
+  // Its ramps: one-way roads that start or end on it and run the other way from ours.
+  const touches = (st: RoadStrip) => {
+    const ends = [st.pts[0], st.pts[st.pts.length - 1]];
+    return opp.some((o) => ends.some((e) => o.pts.some((q) => Math.hypot(q[0] - e[0], q[1] - e[1]) < 4)));
+  };
+  for (const st of context) {
+    if (st.opposite || !st.oneway || st.pts.length < 2) continue;
+    if (touches(st) && against(st).mean > 110) st.opposite = true;
+  }
 }
 
 function contextStrips(g: RoadGraph, used: Set<string>): Strip[] {

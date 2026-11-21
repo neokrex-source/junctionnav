@@ -32,6 +32,8 @@ interface Palette {
   /** The lanes that lead the route's way, tinted on the map, with an edge line either side. */
   lanes: string;
   laneEdge: string;
+  /** Every other lane at the split, bright, in contrast with the route's. */
+  lanesOther: string;
 }
 const DAY: Palette = {
   deck: '#f7f5fa',
@@ -45,6 +47,7 @@ const DAY: Palette = {
   routeEdge: '#7c2d12',
   lanes: '#fb923c',
   laneEdge: '#ea580c',
+  lanesOther: '#6d7fe0',
 };
 const NIGHT: Palette = {
   deck: '#33284a',
@@ -58,6 +61,7 @@ const NIGHT: Palette = {
   routeEdge: '#431407',
   lanes: '#fb923c',
   laneEdge: '#fdba74',
+  lanesOther: '#8090e0',
 };
 
 /** Collects triangles per colour. */
@@ -200,7 +204,16 @@ export class JunctionLayer3D implements CustomLayerInterface {
     const trench = new Acc();
     const shadow = new Acc();
 
-    for (const st of sc.roads) this.road(st, ground, { deck, deckEdge, sides, walls, pillars, trench, shadow });
+    // The other carriageway (traffic the other way) is left out.
+    const roads = sc.roads.filter((st) => !st.opposite);
+    for (const st of roads) this.road(st, ground, { deck, deckEdge, sides, walls, pillars, trench, shadow });
+    // Every other lane at the split, bright: the rest of the approach and the other ways (the road
+    // joined, at a merge); the route's lanes go over it in their own colour.
+    const others = new Acc();
+    for (const st of roads) {
+      if (st.role === 'context' || (st.role === 'taken' && sc.kind !== 'merge')) continue;
+      this.laneOverlay(st, ground, others, sc.drivingSide);
+    }
 
     const mat = (color: string, extra: THREE.MeshBasicMaterialParameters = {}) => new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, ...extra });
     const add = (acc: Acc, m: THREE.Material, order: number) => {
@@ -214,8 +227,28 @@ export class JunctionLayer3D implements CustomLayerInterface {
     add(sides, mat(P.side), 3);
     add(deck, mat(P.deck, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 4);
     add(deckEdge, mat(P.deckEdge, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), 5);
+    add(others, mat(P.lanesOther, { transparent: true, opacity: night ? 0.5 : 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2.5, polygonOffsetUnits: -2.5 }), 5);
     this.routeRibbon(sc, ground, P, mat, add);
     this.map?.triggerRepaint();
+  }
+
+  /** A road's lanes (our side of a two-way road) as a band riding on it, on the map or its deck. */
+  private laneOverlay(st: RoadStrip, ground: (p: XY) => number, acc: Acc, drivingSide: 'left' | 'right') {
+    const smp = sampler(st, 0, ground);
+    const own = drivingSide === 'left' ? -1 : 1;
+    const lo = (x: Sample) => (st.oneway ? -x.w : own < 0 ? -x.w : 0);
+    const hi = (x: Sample) => (st.oneway ? x.w : own < 0 ? 0 : x.w);
+    let prev: Sample | null = null;
+    for (let d = 0; d <= smp.len + 0.01; d += STEP) {
+      const s = smp.at(d);
+      const hidden = s.tunnel && s.z < -3 * EXAGGERATE;
+      if (prev && !hidden) {
+        const z0 = (prev.z > MIN_UP ? prev.z : prev.z < -MIN_UP ? prev.z : 0) + 0.2;
+        const z1 = (s.z > MIN_UP ? s.z : s.z < -MIN_UP ? s.z : 0) + 0.2;
+        acc.quad(P3(side(prev, lo(prev)), z0), P3(side(prev, hi(prev)), z0), P3(side(s, hi(s)), z1), P3(side(s, lo(s)), z1));
+      }
+      prev = hidden ? null : s;
+    }
   }
 
   private road(

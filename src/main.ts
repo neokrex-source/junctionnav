@@ -35,10 +35,10 @@ import { isMajor, OverpassTunnelProvider, TunnelLoader, type TunnelSpan } from '
 import { TollLoader, tollPayment, type TollPay, type TollPlaza } from './nav/tolls';
 import { limitAt, OverpassRoadsAhead, SpeedLoader, type SpeedInfo } from './nav/speed';
 import { currentPosition, GpsSource, ScreenWake, Simulator, Voice, type LocationSource } from './nav/sources';
-import { arrivalNearSpeech, arrivalSpeech, describeStep, stoppedNearSpeech, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, speedIn, speedSpeech, speedWords, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
+import { arrivalNearSpeech, arrivalSpeech, describeStep, forkInfo, forkSpeech, stoppedNearSpeech, formatDistance, formatDuration, joinSpeech, lanePhrase, LANGS, speedIn, speedSpeech, speedWords, spokenInstruction, t, tollPayLabel, tollSpeech, tollTitle, tunnelSpeech, turnSidePhrase, type LangCode, type UiKey } from './routing/instructions';
 import { AligningRouter, RouteAligner, routeData } from './routing/aligner';
 import { OsrmRouter } from './routing/osrm';
-import type { Avoid, ManeuverType, Route, Router } from './routing/types';
+import type { Avoid, ManeuverType, Route, Router, Step } from './routing/types';
 import { CATEGORIES, CategorySearch, OverpassPoiProvider, type Category, type CategoryPlace, type PoiProvider } from './search/categories';
 import { attachSearch, parseCoordinates, PhotonSearch, type Place, type PlaceSearchEngine } from './search/places';
 import { parsePlusCode } from './search/pluscode';
@@ -3171,8 +3171,11 @@ class App {
   private promptText(pr: Prompt): string {
     const units = this.settings.units;
     switch (pr.kind) {
-      case 'laneEarly':
-        return this.persona.maneuver(lanePhrase('early', pr.lane!, this.L, units), pr.key, false);
+      case 'laneEarly': {
+        // At a fork: which fork, and its lanes counted from the left.
+        const fork = forkInfo(pr.lane!.target.step)?.lanes ? forkSpeech(pr.lane!.target.step, pr.lane!.dist, this.L, units) : null;
+        return this.persona.maneuver(fork ?? lanePhrase('early', pr.lane!, this.L, units), pr.key, false);
+      }
       case 'laneWrong':
         return this.persona.attention(lanePhrase('wrong', pr.lane!, this.L, units));
       case 'laneLate':
@@ -3193,8 +3196,11 @@ class App {
       case 'arrived':
         return this.persona.butler ? this.persona.arrived(pr.side) : arrivalSpeech(this.L, pr.side);
       default: {
-        const base = spokenInstruction(pr.step, pr.distance, this.L, units);
+        // A fork says which one ("take the right fork") and, ahead of it, its lanes from the left.
+        const fork = forkSpeech(pr.step, pr.distance, this.L, units);
+        const base = fork ?? spokenInstruction(pr.step, pr.distance, this.L, units);
         if (pr.distance == null) return base;
+        if (fork) return this.persona.maneuver(!forkInfo(pr.step)?.lanes && pr.side ? joinSpeech(fork, turnSidePhrase(pr.side, this.L), this.L) : fork, pr.key, false);
         // The heads-up carries the lane to be in: from the lane data, or the turn's side without it.
         let text = base;
         if (pr.lane && pr.lane.status !== 'ok') text = joinSpeech(base, lanePhrase('hint', pr.lane, this.L, units), this.L);
@@ -3202,6 +3208,11 @@ class App {
         return this.persona.maneuver(text, pr.key, false);
       }
     }
+  }
+
+  /** A maneuver as said: a fork names which one (and its lanes ahead of it), the rest as the router has it. */
+  private instruction(step: Step, distance: number | null): string {
+    return forkSpeech(step, distance, this.L, this.settings.units) ?? spokenInstruction(step, distance, this.L, this.settings.units);
   }
 
   /** What to have ready at a plaza: Touch 'n Go in Malaysia (and the demo), ETC in Japan. */
@@ -3239,7 +3250,7 @@ class App {
         const m = st.modifier ?? '';
         const side = m.includes('left') ? 'left' : m.includes('right') ? 'right' : undefined;
         texts.push(this.persona.butler ? this.persona.arrived(side) : arrivalSpeech(this.L, side));
-      } else texts.push(spokenInstruction(st, null, this.L, this.settings.units));
+      } else texts.push(this.instruction(st, null));
     }
     if (texts.length) this.voice.prefetch(texts.map((t) => speechText(t, this.L)), LANGS[this.L].speechLang);
   }
@@ -3502,7 +3513,7 @@ class App {
    */
   private sayStart(route: Route, simulate: boolean) {
     const first = route.steps[1];
-    const instruction = first ? spokenInstruction(first, first.s > 300 ? first.s : null, this.L, this.settings.units) : '';
+    const instruction = first ? this.instruction(first, first.s > 300 ? first.s : null) : '';
     const trip = this.tripInfo(route);
     const parts: string[] = [];
     if (this.persona.butler) parts.push(this.persona.greeting(trip, new Date().getHours()));
@@ -3582,7 +3593,7 @@ class App {
     const next = p?.next ?? route.steps[1];
     if (!next) return;
     const dist = p ? p.distToNext : next.s;
-    this.say(spokenInstruction(next, dist > 300 ? dist : null, this.L, this.settings.units), false);
+    this.say(this.instruction(next, dist > 300 ? dist : null), false);
   }
 
   /** "Before you go": the toll card (on toll routes), the fuel and the car, until the car is on its way. */
@@ -3670,7 +3681,7 @@ class App {
       this.say(hello, false);
       return;
     }
-    this.say(`${hello} ${spokenInstruction(p.next, p.distToNext > 300 ? p.distToNext : null, this.L, this.settings.units)}`.trim(), false);
+    this.say(`${hello} ${this.instruction(p.next, p.distToNext > 300 ? p.distToNext : null)}`.trim(), false);
   }
 
   /** "Resume now" on the card: guidance carries on at once (from here, if the car is off the route). */
@@ -4450,12 +4461,12 @@ class App {
     this.resumeLine = { text: '', until: 0 };
     // The same turn as the last new route began with, a moment ago (rerouting again on the way out
     // of a car park, or GPS wandering): not said again.
-    const turn = spokenInstruction(next, null, this.L, this.settings.units);
+    const turn = this.instruction(next, null);
     const last = this.routeSaid;
     const again = !back && turn === last.text && !!last.at && haversine(last.at, next.location) < 60 && Date.now() - last.time < 120_000;
     this.routeSaid = { text: turn, at: next.location, time: Date.now() };
     if (again) return;
-    this.say(`${back || this.persona.newRoute()} ${spokenInstruction(next, next.s - startS > 200 ? next.s - startS : null, this.L, this.settings.units)}`.trim());
+    this.say(`${back || this.persona.newRoute()} ${this.instruction(next, next.s - startS > 200 ? next.s - startS : null)}`.trim());
   }
 
   /**
