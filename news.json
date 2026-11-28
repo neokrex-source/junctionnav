@@ -1,0 +1,91 @@
+{
+ "updated": "2026-11-28T12:41:06.785Z",
+ "items": [
+  {
+   "title": "Woman killed, husband injured in XMAX crash on North-South Expressway",
+   "link": "https://news.google.com/rss/articles/CBMitgFBVV95cUxOME1yTXFORDl3SG1UUVlhSzJTZmJ2aXpmYWw5blVtME9Ld3M3ekg0cmxPcWE0UllhaU5HdC1QWHVYLXpjODMxSExXcGpJaTVkNUVfNnN1ci1vbm9rTU10YVFmTGZhX3p4T1ZPa3U0QUt6MTczbThZSmFPaGQ4OWF4TE9FNXNtaFFLcWlENjE1eU5DS3FqMGVLaHJlR2RjWHEzWEdVNGYyejlYbTR2Q0NnZDlXRXFyZ9IBuwFBVV95cUxNRWFkeElIY2REdms4SzhwZFdFeGpCdTQxVG53Nmd1SHdhSklkOGtMVVdoNTVHVTNBOEs0SktlNWg2RjI4RmE5TXNRclJJekJOR3psM3ZmekotVXBpczIwQ2NrLWRDc0M5d0NSTFhnSVJLTjluNjdhd18wM2tldHROZjluY2NseUc5NHZhN1FJa19mZ3ozZWhmMG1CUVFlanR1ODd0dDZ3RUZEREdpVm54enI3WUF6bkpaX21F?oc=5",
+   "source": "NST Online",
+   "published": "2026-11-28T11:21:54.000Z",
+   "roads": [
+    "PLUS"
+   ],
+   "kind": "accident"
+  },
+  {
+   "title": "LTA: Heavy traffic at Woodlands Checkpoint as travellers leave Singapore for Malaysia",
+   "link": "https://news.google.com/rss/articles/CBMi2wFBVV95cUxQYjdrUkFaOFQ1NEVJWlhLUjg0V3pvWEIzMGRrMHcyUWpLa04zUHNfM2g4SngxM0UxQ0xPdHN5ckVSVVcxQ3V4WGlwQUZiVktyWEJIcEVzdTZ6dGgzanNaa1RuSXVjaG8yb0NTWW45SHpicmRPNXlaTFJ4akItMzM2T3h5Q3BFU0xvV01wdUFPU2NvYkt0V1NXeEFRNEFtYm9Zd0F2SHp2dDY2bUlhR3d1a3JlbTJ1OFN0a05pbWk3UXREVXVsSGdhZmlmb3ZUZnNGUFNLWkxVX1d4U03SAeABQVVfeXFMUHRwUkgxMzM3TFNEdTJaNE1qTzR1bllIeE05bm5rVXdtYktLN1hhalhZdlREYWVoakk4NVRMdjFaZDRuX3hlYzlLWURXM0tNS0R2eS1DSnk5MEZyWkIwZmllX2xhTjVUSE1wTWdVYlJUOFd4VzM4YUxxU1p0ckVMU09WV3lTdVVtRXp3b1VGY3p2QXpYeTBSWnlEVjBiVkozZjBxRTBpOTRHSGFhMXg5LTlDZk5lNGVfeVUtR0xDQUVrNlB1d282NUNvQTBldFZXSEY0R09lYWtXQ1lSMVFOUDI?oc=5",
+   "source": "Malay Mail",
+   "published": "2026-11-28T10:36:38.000Z",
+   "roads": [
+    "CAUSEWAY"
+   ],
+   "kind": "jam"
+  }
+ ],
+ "sources": [
+  {
+   "name": "Google News",
+   "url": "https://news.google.com/rss/search?q=(traffic%20OR%20jam%20OR%20congestion%20OR%20accident%20OR%20crash%20OR%20closure%20OR%20closed%20OR%20flood)%20(highway%20OR%20expressway%20OR%20road%20OR%20toll)%20Malaysia%20when%3A1d&hl=en-MY&gl=MY&ceid=MY:en",
+   "ok": true,
+   "items": 23,
+   "traffic": 2
+  },
+  {
+   "name": "Google News",
+   "url": "https://news.google.com/rss/search?q=(jam%20OR%20congestion%20OR%20crash%20OR%20accident%20OR%20closed%20OR%20closure%20OR%20flood%20OR%20landslide)%20(PLUS%20OR%20NKVE%20OR%20ELITE%20OR%20DUKE%20OR%20LDP%20OR%20MEX%20OR%20SPRINT%20OR%20KESAS%20OR%20NPE%20OR%20SKVE%20OR%20%22Federal%20Highway%22%20OR%20Karak%20OR%20LPT%20OR%20MRR2%20OR%20Causeway%20OR%20%22Second%20Link%22%20OR%20%22Penang%20Bridge%22)%20when%3A1d&hl=en-MY&gl=MY&ceid=MY:en",
+   "ok": true,
+   "items": 100,
+   "traffic": 0
+  },
+  {
+   "name": "Google News",
+   "url": "https://news.google.com/rss/search?q=(kesesakan%20OR%20kemalangan%20OR%20ditutup%20OR%20penutupan%20OR%20banjir%20OR%20lencongan%20OR%20%22tanah%20runtuh%22)%20(lebuhraya%20OR%20jalan%20OR%20tol)%20when%3A1d&hl=ms&gl=MY&ceid=MY:ms",
+   "ok": false,
+   "items": 0,
+   "traffic": 0,
+   "error": "HTTP 429"
+  },
+  {
+   "name": "Malay Mail",
+   "url": "https://www.malaymail.com/feed/rss/malaysia",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "Free Malaysia Today",
+   "url": "https://www.freemalaysiatoday.com/category/nation/feed/",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "New Straits Times",
+   "url": "https://www.nst.com.my/feed",
+   "ok": true,
+   "items": 50,
+   "traffic": 1
+  },
+  {
+   "name": "Berita Harian",
+   "url": "https://www.bharian.com.my/feed",
+   "ok": true,
+   "items": 50,
+   "traffic": 0
+  },
+  {
+   "name": "Harian Metro",
+   "url": "https://www.hmetro.com.my/feed",
+   "ok": true,
+   "items": 51,
+   "traffic": 0
+  },
+  {
+   "name": "Bernama",
+   "url": "https://www.bernama.com/en/rssfeed.php",
+   "ok": true,
+   "items": 10,
+   "traffic": 0
+  }
+ ]
+}
